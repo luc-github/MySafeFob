@@ -1,69 +1,69 @@
 # TOTP — Time-based One-Time Password
-## Principe, RFC 6238, et implémentation de référence
+## Principle, RFC 6238, and reference implementation
 
 ---
 
-## 1. Qu'est-ce que TOTP ?
+## 1. What is TOTP?
 
 **TOTP** = **T**ime-based **O**ne-**T**ime **P**assword
 
-C'est un mot de passe à usage unique qui change toutes les **30 secondes** (par défaut). Tu le vois dans :
+It's a one-time password that changes every **30 seconds** (by default). You see it in:
 - Google Authenticator
 - Authy
 - Aegis
 - Microsoft Authenticator
-- Ton future firmware X4 Pro
+- Your future X4 Pro firmware
 
-**Le principe clé** : le serveur (Google, GitHub, etc.) et ton device partagent le **même secret**. Avec ce secret et l'heure actuelle, les deux calculent indépendamment le même code à 6 chiffres. Pas besoin de réseau au moment de la génération.
+**The key principle**: the server (Google, GitHub, etc.) and your device share the **same secret**. With this secret and the current time, both independently compute the same 6-digit code. No network needed at the moment of generation.
 
 ---
 
-## 2. L'algorithme en 5 étapes (RFC 6238)
+## 2. The algorithm in 5 steps (RFC 6238)
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   Secret partagé │     │  Timestamp UNIX  │     │   Fenêtre temps │
-│   (Base32)       │     │  (secondes)      │     │   30 secondes   │
+│  Shared secret   │     │  UNIX timestamp  │     │   30-second     │
+│   (Base32)       │     │   (seconds)      │     │   time window   │
 └────────┬────────┘     └────────┬────────┘     └────────┬────────┘
          │                       │                       │
          │    ┌─────────────────────────────────────┐   │
-         └───►│  1. Décoder le secret (Base32 → raw) │   │
+         └───►│  1. Decode the secret (Base32 → raw) │   │
               │  2. Counter = Timestamp // 30        │◄──┘
               │  3. HMAC-SHA1(secret, counter)       │
-              │  4. Troncature dynamique             │
-              │  5. Code = nombre % 1_000_000        │
+              │  4. Dynamic truncation               │
+              │  5. Code = number % 1_000_000        │
               └─────────────────────────────────────┘
                              │
                              ▼
                     ┌─────────────────┐
-                    │  Code à 6 chiffres │
-                    │  (ex: 123456)     │
+                    │  6-digit code    │
+                    │  (e.g.: 123456)  │
                     └─────────────────┘
 ```
 
 ---
 
-## 3. Les 5 étapes détaillées
+## 3. The 5 steps in detail
 
-### Étape 1 : Décoder le secret (Base32 → bytes)
+### Step 1: Decode the secret (Base32 → bytes)
 
-Le secret est souvent fourni sous forme de QR code, qui contient une URL :
+The secret is often provided as a QR code, which contains a URL:
 ```
-otpauth://totp/GitHub:ton-email?secret=JBSWY3DPEHPK3PXP&issuer=GitHub
+otpauth://totp/GitHub:your-email?secret=JBSWY3DPEHPK3PXP&issuer=GitHub
 ```
 
-Le paramètre `secret=` est en **Base32** (alphabet : A-Z, 2-7).
+The `secret=` parameter is in **Base32** (alphabet: A-Z, 2-7).
 
-**Pourquoi Base32 ?** Parce que c'est facile à taper à la main (pas de 0/O, 1/I confondus).
+**Why Base32?** Because it's easy to type by hand (no confusion between 0/O, 1/I).
 
-**Exemple** :
+**Example**:
 ```
 Base32 : "JBSWY3DPEHPK3PXP"
 Hex    : 48 65 6c 6c 6f 21 de ad be ef  
-Texte  : "Hello!\xde\xad\xbe\xef"
+Text   : "Hello!\xde\xad\xbe\xef"
 ```
 
-Dans le code Python :
+In the Python code:
 ```python
 def base32_decode(secret_b32: str) -> bytes:
     padding = 8 - (len(secret_b32) % 8)
@@ -74,55 +74,55 @@ def base32_decode(secret_b32: str) -> bytes:
 
 ---
 
-### Étape 2 : Calculer le compteur (Counter)
+### Step 2: Compute the counter
 
-Le compteur est le **nombre de fenêtres de 30 secondes** écoulées depuis le 1er janvier 1970 (epoch UNIX).
+The counter is the **number of 30-second windows** elapsed since January 1, 1970 (UNIX epoch).
 
 ```
 Counter = floor(Timestamp_UNIX / 30)
 ```
 
-**Exemple** :
+**Example**:
 ```
-Timestamp = 1 787 820 509 (27 août 2026, ~16:48 UTC)
+Timestamp = 1 787 820 509 (August 27, 2026, ~16:48 UTC)
 Counter   = 1 787 820 509 // 30 = 59 594 016
 ```
 
-> 💡 *Toutes les personnes utilisant le même secret génèrent le **même code** pendant ces 30 secondes.*
+> 💡 *Everyone using the same secret generates the **same code** during that 30-second window.*
 
-Dans le code Python :
+In the Python code:
 ```python
 counter = timestamp // 30
 ```
 
 ---
 
-### Étape 3 : HMAC-SHA1 (la cryptographie)
+### Step 3: HMAC-SHA1 (the cryptography)
 
 **HMAC** = Hash-based Message Authentication Code
 
-C'est une opération cryptographique qui "signe" le compteur avec le secret :
+This is a cryptographic operation that "signs" the counter with the secret:
 
 ```
 MAC = HMAC-SHA1(secret_key, counter_bytes)
 ```
 
-Le compteur (un entier 64 bits) doit être encodé en **big-endian** sur 8 octets :
+The counter (a 64-bit integer) must be encoded as **big-endian** over 8 bytes:
 
 ```
 Counter = 59 594 016
-En hex big-endian : 00 00 00 00 03 8F 6D 60
+Big-endian hex: 00 00 00 00 03 8F 6D 60
 ```
 
-**Pourquoi SHA-1 ?** Le standard TOTP (RFC 6238) spécifie SHA-1 par défaut. Certains services utilisent SHA-256, mais la grande majorité reste en SHA-1.
+**Why SHA-1?** The TOTP standard (RFC 6238) specifies SHA-1 by default. Some services use SHA-256, but the vast majority still use SHA-1.
 
-Le résultat du HMAC est un hash de **20 octets** (160 bits) :
+The HMAC result is a **20-byte** hash (160 bits):
 
 ```
-MAC = a3 7b 9c f2 11 4e 8d ... (20 octets au total)
+MAC = a3 7b 9c f2 11 4e 8d ... (20 bytes total)
 ```
 
-Dans le code Python :
+In the Python code:
 ```python
 counter_bytes = struct.pack(">Q", counter)  # Big-endian, 8 bytes
 mac = hmac.new(secret, counter_bytes, hashlib.sha1).digest()
@@ -130,89 +130,89 @@ mac = hmac.new(secret, counter_bytes, hashlib.sha1).digest()
 
 ---
 
-### Étape 4 : Troncature dynamique (Dynamic Truncation)
+### Step 4: Dynamic Truncation
 
-On a 20 octets de HMAC, mais on veut un code court. La **troncature dynamique** (RFC 4226) sélectionne 4 octets parmi les 20 de manière pseudo-aléatoire.
+We have 20 bytes of HMAC, but we want a short code. **Dynamic truncation** (RFC 4226) pseudo-randomly selects 4 bytes out of the 20.
 
-**Méthode** :
-1. Prendre le **dernier octet** du MAC : `mac[19]`
-2. En extraire les 4 bits de poids faible (masque `0x0F`) → ça donne un offset entre 0 et 15
-3. Lire 4 octets consécutifs à partir de cet offset : `mac[offset:offset+4]`
-4. Interpréter ces 4 octets comme un entier 32-bit **big-endian**
-5. Effacer le bit de poids fort (masque `0x7FFFFFFF`) pour garantir un nombre positif
+**Method**:
+1. Take the **last byte** of the MAC: `mac[19]`
+2. Extract its 4 low-order bits (mask `0x0F`) → gives an offset between 0 and 15
+3. Read 4 consecutive bytes starting at this offset: `mac[offset:offset+4]`
+4. Interpret these 4 bytes as a **big-endian** 32-bit integer
+5. Clear the high-order bit (mask `0x7FFFFFFF`) to guarantee a positive number
 
-**Exemple** :
+**Example**:
 ```
-MAC (20 octets)   : [a3] [7b] [9c] ... [f2] [4e] [8d] [ab] [cd] [3f]
+MAC (20 bytes)    : [a3] [7b] [9c] ... [f2] [4e] [8d] [ab] [cd] [3f]
                     ^0   ^1   ^2        ^13  ^14  ^15  ^16  ^17  ^18  ^19
 
-Dernier octet     : mac[19] = 0x3F
+Last byte         : mac[19] = 0x3F
 Offset            : 0x3F & 0x0F = 0x0F = 15
-4 octets à offset : mac[15:19] = [cd] [3f] ? ?  → attention à ne pas dépasser 16 !
+4 bytes at offset : mac[15:19] = [cd] [3f] ? ?  → careful not to exceed 16!
 
-En pratique, l'offset max est 15, donc on lit mac[15:19] (4 octets)
+In practice, the max offset is 15, so we read mac[15:19] (4 bytes)
 ```
 
-> 💡 *La "troncature" est "dynamique" car l'offset change à chaque calcul (dépend du HMAC).*
+> 💡 *The "truncation" is "dynamic" because the offset changes with every calculation (it depends on the HMAC).*
 
-Dans le code Python :
+In the Python code:
 ```python
-offset = mac[-1] & 0x0F                              # Dernier octet, 4 bits faibles
-code = struct.unpack(">I", mac[offset:offset + 4])[0]  # 4 octets → entier 32-bit
-code = code & 0x7FFFFFFF                              # Bit de signe à 0
+offset = mac[-1] & 0x0F                              # Last byte, low 4 bits
+code = struct.unpack(">I", mac[offset:offset + 4])[0]  # 4 bytes → 32-bit integer
+code = code & 0x7FFFFFFF                              # Sign bit to 0
 ```
 
 ---
 
-### Étape 5 : Réduction à 6 chiffres
+### Step 5: Reduction to 6 digits
 
-On a un grand nombre (31 bits, donc jusqu'à 2 milliards). On le réduit à **6 chiffres** avec un modulo :
-
-```
-Code = nombre % 1_000_000
-```
-
-Puis on formate avec des zéros devant si nécessaire :
+We have a large number (31 bits, so up to 2 billion). We reduce it to **6 digits** with a modulo:
 
 ```
-Si Code = 660314 → "660314"
-Si Code = 42     → "000042"
+Code = number % 1_000_000
 ```
 
-Dans le code Python :
+Then we pad with leading zeros if needed:
+
+```
+If Code = 660314 → "660314"
+If Code = 42     → "000042"
+```
+
+In the Python code:
 ```python
-code = code % (10 ** digits)          # digits = 6 par défaut
+code = code % (10 ** digits)          # digits = 6 by default
 return f"{code:0{digits}d}"           # Zero-padding
 ```
 
 ---
 
-## 4. Récapitulatif visuel
+## 4. Visual summary
 
 ```
-Secret Base32 ──────┐
+Base32 secret ──────┐
                     ▼
             ┌───────────────┐
             │ Base32 Decode │
             └───────┬───────┘
-                    │ Raw bytes (20 octets)
+                    │ Raw bytes (20 bytes)
                     ▼
 Timestamp ────┐    ┌─────────────┐
               └───►│ Counter =   │
                    │ timestamp//30│
                    └──────┬──────┘
-                          │ 8 octets big-endian
+                          │ 8 bytes big-endian
                           ▼
                    ┌─────────────┐
                    │ HMAC-SHA1   │
                    └──────┬──────┘
-                          │ 20 octets
+                          │ 20 bytes
                           ▼
                    ┌─────────────┐
                    │ Dynamic     │
                    │ Truncation  │
                    └──────┬──────┘
-                          │ 4 octets → entier 31 bits
+                          │ 4 bytes → 31-bit integer
                           ▼
                    ┌─────────────┐
                    │ % 1_000_000 │
@@ -226,40 +226,40 @@ Timestamp ────┐    ┌─────────────┐
 
 ---
 
-## 5. Fenêtre temporelle et tolérance
+## 5. Time window and tolerance
 
-Le serveur (Google, GitHub) ne vérifie pas **un seul** code — il en vérifie **3** :
+The server (Google, GitHub) doesn't check just **one** code — it checks **3**:
 
 ```
-Code précédent (T-30s)  → accepté (synchronisation lente)
-Code actuel    (T)      → accepté (normal)
-Code suivant   (T+30s)  → accepté (horloge client en avance)
+Previous code (T-30s)  → accepted (slow synchronization)
+Current code  (T)      → accepted (normal)
+Next code     (T+30s)  → accepted (client clock ahead)
 ```
 
-C'est pourquoi un **décalage de quelques secondes** entre ton device et le serveur ne pose pas problème. Mais un décalage de plusieurs minutes oui.
+This is why a **drift of a few seconds** between your device and the server isn't a problem. But a drift of several minutes is.
 
-> ⏱️ *L'horloge est donc critique. Un RTC hardware (BM8563 sur le X4 Pro) est essentiel.*
+> ⏱️ *The clock is therefore critical. A hardware RTC (BM8563 on the X4 Pro) is essential.*
 
 ---
 
-## 6. Différence TOTP vs HOTP
+## 6. Difference between TOTP and HOTP
 
 | | **HOTP** | **TOTP** |
 |---|---|---|
-| **Compteur** | Incrémental (0, 1, 2, 3...) | Basé sur le temps (timestamp//30) |
-| **Synchronisation** | Le serveur et le client doivent être synchronisés en compteur | Le serveur et le client doivent être synchronisés en heure |
-| **Usage** | Clés YubiKey (appui physique) | Apps 2FA (Authy, Google Authenticator) |
-| **RFC** | RFC 4226 | RFC 6238 (étend HOTP avec le temps) |
+| **Counter** | Incremental (0, 1, 2, 3...) | Time-based (timestamp//30) |
+| **Synchronization** | Server and client must be synchronized on the counter | Server and client must be synchronized on time |
+| **Usage** | YubiKey keys (physical press) | 2FA apps (Authy, Google Authenticator) |
+| **RFC** | RFC 4226 | RFC 6238 (extends HOTP with time) |
 
 **TOTP = HOTP(secret, counter=timestamp//30)**
 
 ---
 
-## 7. Vecteurs de test officiels (RFC 6238)
+## 7. Official test vectors (RFC 6238)
 
-Pour valider une implémentation, la RFC fournit des vecteurs de test avec le secret `12345678901234567890` (20 octets) :
+To validate an implementation, the RFC provides test vectors with the secret `12345678901234567890` (20 bytes):
 
-| Timestamp | Compteur | Code (8 chiffres) |
+| Timestamp | Counter | Code (8 digits) |
 |-----------|----------|-------------------|
 | 59 | 1 | `94287082` |
 | 1 111 111 109 | 37 037 036 | `07081804` |
@@ -268,44 +268,44 @@ Pour valider une implémentation, la RFC fournit des vecteurs de test avec le se
 | 2 000 000 000 | 66 666 666 | `69279037` |
 | 20 000 000 000 | 666 666 666 | `65353130` |
 
-Le script Python `totp_reference.py` valide tous ces vecteurs au démarrage.
+The Python script `totp_reference.py` validates all these vectors at startup.
 
 ---
 
-## 8. Correspondance Python ↔ C (ESP-IDF)
+## 8. Python ↔ C (ESP-IDF) mapping
 
-| Étape | Python (script référence) | C (ESP-IDF / mbedtls) |
+| Step | Python (reference script) | C (ESP-IDF / mbedtls) |
 |-------|---------------------------|----------------------|
-| Base32 decode | `base64.b32decode()` | Fonction maison (~30 lignes) |
-| Counter → bytes | `struct.pack(">Q", c)` | `uint8_t buf[8];` manuel shift |
+| Base32 decode | `base64.b32decode()` | Custom function (~30 lines) |
+| Counter → bytes | `struct.pack(">Q", c)` | `uint8_t buf[8];` manual shift |
 | HMAC-SHA1 | `hmac.new(key, msg, sha1)` | `mbedtls_md_hmac(sha1, ...)` |
-| Troncature | `mac[-1] & 0x0F` | Même logique bit à bit |
+| Truncation | `mac[-1] & 0x0F` | Same bit-by-bit logic |
 | Big-endian read | `struct.unpack(">I", ...)` | `(buf[0]<<24) \| (buf[1]<<16) ...` |
 | Modulo | `% 1_000_000` | `% 1000000` |
 | Format | `f"{code:06d}"` | `snprintf(buf, 7, "%06lu", code)` |
 
 ---
 
-## 9. Sécurité : le secret est tout
+## 9. Security: the secret is everything
 
-**Le secret partagé est la seule chose qui protège ton compte.**
+**The shared secret is the only thing protecting your account.**
 
-- Si quelqu'un obtient ton secret Base32 → il peut générer les mêmes codes que toi
-- Le secret ne doit **jamais** transiter en clair sur le réseau (le QR code est affiché une seule fois)
-- Sur ton X4 Pro, le secret sera chiffré en flash avec AES-256 — inaccessible sans le PIN maître
+- If someone obtains your Base32 secret → they can generate the same codes as you
+- The secret must **never** transit in cleartext over the network (the QR code is displayed only once)
+- On your X4 Pro, the secret will be encrypted in flash with AES-256 — inaccessible without the master PIN
 
-> 🔒 *Authy stocke tes secrets chiffrés dans le cloud de Twilio. Ton X4 Pro ne les stockera que localement, chiffrés, sans jamais les envoyer sur le réseau.*
+> 🔒 *Authy stores your secrets encrypted in Twilio's cloud. Your X4 Pro will only store them locally, encrypted, without ever sending them over the network.*
 
 ---
 
-## 10. Fichiers du projet
+## 10. Project files
 
-| Fichier | Rôle |
+| File | Role |
 |---------|------|
-| `totp_reference.py` | Implémentation Python de référence (validée RFC 6238) |
-| `docs/totp-principle.md` | Ce document — explication du principe |
-| `components/totp_engine/` | (Futur) Implémentation C pour ESP32 |
+| `totp_reference.py` | Reference Python implementation (RFC 6238 validated) |
+| `docs/totp-principle.md` | This document — explanation of the principle |
+| `components/totp_engine/` | (Future) C implementation for ESP32 |
 
 ---
 
-*Document rédigé le 2026-08-27 — à utiliser comme référence pendant le développement du firmware.*
+*Document written on 2026-08-27 — to be used as a reference during firmware development.*

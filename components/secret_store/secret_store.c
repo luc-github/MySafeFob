@@ -1,9 +1,9 @@
 /**
  * @file secret_store.c
- * @brief MySafeFob — keystore chiffré : STUB Phase 8.
+ * @brief MySafeFob — encrypted keystore: STUB Phase 8.
  *
- * Toutes les APIs renvoient ESP_ERR_NOT_SUPPORTED jusqu'à l'implémentation
- * de la tâche 8.2 (Argon2id + AES-256-GCM du blob, ADR-002/004/005).
+ * All APIs return ESP_ERR_NOT_SUPPORTED until the implementation lands
+ * in task 8.2 (Argon2id + AES-256-GCM of the blob, ADR-002/004/005).
  */
 #include <string.h>
 #include "secret_store.h"

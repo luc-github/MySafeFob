@@ -1,367 +1,368 @@
-# MySafeFob — Factory & Bootloader de recovery (doc technique)
+# MySafeFob — Factory & Recovery Bootloader (technical doc)
 
-> **Origine** : portage du mécanisme éprouvé du projet **PiBot CNC Pendant**
+> **Origin**: port of the proven mechanism from the **PiBot CNC Pendant** project
 > (`Luc-Pibot-cnc-pendant-firmware`, docs `docs/Factory/bootloader_technical_doc.md`
-> et `factory_app_technical_doc.md`, LGPL-2.1+, même auteur). Ce document
-> adapte ces docs au X4 Pro et **met en évidence les différences**.
-> Décision de portage : ADR-007 / ADR-008 / ADR-009 (`docs/ROADMAP.md`).
+> and `factory_app_technical_doc.md`, LGPL-2.1+, same author). This document
+> adapts those docs to the X4 Pro and **highlights the differences**.
+> Porting decision: ADR-007 / ADR-008 / ADR-009 (`docs/ROADMAP.md`).
 
 ---
 
-## 1. Différences PiBot → MySafeFob (synthèse)
+## 1. PiBot → MySafeFob differences (summary)
 
-| Domaine | PiBot (ESP32 classic) | MySafeFob (ESP32-S3 X4 Pro) |
+| Domain | PiBot (ESP32 classic) | MySafeFob (ESP32-S3 X4 Pro) |
 |---|---|---|
-| Trigger recovery bootloader | BTN3 = GPIO17 | **Power = GPIO3** tenu ≥ 10 s (GPIO0 strapping, GPIO3 strapping JTAG — combo Power+Right abandonné, cf. ADR-009 amendement 2026-09-16) |
-| Feedback recovery | Buzzer (bit-bang PWM) | **Logs rom uniquement** (pas de buzzer sur le X4 Pro) |
-| Affichage | ILI9341 240×320 RGB565, écriture directe LCD | **UC8279 800×480 1 bpp, framebuffer + full refresh** (rotation 90° CW matérielle) |
-| gfx | flush par zone vers le LCD | **framebuffer 48 Ko DRAM**, `gfx_flush()` = full refresh e-ink (~2-4 s) |
-| Touch | FT6336U @0x38, polling simple | **GT911 @0x5D/0x14, upload config 185 o obligatoire à chaque boot**, zone Home logicielle |
-| Navigation | BTN1/2/3 physiques + zones tactiles + encodeur | **Left/Right physiques + pad Home = select**, Power = select secours. **Pas d'encodeur** |
-| SD | SPI (SDSPI) | **SDMMC natif 1-bit slot 1** (CLK=41, CMD=42, DAT0=40) + power pulse GPIO5 |
-| Cibles de flash SD | app0/app1 + `ui_resources` | app0 (OTA, seul slot app — ADR-011) + **factory (écriture directe — le recovery se met à jour lui-même)**. Pas de partition resources |
-| Fichier firmware | `/sdcard/esp3dfw.bin` | `/sdcard/msf-fw.bin` |
-| Snapshot écran (→ SD) | Oui (option) | **Non porté** (doc PiBot §Snapshot, non applicable au 1 bpp e-ink) |
-| Chemin logiciel vers factory | `[ESP444]FACTORY` / écran tactile | **Power tenu ≥ 10 s** (app ou réveil, ADR-009 amendé 2026-09-16) — `power_mgr_switch_to_factory()` (§4) |
-| IDF | 5.4.x | **5.5.5** (portage hooks validé au build 2026-09-13, §3.3) |
-| Flash / partitions | 8 Mo, PT offset 0xC000, factory 320 Ko | **16 Mo, PT offset 0xC000, factory 1 Mo** (même offset de table) |
-| Veille | non (LCD toujours alimenté) | **Deep sleep + wake GPIO3** (ADR-009) ; e-ink bistable = image conservée éteint |
+| Recovery bootloader trigger | BTN3 = GPIO17 | **Power = GPIO3** held ≥ 10 s (GPIO0 strapping, GPIO3 strapping JTAG — Power+Right combo abandoned, cf. ADR-009 amendment 2026-09-16) |
+| Recovery feedback | Buzzer (bit-bang PWM) | **ROM logs only** (no buzzer on the X4 Pro) |
+| Display | ILI9341 240×320 RGB565, direct LCD writes | **UC8279 800×480 1 bpp, framebuffer + full refresh** (hardware 90° CW rotation) |
+| gfx | zone-based flush to the LCD | **48 KB DRAM framebuffer**, `gfx_flush()` = full e-ink refresh (~2-4 s) |
+| Touch | FT6336U @0x38, simple polling | **GT911 @0x5D/0x14, 185-byte config upload required on every boot**, software Home zone |
+| Navigation | physical BTN1/2/3 + touch zones + encoder | **physical Left/Right + Home pad = select**, Power = fallback select. **No encoder** |
+| SD | SPI (SDSPI) | **native SDMMC 1-bit slot 1** (CLK=41, CMD=42, DAT0=40) + GPIO5 power pulse |
+| Flash targets on SD | app0/app1 + `ui_resources` | app0 (OTA, only app slot — ADR-011) + **factory (direct write — the recovery updates itself)**. No resources partition |
+| Firmware file | `/sdcard/esp3dfw.bin` | `/sdcard/msf-fw.bin` |
+| Screen snapshot (→ SD) | Yes (option) | **Not ported** (PiBot doc §Snapshot, not applicable to 1 bpp e-ink) |
+| Software path to factory | `[ESP444]FACTORY` / touch screen | **Power held ≥ 10 s** (app or wake, ADR-009 amended 2026-09-16) — `power_mgr_switch_to_factory()` (§4) |
+| IDF | 5.4.x | **5.5.5** (hooks porting validated at the 2026-09-13 build, §3.3) |
+| Flash / partitions | 8 MB, PT offset 0xC000, factory 320 KB | **16 MB, PT offset 0xC000, factory 1 MB** (same table offset) |
+| Sleep | no (LCD always powered) | **Deep sleep + GPIO3 wake** (ADR-009); bistable e-ink = image retained while off |
 
-Ce qui reste **identique** au PiBot : le mécanisme backup/erase/restore de
-l'otadata, les constantes contractuelles, la logique de flash OTA, la
-structure du sous-projet factory, et le CMakeLists du bootloader component.
+What remains **identical** to PiBot: the otadata backup/erase/restore mechanism,
+the contractual constants, the OTA flash logic, the factory sub-project
+structure, and the bootloader component's CMakeLists.
 
 ---
 
-## 2. Le mécanisme otadata (rappel — identique au PiBot)
+## 2. The otadata mechanism (reminder — identical to PiBot)
 
-Le "flag d'active" des apps ne vit pas dans les partitions app mais dans
-**otadata** (2 entrées de 32 o : `seq` + `ota_state` + crc ; entrée au seq
-le plus haut valide = slot actif). La partition `factory` n'a **aucune**
-entrée otadata : c'est le **fallback** quand otadata est vide/invalidé.
+The apps' "active flag" does not live in the app partitions but in
+**otadata** (2 entries of 32 bytes: `seq` + `ota_state` + crc; the entry with the
+highest valid seq = active slot). The `factory` partition has **no**
+otadata entry: it is the **fallback** when otadata is empty/invalidated.
 
 ```
 Boot USB / wake
   │
-  ├── Hook : GPIO3 (Power) NON maintenu ≥ 10 s → boot normal (otadata → app0)
+  ├── Hook: GPIO3 (Power) NOT held ≥ 10 s → normal boot (otadata → app0)
   │
-  └── Hook : GPIO3 (Power) maintenu ≥ 10 s
+  └── Hook: GPIO3 (Power) held ≥ 10 s
         │
-        ├── 1. Backup otadata (2 entrées) @0xB000 + magic 0xAA55AA55
-        ├── 2. Erase otadata (2 secteurs)
-        ├── 3. Reset logiciel
-        │         └── Bootloader : otadata vide → boot factory
-        │               └── Factory : restore otadata depuis le backup
-        │                     └── Power-off → retour à la bonne app
+        ├── 1. Backup otadata (2 entries) @0xB000 + magic 0xAA55AA55
+        ├── 2. Erase otadata (2 sectors)
+        ├── 3. Software reset
+        │         └── Bootloader: otadata empty → boot factory
+        │               └── Factory: restore otadata from the backup
+        │                     └── Power-off → back to the correct app
 ```
 
-Pourquoi le backup : sans lui, effacer otadata détruirait l'info « slot
-actif + compteur seq » → la chaîne OTA (alternance par parité de seq) serait
-cassée. Le restore recopie les entrées octet pour octet (CRC inclus) ; le
-magic effacé empêche le re-restore en boucle ; un backup vide (entrées 0xFF,
-device jamais flashé en OTA) est détecté et ignoré.
+Why the backup: without it, erasing otadata would destroy the "active
+slot + seq counter" info → the OTA chain (alternation by seq parity) would be
+broken. The restore copies the entries byte for byte (CRC included); the
+erased magic prevents re-restoring in a loop; an empty backup (0xFF entries,
+device never OTA-flashed) is detected and ignored.
 
-**Constantes contractuelles** (identiques dans `hooks.c` et
-`boards/x4pro/factory/main/main.c`, vérifiées par grep) :
+**Contractual constants** (identical in `hooks.c` and
+`boards/x4pro/factory/main/main.c`, verified by grep):
 
 ```
-OTADATA_BACKUP_OFFSET   0xB000     secteur libre : après bootloader S3 (~0x7000),
-                                   avant la table des partitions (0xC000),
-                                   hors partitions (NVS @0xD000), aligné 4 Ko
-BACKUP_MAGIC            0xAA55AA55 @0x40 dans le secteur de backup
+OTADATA_BACKUP_OFFSET   0xB000     free sector: after the S3 bootloader (~0x7000),
+                                   before the partition table (0xC000),
+                                   outside partitions (NVS @0xD000), 4 KB aligned
+BACKUP_MAGIC            0xAA55AA55 @0x40 within the backup sector
 BACKUP_MAGIC_OFFSET     0x40
 OTADATA_OFFSET          0x10000
 ```
 
-Règles de choix du secteur de backup et schéma détaillé : voir la doc PiBot
-originale §"Otadata Backup Layout" (même logique, recalculée pour le layout
-16 Mo — marge plus grande qu'en 8 Mo).
+Rules for choosing the backup sector and a detailed diagram: see the original
+PiBot doc §"Otadata Backup Layout" (same logic, recalculated for the 16 MB
+layout — more headroom than in 8 MB).
 
 ---
 
 ## 3. Bootloader hook
 
-Source : `src/boards/x4pro/factory/bootloader_components/custom_bootloader/hooks.c`
-(portage direct du PiBot). La factory vit SOUS le board car elle dépend de
-son hardware — chaque board porte sa factory (règle structurelle, cf.
-`src/README.md` §Structure).
+Source: `src/boards/x4pro/factory/bootloader_components/custom_bootloader/hooks.c`
+(direct port from PiBot). The factory lives UNDER the board because it
+depends on its hardware — each board carries its own factory (structural
+rule, cf. `src/README.md` §Structure).
 
-### 3.1 Ce qui change vs PiBot
+### 3.1 What changes vs PiBot
 
-- **Buzzer supprimé** : `buzzer_tone()/beep_*()` retirés ; acquittement =
-  `esp_rom_printf` (gated par `FACTORY_LOG_LEVEL`, comme le PiBot).
-- **Bouton = GPIO3 / Power** (actif-LOW, pull-up, anti-rebond 3/5 identique,
-  seuil 10 s). Combo Power+Right (GPIO7) abandonné le 2026-09-16 : hardware
-  ne réveille jamais le device quand les deux boutons sont tenus ensemble
-  (cf. ADR-009 amendement). `RECOVERY_BUTTON_PIN` migré de GPIO7 à GPIO3.
-- **Strapping S3** : GPIO0 (boot mode), GPIO3 (JTAG source), GPIO45/46.
-  Ne jamais utiliser GPIO0 dans le hook. GPIO3 est utilisé en connaissance
-  de cause (déjà le pin de wake EXT1 pour Power) — à valider : la console
-  USB reste utilisable après un hold GPIO3 (point de validation 8c).
-- **`CONFIG_IDF_TARGET="esp32s3"`**, PSRAM octal dans le sdkconfig factory.
+- **Buzzer removed**: `buzzer_tone()/beep_*()` removed; acknowledgment =
+  `esp_rom_printf` (gated by `FACTORY_LOG_LEVEL`, as in PiBot).
+- **Button = GPIO3 / Power** (active-LOW, pull-up, same 3/5 debounce,
+  10 s threshold). Power+Right combo (GPIO7) abandoned on 2026-09-16: the
+  hardware never wakes the device when both buttons are held together
+  (cf. ADR-009 amendment). `RECOVERY_BUTTON_PIN` migrated from GPIO7 to GPIO3.
+- **S3 strapping**: GPIO0 (boot mode), GPIO3 (JTAG source), GPIO45/46.
+  Never use GPIO0 in the hook. GPIO3 is used knowingly (already the EXT1
+  wake pin for Power) — to be validated: the USB console remains usable
+  after a GPIO3 hold (validation point 8c).
+- **`CONFIG_IDF_TARGET="esp32s3"`**, octal PSRAM in the factory sdkconfig.
 
-### 3.2 Budget bootloader
+### 3.2 Bootloader budget
 
-Même logique que le PiBot : `CONFIG_PARTITION_TABLE_OFFSET=0xC000` (44 Ko
-de marge bootloader). Le bootloader S3 peut être plus gros (features sécu) —
-**vérifier la taille à la 1re compile** ; le PiBot documente le dépassement
-et la procédure (`rm -rf build/bootloader && idf.py build`).
+Same logic as PiBot: `CONFIG_PARTITION_TABLE_OFFSET=0xC000` (44 KB of
+bootloader headroom). The S3 bootloader can be larger (security features) —
+**check the size on the first build**; PiBot documents the overflow case
+and the procedure (`rm -rf build/bootloader && idf.py build`).
 
-### 3.3 Points de portage S3 — validés au build du 2026-09-13
+### 3.3 S3 porting points — validated at the 2026-09-13 build
 
-Tous les points ci-dessous ont été vérifiés par la 1re compile factory
-réussie en IDF 5.5.5 (binaire `mysafefob-factory.bin`, 0x5A1F0, 65 % libre
-dans la partition 1 Mo) :
+All the points below were verified by the 1st successful factory build in
+IDF 5.5.5 (binary `mysafefob-factory.bin`, 0x5A1F0, 65% free within the
+1 MB partition):
 
-- [x] Signatures `esp_rom_spiflash_read/write/erase_sector` sur S3 / 5.5.5
-- [x] `gpio_ll_*` et `esp_rom_gpio_pad_select_gpio` — inchangés, compilent
-- [x] `esp_rom_software_reset_system()` — même signature, compile
-- [x] Taille du bootloader : **0x5520 < 0xB000** OK (marge confortable)
-- [x] Hooks bootloader : **pas d'option Kconfig en 5.5.5** — mécanisme
-  inconditionnel (weak hooks `bootloader_hooks.h` appelés si définis).
-  Symbole `bootloader_after_init` confirmé dans `bootloader.elf`.
-  `CONFIG_BOOTLOADER_HOOKS=y` retiré de `sdkconfig.defaults` (option morte).
+- [x] `esp_rom_spiflash_read/write/erase_sector` signatures on S3 / 5.5.5
+- [x] `gpio_ll_*` and `esp_rom_gpio_pad_select_gpio` — unchanged, compile
+- [x] `esp_rom_software_reset_system()` — same signature, compiles
+- [x] Bootloader size: **0x5520 < 0xB000** OK (comfortable margin)
+- [x] Bootloader hooks: **no Kconfig option in 5.5.5** — unconditional
+  mechanism (weak hooks `bootloader_hooks.h` called if defined).
+  Symbol `bootloader_after_init` confirmed in `bootloader.elf`.
+  `CONFIG_BOOTLOADER_HOOKS=y` removed from `sdkconfig.defaults` (dead option).
 
-**Renommages de composants constatés en 5.5.5** (corrigés au build) :
-- `esp_flash` → composant `spi_flash` (REQUIRES du factory)
-- `esp_vfs_fat` → absorbé dans `fatfs` (header `esp_vfs_fat.h` inchangé,
-  plus aucune dépendance gérée requise)
-- `esp_console` → composant `console` (REQUIRES de l'app)
-- Nouvelle contrainte `gen_esp32part` : partition `nvs` read/write ≥ 0x3000
-  → `partitions.csv` passe nvs de 0x2000 à **0x3000** (offsets otadata
-  @0x10000 et backup @0xB000 inchangés — contrats préservés)
+**Component renames observed in 5.5.5** (fixed at the build):
+- `esp_flash` → `spi_flash` component (factory's REQUIRES)
+- `esp_vfs_fat` → absorbed into `fatfs` (header `esp_vfs_fat.h` unchanged,
+  no more managed dependency required)
+- `esp_console` → `console` component (app's REQUIRES)
+- New `gen_esp32part` constraint: `nvs` partition read/write ≥ 0x3000
+  → `partitions.csv` bumps nvs from 0x2000 to **0x3000** (otadata
+  offsets @0x10000 and backup @0xB000 unchanged — contracts preserved)
 
-**API cassées constatées côté app (corrigées au build)** :
-- REPL console : `esp_console_repl_start()` **supprimée** —
-  `esp_console_new_repl_uart()` spawn le thread REPL elle-même (5.5)
-- Deep sleep wake-up GPIO : S3 n'a **pas** `SOC_GPIO_SUPPORT_DEEPSLEEP_WAKEUP`
-  (wake-up GPIO digital inexistant) → **EXT1** obligatoire. GPIO3 est un
-  RTC IO : `esp_sleep_enable_ext1_wakeup(BIT3, ESP_EXT1_WAKEUP_ANY_LOW)`,
-  cause de reveil = `ESP_SLEEP_WAKEUP_EXT1` (pas `ESP_SLEEP_WAKEUP_GPIO`)
-- `add_compile_definitions()` après `project()` ne se propage pas aux
-  composants IDF → `idf_build_set_property(COMPILE_DEFINITIONS ... APPEND)`
+**Broken APIs observed on the app side (fixed at the build)**:
+- REPL console: `esp_console_repl_start()` **removed** —
+  `esp_console_new_repl_uart()` spawns the REPL thread itself (5.5)
+- Deep sleep GPIO wake-up: S3 does **not** have `SOC_GPIO_SUPPORT_DEEPSLEEP_WAKEUP`
+  (no digital GPIO wake-up) → **EXT1** required. GPIO3 is an
+  RTC IO: `esp_sleep_enable_ext1_wakeup(BIT3, ESP_EXT1_WAKEUP_ANY_LOW)`,
+  wake cause = `ESP_SLEEP_WAKEUP_EXT1` (not `ESP_SLEEP_WAKEUP_GPIO`)
+- `add_compile_definitions()` after `project()` does not propagate to
+  IDF components → `idf_build_set_property(COMPILE_DEFINITIONS ... APPEND)`
 
-**Binaires produits (build du 2026-09-13)** : factory 0x5A1F0 (65 % libre
-sur 1 Mo), app 0x49EA0 (71 % libre), bootloader 0x5160 (58 % libre).
-LVGL 9.2.2 récupéré via component manager (`managed_components/lvgl__lvgl`).
+**Binaries produced (2026-09-13 build)**: factory 0x5A1F0 (65% free
+out of 1 MB), app 0x49EA0 (71% free), bootloader 0x5160 (58% free).
+LVGL 9.2.2 fetched via the component manager (`managed_components/lvgl__lvgl`).
 
-### 3.4 Rebuild du bootloader
+### 3.4 Rebuilding the bootloader
 
-Le bootloader est un sous-build séparé : après modification de `hooks.c`,
-forcer `rm -rf build/bootloader` ou `idf.py bootloader-flash` (PiBot
-§Troubleshooting — identique ici).
+The bootloader is a separate sub-build: after modifying `hooks.c`,
+force `rm -rf build/bootloader` or `idf.py bootloader-flash` (PiBot
+§Troubleshooting — identical here).
 
-**⚠️ PIÈGE (découvert 2026-09-16, a coûté plusieurs cycles de debug pour
-rien) : `hooks.c` n'est compilé QUE par le build du projet `factory`, jamais
-par celui de l'app.** ESP-IDF ne détecte `bootloader_components/` que s'il
-est un enfant direct de `PROJECT_SOURCE_DIR` du projet en cours de build
-(`components/bootloader/subproject/CMakeLists.txt` :
+**⚠️ PITFALL (discovered 2026-09-16, cost several debug cycles for
+nothing): `hooks.c` is compiled ONLY by the `factory` project's build, never
+by the app's.** ESP-IDF only detects `bootloader_components/` if it
+is a direct child of the `PROJECT_SOURCE_DIR` of the project currently being
+built (`components/bootloader/subproject/CMakeLists.txt`:
 `set(PROJECT_EXTRA_COMPONENTS "${PROJECT_SOURCE_DIR}/bootloader_components")`).
-Ce dossier vit sous `boards/x4pro/factory/bootloader_components/` — donc
-**seul** `cd boards/x4pro/factory && ./msf_build.bat build` (ou `idf.py
-build` depuis ce dossier) le voit et le compile. Lancer `./msf_build.bat
-build` depuis la RACINE du repo compile bien un `build/bootloader/
-bootloader.bin`, mais c'est le bootloader STOCK d'ESP-IDF, dont
-`bootloader_after_init` resout vers le stub faible de
-`components/bootloader/subproject/main/bootloader_start.c` — **aucune trace
-de hooks.c dedans**, même si le build "réussit" sans erreur (rien ne le
-signale). Vérifiable après coup avec
-`nm build/bootloader/bootloader.elf | grep bootloader_after_init` : si ça
-pointe vers `libmain.a(bootloader_start.c.obj)`, c'est le stub, pas le hook.
+This folder lives under `boards/x4pro/factory/bootloader_components/` — so
+**only** `cd boards/x4pro/factory && ./msf_build.bat build` (or `idf.py
+build` from that folder) sees it and compiles it. Running `./msf_build.bat
+build` from the repo ROOT does build a `build/bootloader/
+bootloader.bin`, but it is the STOCK ESP-IDF bootloader, whose
+`bootloader_after_init` resolves to the weak stub in
+`components/bootloader/subproject/main/bootloader_start.c` — **no trace
+of hooks.c in it at all**, even though the build "succeeds" without error
+(nothing flags it). Verifiable afterward with
+`nm build/bootloader/bootloader.elf | grep bootloader_after_init`: if it
+points to `libmain.a(bootloader_start.c.obj)`, it is the stub, not the hook.
 
-Le build racine (`postbuild.cmake`) **copie** ensuite (ne reconstruit PAS)
-`boards/x4pro/factory/build/bootloader/bootloader.bin` (avec le hook) vers
-`installer/x4pro_app/bootloader_16MB.bin` **si et seulement si** ce build
-factory existe déjà sur disque — sans jamais vérifier qu'il est à jour avec
-les sources actuelles. Modifier `hooks.c` puis relancer uniquement le build
-racine (même un clean complet, `rm -rf build`) **ne rafraîchit donc rien** :
-`installer/x4pro_app/bootloader_16MB.bin` reste l'ancien binaire, silencieusement.
+The root build (`postbuild.cmake`) then **copies** (does NOT rebuild)
+`boards/x4pro/factory/build/bootloader/bootloader.bin` (with the hook) to
+`installer/x4pro_app/bootloader_16MB.bin` **if and only if** that factory
+build already exists on disk — without ever checking that it is up to date
+with the current sources. Modifying `hooks.c` and then rerunning only the
+root build (even a full clean, `rm -rf build`) therefore **refreshes
+nothing**: `installer/x4pro_app/bootloader_16MB.bin` silently stays the old
+binary.
 
-**Procédure correcte après toute modif de `hooks.c`** :
-1. `cd boards/x4pro/factory && ./msf_build.bat build` (rebuild le VRAI bootloader avec le hook)
-2. `cd ../../.. && ./msf_build.bat build` (rebuild l'app + rafraîchit `installer/x4pro_app/` par copie)
-3. Flasher `installer/x4pro_app/bootloader_16MB.bin` (ou directement
-   `boards/x4pro/factory/build/bootloader/bootloader.bin`, identique) à
-   l'offset `0x0` — c'est le SEUL bootloader qui compte, qu'on teste
-   l'app ou la factory (bootloader partagé, flashé une seule fois).
+**Correct procedure after any `hooks.c` change**:
+1. `cd boards/x4pro/factory && ./msf_build.bat build` (rebuilds the REAL bootloader with the hook)
+2. `cd ../../.. && ./msf_build.bat build` (rebuilds the app + refreshes `installer/x4pro_app/` by copy)
+3. Flash `installer/x4pro_app/bootloader_16MB.bin` (or directly
+   `boards/x4pro/factory/build/bootloader/bootloader.bin`, identical) at
+   offset `0x0` — this is the ONLY bootloader that matters, whether testing
+   the app or the factory (shared bootloader, flashed only once).
 
-Un changement de defaut CMake (ex. `option(... OFF)` → `option(... ON)`
-dans `bootloader_components/custom_bootloader/CMakeLists.txt`) ne s'applique
-pas non plus tant que le cache CMake existant du projet factory n'est pas
-invalidé : `rm -rf boards/x4pro/factory/build` avant l'étape 1 si un
-`option()` a changé.
+A change to a CMake default (e.g. `option(... OFF)` → `option(... ON)`
+in `bootloader_components/custom_bootloader/CMakeLists.txt`) also does not
+apply as long as the factory project's existing CMake cache is not
+invalidated: `rm -rf boards/x4pro/factory/build` before step 1 if an
+`option()` has changed.
 
-**⚠️ Autre piège (observé 2026-09-16) : le premier boot juste après un
-flash peut sembler cassé (pas de réveil) alors que le firmware est bon.**
-Le reset envoyé par `esptool` en fin de flash (bascule RTS/DTR) n'est pas
-toujours électriquement équivalent à un power-on propre — l'état RTC/pad
-peut rester légèrement instable pour ce tout premier boot, en particulier
-depuis qu'on manipule directement le routage RTC_IO de GPIO3 dans le hook
-(§3, `rtcio_ll_function_select`). Un 2e reset (par ex. celui déclenché par
-la simple connexion d'un moniteur série) suffit à repartir sur un état
-stable. **Toujours faire un reset supplémentaire juste après chaque flash,
-avant de commencer les tests.**
+**⚠️ Another pitfall (observed 2026-09-16): the very first boot right after a
+flash may look broken (no wake-up) even though the firmware is fine.**
+The reset sent by `esptool` at the end of flashing (RTS/DTR toggle) is not
+always electrically equivalent to a clean power-on — the RTC/pad state
+can remain slightly unstable for this very first boot, especially since
+we now directly manipulate GPIO3's RTC_IO routing in the hook
+(§3, `rtcio_ll_function_select`). A 2nd reset (e.g. the one triggered by
+simply connecting a serial monitor) is enough to settle into a stable
+state. **Always perform an extra reset right after each flash,
+before starting tests.**
 
 ---
 
-## 4. Chemin logiciel vers la factory (à implémenter côté app, tâche 8c)
+## 4. Software path to the factory (to implement on the app side, task 8c)
 
-Équivalent MSF du `[ESP444]FACTORY` PiBot : **Power tenu ≥ 10 s**, depuis
-l'app éveillée ou depuis le réveil (ADR-009, amendé 2026-09-16 — combo
-Power+Right abandonné, hardware ne réveille jamais avec les deux boutons
-tenus ensemble). Le handler côté app (`power_mgr_switch_to_factory()`)
-doit reproduire la séquence du hook (cf. PiBot `esp444.cpp`) :
+MSF equivalent of PiBot's `[ESP444]FACTORY`: **Power held ≥ 10 s**, from
+the awake app or from wake-up (ADR-009, amended 2026-09-16 — Power+Right
+combo abandoned, hardware never wakes with both buttons
+held together). The app-side handler (`power_mgr_switch_to_factory()`)
+must reproduce the hook's sequence (cf. PiBot `esp444.cpp`):
 
 ```
-1. esp_flash_read() : backup des 2 entrées otadata @0xB000 + magic
-   (adresse hors partition → protection dangerous-write à gérer :
+1. esp_flash_read(): backup of the 2 otadata entries @0xB000 + magic
+   (address outside partitions → dangerous-write protection to handle:
    esp_flash_set_dangerous_write_protection() / sdkconfig, cf. PiBot)
-2. esp_ota_set_boot_partition(factory)   → efface otadata
+2. esp_ota_set_boot_partition(factory)   → erases otadata
 3. esp_restart()
-     └── bootloader : otadata vide → factory → restore (comme le hook)
+     └── bootloader: otadata empty → factory → restore (like the hook)
 ```
 
-Le stub `src/components/power_mgr/` porte le contrat ; l'implémentation
-arrive avec les drivers board (8c).
+The `src/components/power_mgr/` stub carries the contract; the
+implementation arrives with the board drivers (8c).
 
 ---
 
 ## 5. Factory app
 
-Source : `src/boards/x4pro/factory/main/` (13 fichiers). Flot identique au PiBot §
-Architecture : restore otadata **avant tout**, puis init écran/entrées,
+Source: `src/boards/x4pro/factory/main/` (13 files). Flow identical to
+PiBot § Architecture: restore otadata **first**, then init screen/inputs,
 menu, actions.
 
-### 5.1 Séquence au boot
+### 5.1 Boot sequence
 
-1. `restore_otadata_from_backup()` (logique PiBot, constantes §2)
-2. `eink_init()` — séquence UC8279 validée (PSR 0x37 à l'init, PSR 0x17
-   entre PON et DRF — **jamais 0x37 au DRF**, full GC bloqué, cf.
+1. `restore_otadata_from_backup()` (PiBot logic, constants §2)
+2. `eink_init()` — validated UC8279 sequence (PSR 0x37 at init, PSR 0x17
+   between PON and DRF — **never 0x37 at DRF**, full GC blocked, cf.
    `docs/hardware-specs.md`)
-2b. `splash_show()` (**nouveau 2026-09-15**, ADR-010 amendé) — affiche
-   `resources/splash.png` (converti en bitmap 1bpp par `tools/gen_splash.py`
-   → `main/splash_bitmap.h`) via `FreeInkUI::DisplayTarget`, copie figée
-   propre à la factory (`components/freeinkui/`, jamais partagée avec l'app).
-   Couvre le temps d'init entrées/SD ci-dessous d'une image fixe plutôt que
-   de laisser l'utilisateur voir le menu lui-même se faire flasher par son
-   propre full refresh — voir `splash.h`/`splash.cpp` (seul fichier de la
-   factory qui touche à FreeInkUI, isolé du reste écrit en C).
-3. `buttons_init()`, `touch_init()` (best-effort, non bloquant)
-4. Probe SD (`msf-fw.bin`) — plus de sondage app1 (retiré, ADR-011)
-5. Boucle : `button_wait_press(50)` + poll Home pad
+2b. `splash_show()` (**new on 2026-09-15**, ADR-010 amended) — displays
+   `resources/splash.png` (converted to a 1bpp bitmap by `tools/gen_splash.py`
+   → `main/splash_bitmap.h`) via `FreeInkUI::DisplayTarget`, a frozen copy
+   specific to the factory (`components/freeinkui/`, never shared with the
+   app). Covers the input/SD init time below with a fixed image instead of
+   letting the user watch the menu itself get flashed by its own full
+   refresh — see `splash.h`/`splash.cpp` (the only file in the
+   factory that touches FreeInkUI, isolated from the rest written in C).
+3. `buttons_init()`, `touch_init()` (best-effort, non-blocking)
+4. SD probe (`msf-fw.bin`) — no more app1 probing (removed, ADR-011)
+5. Loop: `button_wait_press(50)` + Home pad polling
 
-### 5.2 Navigation (différence PiBot)
+### 5.2 Navigation (difference from PiBot)
 
-| Entrée | Rôle |
+| Input | Role |
 |---|---|
-| Left (GPIO0) | haut |
-| Right (GPIO7) | bas |
-| **Pad Home** (zone tactile GT911 `raw_x<70, raw_y 660-720`, recalibrée 2026-09-15 — l'ancienne mesure 380-580 du 01:34 ne correspondait plus à la config hôte uploadée) | **select** |
-| Power (GPIO3) | select de secours (recovery utilisable sans touch) |
+| Left (GPIO0) | up |
+| Right (GPIO7) | down |
+| **Home pad** (GT911 touch zone `raw_x<70, raw_y 660-720`, recalibrated 2026-09-15 — the old 380-580 reading from 01:34 no longer matched the uploaded host config) | **select** |
+| Power (GPIO3) | fallback select (recovery usable without touch) |
 
-Le touch n'est pas re-dancé entre les polls (bug PiBot/probe connu :
-re-resetter à chaque lecture empêchait le scan).
+Touch is not re-danced between polls (known PiBot/probe bug: re-resetting
+on every read prevented scanning).
 
-### 5.3 Actions de flash SD
+### 5.3 SD flash actions
 
-| Item | Mécanisme |
+| Item | Mechanism |
 |---|---|
-| `SD -> app0` | `esp_ota_begin/write/end` + `esp_ota_set_boot_partition` + reboot (identique PiBot ; seul slot app depuis ADR-011) |
+| `SD -> app0` | `esp_ota_begin/write/end` + `esp_ota_set_boot_partition` + reboot (identical to PiBot; only app slot since ADR-011) |
 
-**`SD -> factory` retiré (2026-09-15)** : écrire la partition `factory`
-pendant qu'elle s'exécute depuis elle-même (XIP) expose à un brick sans
-filet de recovery en cas d'interruption en plein vol (coupure, bug). La
-factory est traitée comme le bootloader : mise à jour **uniquement par
-USB/serial** (`flash_mgr.py --variant x4pro_factory`), jamais en
-self-service sur le terrain. Voir ROADMAP.md, amendement ADR-007/ADR-011.
-| `SD -> factory` | **Nouveauté MSF** : `esp_partition_erase_range` + `esp_partition_write` directe, puis reboot sur factory. Le recovery se met à jour lui-même (cohérent ADR-003 : mise à jour SD uniquement) |
+**`SD -> factory` removed (2026-09-15)**: writing the `factory` partition
+while it is running from itself (XIP) exposes it to a brick with no
+recovery safety net if interrupted mid-flight (power loss, bug). The
+factory is treated like the bootloader: updated **only via
+USB/serial** (`flash_mgr.py --variant x4pro_factory`), never self-service
+in the field. See ROADMAP.md, ADR-007/ADR-011 amendment.
+| `SD -> factory` | **MSF novelty**: direct `esp_partition_erase_range` + `esp_partition_write`, then reboot into factory. The recovery updates itself (consistent with ADR-003: SD-only updates) |
 
-Conventions de fichier identiques au PiBot : `msf-fw.bin` → renommé
-`msf-fw.ok` (succès) ou `msf-fw.bad` (échec).
+File conventions identical to PiBot: `msf-fw.bin` → renamed to
+`msf-fw.ok` (success) or `msf-fw.bad` (failure).
 
-Progression : redraw complet à chaque palier de 10 % (un full refresh e-ink
-dure déjà ~2-4 s ; ~10 redraws pour un flash de 2 Mo — acceptable pour un
-recovery). **Différence PiBot** : pas de redraw partiel possible (e-ink) ;
-le PiBot redessinait par zones sur LCD.
+Progress: full redraw at every 10% step (a full e-ink refresh already
+takes ~2-4 s; ~10 redraws for a 2 MB flash — acceptable for a
+recovery). **Difference from PiBot**: no partial redraw possible (e-ink);
+PiBot redrew by zones on the LCD.
 
-### 5.4 Contraintes e-ink (vs LCD PiBot)
+### 5.4 E-ink constraints (vs PiBot LCD)
 
-- Un seul `gfx_flush()` par écran (framebuffer complet).
-- Pas d'animation, pas de feedback visuel d'appui rapide (le full refresh
-  est plus lent qu'un appui) — le feedback est le redraw suivant.
-- Sélection menu = **inversion vidéo** (fill noir + texte blanc).
-- `eink_power_off()` avant tout `esp_restart()` sortant (image conservée).
+- A single `gfx_flush()` per screen (full framebuffer).
+- No animation, no fast-press visual feedback (the full refresh
+  is slower than a press) — the feedback is the next redraw.
+- Menu selection = **video inversion** (black fill + white text).
+- `eink_power_off()` before any outgoing `esp_restart()` (image retained).
 
-### 5.5 sdkconfig factory (identique PiBot + points propres)
+### 5.5 Factory sdkconfig (identical to PiBot + specific points)
 
 ```ini
-CONFIG_SPI_FLASH_DANGEROUS_WRITE_ALLOWED=y   # effacement du backup @0xB000
-CONFIG_PARTITION_TABLE_OFFSET=0xC000         # DOIT matcher l'app principale
-CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../partitions.csv"  # relatif a boards/<board>/factory/ -> boards/<board>/partitions.csv
+CONFIG_SPI_FLASH_DANGEROUS_WRITE_ALLOWED=y   # erasing the backup @0xB000
+CONFIG_PARTITION_TABLE_OFFSET=0xC000         # MUST match the main app
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../partitions.csv"  # relative to boards/<board>/factory/ -> boards/<board>/partitions.csv
 ```
 
-Budget stack/heap : le framebuffer e-ink (48 Ko) vit en **DRAM interne**
-(zéro PSRAM requise, choix validé par le probe) ; la factory tient
-largement dans sa partition de 1 Mo.
+Stack/heap budget: the e-ink framebuffer (48 KB) lives in **internal
+DRAM** (zero PSRAM required, choice validated by the probe); the factory
+fits comfortably within its 1 MB partition.
 
 ---
 
-## 6. Layout flash 16 Mo (ADR-007, amendé ADR-011 : app1 retiré)
+## 6. 16 MB flash layout (ADR-007, amended ADR-011: app1 removed)
 
 ```
-0x001000  Bootloader (custom, hooks S3)
-0x00B000  ← OTADATA BACKUP (contrat hooks.c / main.c)
-0x00C000  Table des partitions (CONFIG_PARTITION_TABLE_OFFSET)
+0x001000  Bootloader (custom, S3 hooks)
+0x00B000  ← OTADATA BACKUP (hooks.c / main.c contract)
+0x00C000  Partition table (CONFIG_PARTITION_TABLE_OFFSET)
 0x00D000  NVS          0x3000
 0x010000  otadata      0x2000
-0x020000  factory      0x100000  (1 Mo)
-0x120000  app0 (ota_0) 0x200000  (2 Mo)
-0x320000  secrets      0x240000  (2,25 Mo — blob keystore chiffré, ADR-002 ;
-                                  agrandi de 0x40000 par l'espace libéré
-                                  par app1, ADR-011)
+0x020000  factory      0x100000  (1 MB)
+0x120000  app0 (ota_0) 0x200000  (2 MB)
+0x320000  secrets      0x240000  (2.25 MB — encrypted keystore blob, ADR-002;
+                                  enlarged by 0x40000 with the space freed
+                                  by app1, ADR-011)
 0x560000  coredump     0x10000
 ```
 
-Le flash se fait via `flash_mgr.py` (interactif avec mémoire) ou les
-`.bat` de `boards/x4pro/flash_scripts/` :
-- `x4pro_app` — install complet (firmware + factory + bootloader hook +
-  partitions + otadata avec seq=1) → boot direct sur l'app ;
+Flashing is done via `flash_mgr.py` (interactive with memory) or the
+`.bat` files in `boards/x4pro/flash_scripts/`:
+- `x4pro_app` — full install (firmware + factory + bootloader hook +
+  partitions + otadata with seq=1) → boots directly into the app;
 - `x4pro_factory` — rescue (factory + bootloader + partitions + otadata
-  zero) → boot GARANTI sur le menu recovery.
+  zeroed) → GUARANTEED boot into the recovery menu.
 
-Les dossiers `installer/<variant>/` sont alimentes par les postbuild cmake
-de chaque projet ; chacun porte une flash map JSON (`<variant>.json`,
-format `{meta, files}`) — source unique de verite, consommee par
-flash_mgr.py ET reutilisable par un web installer.
+The `installer/<variant>/` folders are populated by each project's
+postbuild cmake step; each one carries a JSON flash map (`<variant>.json`,
+format `{meta, files}`) — the single source of truth, consumed by
+flash_mgr.py AND reusable by a web installer.
 
 ---
 
-## 7. Troubleshooting (adapté du PiBot)
+## 7. Troubleshooting (adapted from PiBot)
 
-| Symptôme | Piste |
+| Symptom | Lead |
 |---|---|
-| Bootloader trop grand | `CONFIG_BOOTLOADER_LOG_LEVEL` → WARN/NONE ; vérifier marge 0xB000 |
-| Bootloader pas reconstruit après modif hooks.c | `rm -rf build/bootloader` / `idf.py bootloader-flash` |
-| Factory boote en boucle | Restore otadata non effectué : vérifier magic backup, log "secteur backup efface" |
-| Pas de restore après power cycle | PiBot §"otadata not restored" : vérifier `CONFIG_SPI_FLASH_DANGEROUS_WRITE_ALLOWED=y` (abort silencieux sinon) |
-| Écran gris + BUSY bloqué | PSR 0x37 écrit au DRF : power cycle USB 30 s, corriger la séquence (§5.1 / hardware-specs) |
-| Touch mort dans la factory | Upload config GT911 (0x8047==0x00 → dance POR + 185 o) — cf. `touch.c`, ne pas re-dancer entre polls |
-| Crash SD (`LoadProhibited` tlsf_malloc) | PiBot : heap trop basse pour SD+OTA ; ici 512 Ko SRAM S3, surveiller `esp_get_free_heap_size` en debug |
+| Bootloader too large | `CONFIG_BOOTLOADER_LOG_LEVEL` → WARN/NONE; check the 0xB000 margin |
+| Bootloader not rebuilt after modifying hooks.c | `rm -rf build/bootloader` / `idf.py bootloader-flash` |
+| Factory boot-loops | otadata restore not performed: check the backup magic, log "backup sector erased" |
+| No restore after power cycle | PiBot §"otadata not restored": check `CONFIG_SPI_FLASH_DANGEROUS_WRITE_ALLOWED=y` (silent abort otherwise) |
+| Gray screen + BUSY stuck | PSR 0x37 written at DRF: 30 s USB power cycle, fix the sequence (§5.1 / hardware-specs) |
+| Touch dead in the factory | GT911 config upload (0x8047==0x00 → POR dance + 185 bytes) — cf. `touch.c`, do not re-dance between polls |
+| SD crash (`LoadProhibited` tlsf_malloc) | PiBot: heap too low for SD+OTA; here 512 KB S3 SRAM, monitor `esp_get_free_heap_size` in debug |
 
 ---
 
-## 8. Non porté du PiBot (volontairement)
+## 8. Not ported from PiBot (deliberately)
 
-- **Snapshot system** (`docs/Factory/Snapshot system.md`) : capture d'écran
-  LCD → SD pour la doc. Non applicable : e-ink 1 bpp, et la doc se fait
-  autrement (photos). Référence gardée dans le repo PiBot.
-- **Encodeur rotatif** : pas de hardware sur le X4 Pro.
-- **Buzzer** : pas de hardware.
-- **Backends log SD/telnet/web** (esp3d_log) : air-gap, backend serial
-  suffit pour le dev.
+- **Snapshot system** (`docs/Factory/Snapshot system.md`): LCD screen
+  capture → SD for documentation. Not applicable: 1 bpp e-ink, and
+  documentation is done differently (photos). Reference kept in the PiBot repo.
+- **Rotary encoder**: no hardware on the X4 Pro.
+- **Buzzer**: no hardware.
+- **SD/telnet/web log backends** (esp3d_log): air-gap, the serial
+  backend is sufficient for development.
 
 ---
 
-*Sources : doc PiBot originale (`Luc-Pibot-cnc-pendant-firmware/docs/Factory/`,
-MIT/LGPL selon fichiers), bring-up X4 Pro (`docs/hardware-specs.md`,
+*Sources: original PiBot doc (`Luc-Pibot-cnc-pendant-firmware/docs/Factory/`,
+MIT/LGPL depending on file), X4 Pro bring-up (`docs/hardware-specs.md`,
 `test_apps/x4pro-probe`), ADR-007/008/009 (`docs/ROADMAP.md`).*

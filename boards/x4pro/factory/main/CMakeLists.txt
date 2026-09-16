@@ -1,5 +1,5 @@
-# MySafeFob Factory app — recovery X4 Pro (gfx 1 bpp maison + splash
-# FreeInkUI, copie figee cf. components/freeinkui/, ADR-010 amende)
+# MySafeFob Factory app — X4 Pro recovery (homemade 1 bpp gfx + FreeInkUI
+# splash, frozen copy see components/freeinkui/, ADR-010 amended)
 idf_component_register(SRCS
                            "main.c"
                            "eink.c"
@@ -17,10 +17,10 @@ idf_component_register(SRCS
                        REQUIRES driver esp_timer spi_flash esp_partition
                                 app_update sdmmc fatfs freeinkui)
 
-# BUGFIX : ENABLE_FACTORY_DEBUG_LOG (factory/CMakeLists.txt) n'etait cable
-# que pour le composant bootloader (cf. bootloader_components/custom_bootloader/
-# CMakeLists.txt) -> FACTORY_LOG_LEVEL valait toujours 0 ici, donc TOUS les
-# FACTORY_LOGD(...) de main.c etaient compiles en no-op quel que soit l'option.
+# BUGFIX: ENABLE_FACTORY_DEBUG_LOG (factory/CMakeLists.txt) was only wired
+# for the bootloader component (see bootloader_components/custom_bootloader/
+# CMakeLists.txt) -> FACTORY_LOG_LEVEL was always 0 here, so ALL
+# FACTORY_LOGD(...) calls in main.c compiled to a no-op regardless of the option.
 if(ENABLE_FACTORY_DEBUG_LOG)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE FACTORY_LOG_LEVEL=1)
     message(STATUS "Factory app debug log: ON")

@@ -1,12 +1,12 @@
 /**
  * @file gfx.h
- * @brief MySafeFob Factory — GFX 1 bpp pour e-paper (portage PiBot gfx.h).
+ * @brief MySafeFob Factory — 1 bpp GFX for e-paper (port of PiBot gfx.h).
  *
- * Difference majeure vs PiBot : le PiBot ecrivait directement au LCD
- * (ili9341_flush par zone). Ici les primitives ecrivent dans un framebuffer
- * 1 bpp en RAM (800x480/8 = 48 Ko, DRAM interne) et gfx_flush() pousse le
- * framebuffer ENTIER vers le panel e-ink (full refresh ~2-4 s).
- * Regle d'usage e-ink : dessiner tout l'ecran en RAM, puis UN SEUL flush.
+ * Major difference vs PiBot: PiBot wrote directly to the LCD
+ * (ili9341_flush by zone). Here the primitives write into a 1 bpp
+ * framebuffer in RAM (800x480/8 = 48 KB, internal DRAM) and gfx_flush()
+ * pushes the ENTIRE framebuffer to the e-ink panel (full refresh ~2-4s).
+ * E-ink usage rule: draw the whole screen in RAM, then a SINGLE flush.
  */
 #pragma once
 
@@ -15,47 +15,47 @@
 #include "hw_config.h"
 #include "font8x16.h"
 
-/* 1 bpp : 1 = blanc (pixel relaxe), 0 = noir (pixel charge) */
+/* 1 bpp: 1 = white (relaxed pixel), 0 = black (charged pixel) */
 #define COLOR_BLACK     0
 #define COLOR_WHITE     1
 
-/* Police x2 (demande utilisateur 2026-09-14 : 8x16 trop petite sur le
- * 3.7" portrait). Glyphe rendu en bloc 2x2 pixels. */
+/* x2 font (user request 2026-09-14: 8x16 too small on the
+ * 3.7" portrait). Glyph rendered as a 2x2 pixel block. */
 #define GFX_FONT_SCALE  2
 #define GFX_FONT_W      (FONT_WIDTH * GFX_FONT_SCALE)    /* 16 px */
 #define GFX_FONT_H      (FONT_HEIGHT * GFX_FONT_SCALE)   /* 32 px */
 
 /**
- * @brief Init gfx (vide le framebuffer). L'init e-ink se fait avant.
+ * @brief Init gfx (clears the framebuffer). E-ink init happens before this.
  */
 void gfx_init(void);
 
 /**
- * @brief Remplit le framebuffer d'une couleur (n'affiche pas).
+ * @brief Fills the framebuffer with a color (does not display it).
  */
 void gfx_clear(uint8_t color);
 
 /**
- * @brief Pousse le framebuffer complet vers le panel (full refresh, bloquant
- *        ~2-4 s). A appeler une seule fois par ecran.
+ * @brief Pushes the full framebuffer to the panel (full refresh, blocking
+ *        ~2-4s). Call once per screen.
  */
 void gfx_flush(void);
 
 /**
- * @brief Variante refresh rapide DU (~0,5-1 s, sans flash d'inversion) pour
- *        la navigation. Retombe en full GC quand necessaire (1er affichage
- *        ou budget de ghosts epuise — voir eink_display_fb_fast).
+ * @brief Fast DU refresh variant (~0.5-1s, no inverting flash) for
+ *        navigation. Falls back to full GC when needed (first display
+ *        or ghost budget exhausted — see eink_display_fb_fast).
  */
 void gfx_flush_fast(void);
 
 /**
- * @brief Framebuffer partage (paysage 800x480, meme convention 1bpp que
- *        FreeInkUIDisplayTarget — 1=blanc, MSB-first). Expose pour
- *        battery_icon.cpp : dessine directement dedans avec DisplayTarget
- *        (memes coords logiques portrait que gfx_*, meme rotation
- *        interne), gfx_flush()/gfx_flush_fast() poussent le resultat
- *        combine. Ne pas modifier la taille/convention sans mettre a jour
- *        les deux cotes.
+ * @brief Shared framebuffer (landscape 800x480, same 1bpp convention as
+ *        FreeInkUIDisplayTarget — 1=white, MSB-first). Exposed for
+ *        battery_icon.cpp: draws directly into it with DisplayTarget
+ *        (same logical portrait coords as gfx_*, same internal
+ *        rotation), gfx_flush()/gfx_flush_fast() push the combined
+ *        result. Do not change the size/convention without updating
+ *        both sides.
  */
 uint8_t *gfx_framebuffer(void);
 
@@ -66,6 +66,6 @@ void gfx_vline(int x, int y, int h, uint8_t color);
 void gfx_rect(int x, int y, int w, int h, uint8_t color);
 void gfx_fill_rect(int x, int y, int w, int h, uint8_t color);
 
-/* Raccourcis d'aide au centrage */
+/* Centering helper shortcuts */
 #define GFX_TEXT_WIDTH(s)   ((int)strlen(s) * GFX_FONT_W)
 #define GFX_CENTER_X(s)     ((SCREEN_WIDTH - GFX_TEXT_WIDTH(s)) / 2)

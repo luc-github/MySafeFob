@@ -1,48 +1,49 @@
 # Board `x4pro` — XTEINK X4 Pro Developer Edition
 
-Board principale du projet MySafeFob. **Bring-up hardware complet et validé**
-(2026-09-13) — la référence unique des pins/drivers est
-[`docs/hardware-specs.md`](../../../docs/hardware-specs.md) (à la racine du
-repo). Ce README ne fait que résumer et pointer.
+Main board of the MySafeFob project. **Complete and validated hardware
+bring-up** (2026-09-13) — the single reference for pins/drivers is
+[`docs/hardware-specs.md`](../../../docs/hardware-specs.md) (at the repo
+root). This README only summarizes and points there.
 
-## Résumé hardware
+## Hardware summary
 
-| Élément | Valeur |
+| Element | Value |
 |---|---|
-| SoC | ESP32-S3R8 (2×LX7 @240 MHz, 512 KB SRAM, **8 Mo PSRAM octal**) |
+| SoC | ESP32-S3R8 (2×LX7 @240 MHz, 512 KB SRAM, **8 MB octal PSRAM**) |
 | Flash | 16 MB quad, 3.3 V |
-| E-paper | 4.3" 800×480 B/W, contrôleur **UC8279** (SPI 10 MHz, BUSY actif-LOW) |
-| Touch | **GT911** I2C @0x5D (upload config obligatoire à chaque boot) |
-| RTC | **BM8563** @0x51 (backup batterie, tient l'heure à travers les flashs) |
-| Gauge | **CW2017** @0x63 + charge sur GPIO21 |
-| Frontlight | dual warm/cool, LEDC 25 kHz 10 bits (GPIO8/9, actif-HIGH) |
-| SD | SDMMC natif 1-bit (CLK=41, CMD=42, DAT0=40, power GPIO5 actif-LOW) |
-| Boutons | Left=GPIO0 (⚠ strapping), Right=GPIO7, Power=GPIO3 — actif-LOW |
-| Home | zone tactile logicielle GT911 (point brut ~(36,479)) |
-| Rails | GPIO1 HIGH permanent (périphs), GPIO2 LOW (touch), GPIO5 LOW (SD) |
+| E-paper | 4.3" 800×480 B/W, **UC8279** controller (SPI 10 MHz, BUSY active-LOW) |
+| Touch | **GT911** I2C @0x5D (config upload mandatory on every boot) |
+| RTC | **BM8563** @0x51 (battery backup, keeps time across flashes) |
+| Gauge | **CW2017** @0x63 + charging on GPIO21 |
+| Frontlight | dual warm/cool, LEDC 25 kHz 10-bit (GPIO8/9, active-HIGH) |
+| SD | native 1-bit SDMMC (CLK=41, CMD=42, DAT0=40, power GPIO5 active-LOW) |
+| Buttons | Left=GPIO0 (⚠ strapping), Right=GPIO7, Power=GPIO3 — active-LOW |
+| Home | GT911 software touch zone (raw point ~(36,479)) |
+| Rails | GPIO1 permanently HIGH (peripherals), GPIO2 LOW (touch), GPIO5 LOW (SD) |
 
-## Contraintes critiques (validées, ne pas rouvrir)
+## Critical constraints (validated, do not reopen)
 
-- **E-ink** : entre PON et DRF, PSR doit être `0x17` (REG=0, scan MTP).
-  **JAMAIS** `0x37` (REG=1) au DRF → full GC bloqué (BUSY LOW > 20 s,
-  écran gris). Orientation = rotation 90° CW matérielle, framebuffer natif
-  800×480 paysage, stream brut, aucun transform logiciel.
-- **GT911** : pas de self-load (config OTP vide) → upload hôte de 185 octets
-  @0x8047 (checksum) + 0x01 @0x8100 à chaque boot, en mode CONFIG UPDATE
-  (POR sous reset RST=GPIO4 avec INT=GPIO10 LOW). Config volatile : ré-upload
-  après tout reset. Mapping : swapXY=true, invert_y(post-swap)=true.
-- **I2C** (anomalie IDF 5.4) : toute lecture de présence doit lire ≥ 2 octets.
-- **pdMS_TO_TICKS < 10 ms = 0 tick** → utiliser `esp_rom_delay_us` dans
-  les séquences timing critiques (reset touch notamment).
+- **E-ink**: between PON and DRF, PSR must be `0x17` (REG=0, MTP scan).
+  **NEVER** `0x37` (REG=1) at DRF → full GC stalls (BUSY LOW > 20 s,
+  gray screen). Orientation = 90° CW hardware rotation, native
+  800×480 landscape framebuffer, raw stream, no software transform.
+- **GT911**: no self-load (empty OTP config) → host upload of 185 bytes
+  @0x8047 (checksum) + 0x01 @0x8100 on every boot, in CONFIG UPDATE
+  mode (POR under reset RST=GPIO4 with INT=GPIO10 LOW). Volatile config:
+  re-upload after every reset. Mapping: swapXY=true, invert_y(post-swap)=true.
+- **I2C** (IDF 5.4 anomaly): any presence read must read ≥ 2 bytes.
+- **pdMS_TO_TICKS < 10 ms = 0 tick** → use `esp_rom_delay_us` in
+  timing-critical sequences (notably touch reset).
 
-## Driver de référence
+## Reference driver
 
-Le probe `test_apps/x4pro-probe/` contient le code de bring-up validé :
-commandes `einkucinit`/`einkuc`/`einkuc2` (UC8279), `touchcfg`/`touchinfo`
-(GT911 + upload config), `cmd_rtc`, `cmd_gauge`, `cmd_sd`, `cmd_btn`,
-`set_rails`. Les drivers finaux de la tâche 8c en sont extraits.
+The `test_apps/x4pro-probe/` probe contains the validated bring-up code:
+commands `einkucinit`/`einkuc`/`einkuc2` (UC8279), `touchcfg`/`touchinfo`
+(GT911 + config upload), `cmd_rtc`, `cmd_gauge`, `cmd_sd`, `cmd_btn`,
+`set_rails`. The final drivers for task 8c are extracted from these.
 
 ## Toolchain
 
-Cible IDF **5.5.5** (install en cours côté utilisateur). Le probe tourne en
-5.4.3 — portage hooks bootloader S3 à vérifier à la 1re compilation (ADR-007).
+Target IDF **5.5.5** (installation in progress on the user's side). The
+probe runs on 5.4.3 — S3 bootloader hook porting to be verified at the
+1st compilation (ADR-007).

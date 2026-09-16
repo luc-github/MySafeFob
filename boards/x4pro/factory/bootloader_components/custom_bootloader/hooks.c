@@ -2,32 +2,32 @@
  * @file hooks.c
  * @brief MySafeFob — custom bootloader hooks (ADR-007).
  *
- * Portage du hook éprouvé du projet PiBot (PiBot CNC Pendant, Luc LEBOSSE,
- * LGPL-2.1+) vers ESP32-S3 / IDF 5.5.x, X4 Pro.
+ * Port of the proven hook from the PiBot project (PiBot CNC Pendant, Luc LEBOSSE,
+ * LGPL-2.1+) to ESP32-S3 / IDF 5.5.x, X4 Pro.
  *
- * Recovery trigger (ADR-009 amende 2026-09-16) : bouton POWER (GPIO3)
- * maintenu au reveil pendant >= 10 s :
- *   1. Backup otadata vers le secteur réservé 0xB000 (+ magic 0xAA55AA55)
- *   2. Erase otadata -> le bootloader standard boote la partition "factory"
+ * Recovery trigger (ADR-009 amended 2026-09-16): POWER button (GPIO3)
+ * held at wake for >= 10s:
+ *   1. Backup otadata to the reserved sector 0xB000 (+ magic 0xAA55AA55)
+ *   2. Erase otadata -> the standard bootloader boots the "factory" partition
  *   3. Software reset -> boot factory
  *
- * La factory app restaure otadata depuis le backup au démarrage (puis
- * efface le backup) : un power-off depuis la factory renvoie vers la
- * bonne partition OTA.
+ * The factory app restores otadata from the backup at startup (then
+ * erases the backup): a power-off from the factory returns to the
+ * correct OTA partition.
  *
- * Historique : le trigger initial utilisait un combo Power+Right (GPIO7).
- * Abandonne — teste sur hardware, Power+Right ensemble n'a JAMAIS reveille
- * le device, quelle que soit la duree de maintien (probleme en amont du
- * hook, pas un souci de timing logiciel). Remplace par Power seul, mesure
- * de duree : ce hook s'execute au reveil (le bouton qui reveille le S3 est
- * deja Power), donc il suffit de continuer a mesurer combien de temps
- * GPIO3 reste bas apres le reveil.
+ * History: the initial trigger used a Power+Right combo (GPIO7).
+ * Dropped — tested on hardware, Power+Right together NEVER woke the
+ * device, regardless of hold duration (a problem upstream of the
+ * hook, not a software timing issue). Replaced by Power alone, duration
+ * measurement: this hook runs at wake-up (the button that woke the S3 is
+ * already Power), so it's enough to keep measuring how long
+ * GPIO3 stays low after wake-up.
  *
- * Points de portage validés PiBot->MSF (ADR-007 §4) :
- *   - Pas de buzzer sur le X4 Pro : acquittement = logs esp_rom_printf.
- *   - Trigger = GPIO3 (Power) : GPIO0 est strapping (Left).
- *   - Signatures esp_rom_spiflash_* sur S3 / IDF 5.5.5 : A VERIFIER a la
- *     1re compilation (le code d'origine tourne en 5.4.3 sur ESP32 classic).
+ * Validated PiBot->MSF porting points (ADR-007 §4):
+ *   - No buzzer on the X4 Pro: acknowledgment = esp_rom_printf logs.
+ *   - Trigger = GPIO3 (Power): GPIO0 is strapping (Left).
+ *   - esp_rom_spiflash_* signatures on S3 / IDF 5.5.5: TO BE VERIFIED at
+ *     the 1st compile (the original code runs on 5.4.3 on classic ESP32).
  */
 
 #include <string.h>
@@ -45,9 +45,9 @@
 
 static const char *TAG = "msf-hook";
 
-/* CONFIG_BOOTLOADER_LOG_LEVEL_NONE strippe ESP_LOG* a ce stade de build :
- * impressions directes via esp_rom_printf, gatees par FACTORY_LOG_LEVEL
- * (voir CMakeLists.txt), independant du sdkconfig. Erreurs/warnings toujours. */
+/* CONFIG_BOOTLOADER_LOG_LEVEL_NONE strips ESP_LOG* at this build stage:
+ * direct prints via esp_rom_printf, gated by FACTORY_LOG_LEVEL
+ * (see CMakeLists.txt), independent of sdkconfig. Errors/warnings always on. */
 #ifndef FACTORY_LOG_LEVEL
 #define FACTORY_LOG_LEVEL 0
 #endif
@@ -65,43 +65,43 @@ static const char *TAG = "msf-hook";
  * Hardware config (X4 Pro — docs/hardware-specs.md)
  * ----------------------------------------------------------------------- */
 
-#define RECOVERY_BUTTON_PIN   GPIO_NUM_3   /* Bouton Power, actif-LOW, pull-up */
+#define RECOVERY_BUTTON_PIN   GPIO_NUM_3   /* Power button, active-LOW, pull-up */
 
 /*
- * WARNING — CONTRAINTE CRITIQUE : SECTEUR DE BACKUP OTADATA
+ * WARNING — CRITICAL CONSTRAINT: OTADATA BACKUP SECTOR
  * ==========================================================
- * Le secteur de backup doit satisfaire TOUTES ces conditions :
+ * The backup sector must satisfy ALL of these conditions:
  *
- *   1. APRES la fin du bootloader : bootloader @0x1000, binaire S3 ~20-24 Ko,
- *      prochaine frontiere 4 KB = 0x7000. Backup doit etre >= 0x7000
- *      (0xB000 le fait avec marge ; taille bootloader S3 a mesurer).
- *   2. AVANT la table des partitions : CONFIG_PARTITION_TABLE_OFFSET=0xC000.
+ *   1. AFTER the end of the bootloader: bootloader @0x1000, S3 binary ~20-24 KB,
+ *      next 4 KB boundary = 0x7000. Backup must be >= 0x7000
+ *      (0xB000 does this with margin; S3 bootloader size to be measured).
+ *   2. BEFORE the partition table: CONFIG_PARTITION_TABLE_OFFSET=0xC000.
  *      Backup + 0x1000 <= 0xC000  =>  backup <= 0xB000.
- *   3. EN DEHORS de toute partition : le check dangerous-write de l'IDF aborte
- *      si l'adresse est dans une partition connue. 0xB000 est hors partitions
- *      (1re partition = NVS @0xD000). OK.
- *   4. Aligne 4 KB (frontiere de secteur).
+ *   3. OUTSIDE any partition: the IDF dangerous-write check aborts
+ *      if the address is inside a known partition. 0xB000 is outside partitions
+ *      (1st partition = NVS @0xD000). OK.
+ *   4. 4 KB aligned (sector boundary).
  *
- * DANGER — CONFIG_SPI_FLASH_DANGEROUS_WRITE :
- *   La factory efface le backup via esp_flash_erase_region(NULL, 0xB000, ...).
- *   Avec le defaut ABORTS, toute adresse avant la 1re partition (0xD000) est
- *   "dangerous" -> abort(). Le sdkconfig.defaults de la factory DOIT avoir
- *   CONFIG_SPI_FLASH_DANGEROUS_WRITE_ALLOWED=y. (deja en place)
+ * DANGER — CONFIG_SPI_FLASH_DANGEROUS_WRITE:
+ *   The factory erases the backup via esp_flash_erase_region(NULL, 0xB000, ...).
+ *   With the default ABORTS, any address before the 1st partition (0xD000) is
+ *   "dangerous" -> abort(). The factory's sdkconfig.defaults MUST have
+ *   CONFIG_SPI_FLASH_DANGEROUS_WRITE_ALLOWED=y. (already in place)
  *
- * Layout MSF (16 MB, ADR-007) :
+ * MSF layout (16 MB, ADR-007):
  *   0x1000       Bootloader
- *   ~0x7000      Fin bootloader S3 (a mesurer — marge jusqu'a 0xB000)
- *   0xB000       <- OTADATA BACKUP (ce secteur)
- *   0xC000       Table des partitions
- *   0xD000       NVS (1re partition)
+ *   ~0x7000      End of S3 bootloader (to be measured — margin up to 0xB000)
+ *   0xB000       <- OTADATA BACKUP (this sector)
+ *   0xC000       Partition table
+ *   0xD000       NVS (1st partition)
  *
- * Contenu du secteur de backup :
- *   [0x000] entree otadata 1 (32 octets utilises, reste 0xFF)
- *   [0x020] entree otadata 2 (32 octets utilises, reste 0xFF)
- *   [0x040] magic : 0xAA55AA55 (backup valide)
+ * Backup sector content:
+ *   [0x000] otadata entry 1 (32 bytes used, rest 0xFF)
+ *   [0x020] otadata entry 2 (32 bytes used, rest 0xFF)
+ *   [0x040] magic: 0xAA55AA55 (valid backup)
  *
- * CONTRAT PARTAGE : ces valeurs DOIVENT etre identiques dans hooks.c et
- * dans main.c de la factory app.
+ * SHARED CONTRACT: these values MUST be identical in hooks.c and
+ * in the factory app's main.c.
  */
 #define OTADATA_OFFSET          0x10000
 #define OTADATA_SECTOR_1        (OTADATA_OFFSET / FLASH_SECTOR_SIZE)
@@ -113,31 +113,31 @@ static const char *TAG = "msf-hook";
 #define BACKUP_MAGIC_OFFSET     0x40
 #define BACKUP_MAGIC            0xAA55AA55
 
-/* BUGFIX UX 2026-09-16 : l'ancienne logique demandait de RELACHER le bouton
- * dans une fenetre courte suivant sa detection, sinon annulation ("maintenu
- * trop longtemps"). Aucun retour (visuel/audio) n'existe pendant le boot
- * pour savoir quand cette fenetre commence -> impossible de timer un
- * relachement precis en usage reel. Inverse : Power tenu en continu
- * JUSQU'AU seuil declenche la bascule automatiquement (pas besoin de
- * relacher a un instant precis) ; relache avant le seuil = annule.
+/* UX BUGFIX 2026-09-16: the old logic required RELEASING the button
+ * within a short window after detection, otherwise cancel ("held too
+ * long"). No feedback (visual/audio) exists during boot to know when
+ * this window starts -> impossible to time a precise release in real
+ * use. Inverted: Power held continuously UNTIL the threshold triggers
+ * the switch automatically (no need to release at a precise instant);
+ * releasing before the threshold = cancel.
  *
- * Seuil final (2026-09-16, ADR-009 amende) : 10 s, aligne sur le seuil
- * logiciel cote app eveillee (power_mgr_switch_to_factory) — meme geste
- * ("tenir Power 10s") quel que soit l'etat de depart (eveille ou endormi). */
+ * Final threshold (2026-09-16, ADR-009 amended): 10s, aligned with the
+ * software threshold on the awake app side (power_mgr_switch_to_factory) —
+ * same gesture ("hold Power 10s") regardless of the starting state (awake or asleep). */
 #define CONFIRM_HOLD_US      (10 * 1000000)
 
-/* BUGFIX 2026-09-16 : is_button_pressed() bloque deja ~25 ms en interne
- * (5 lectures x 5 ms). La boucle de confirmation ajoutait PAR-DESSUS un
- * delai artificiel de 10 ms (POLL_INTERVAL_US) tout en ne comptant QUE ces
- * 10 ms dans held_us — le temps reel ecoule par iteration (~35 ms) etait
- * donc sous-estime d'un facteur ~3.5x. Consequence concrete : pour que
- * held_us atteigne CONFIRM_HOLD_US (10 s), il fallait en realite maintenir
- * le bouton ~35 s. Fix : compter le temps reellement ecoule (la duree
- * interne de is_button_pressed()), sans delai supplementaire. */
-#define BUTTON_SAMPLE_US    (5 * 5000)  /* duree reelle de is_button_pressed() */
+/* BUGFIX 2026-09-16: is_button_pressed() already blocks for ~25ms internally
+ * (5 reads x 5ms). The confirmation loop was ADDING an artificial 10ms
+ * delay on top (POLL_INTERVAL_US) while counting ONLY those 10ms into
+ * held_us — the real time elapsed per iteration (~35ms) was thus
+ * underestimated by a factor of ~3.5x. Concrete consequence: for
+ * held_us to reach CONFIRM_HOLD_US (10s), the button actually had to be
+ * held for ~35s. Fix: count the time actually elapsed (the internal
+ * duration of is_button_pressed()), with no extra delay. */
+#define BUTTON_SAMPLE_US    (5 * 5000)  /* actual duration of is_button_pressed() */
 
 /* -----------------------------------------------------------------------
- * Bouton (actif-LOW, anti-rebond logiciel)
+ * Button (active-LOW, software debounce)
  * ----------------------------------------------------------------------- */
 
 static bool is_button_pressed(gpio_num_t pin)
@@ -152,21 +152,21 @@ static bool is_button_pressed(gpio_num_t pin)
     return pressed_count >= 3;
 }
 
-/* BUGFIX 2026-09-16 (root cause du "plus aucun reveil ni bascule factory,
- * meme apres 12 s") : CONFIG_BOOTLOADER_WDT_ENABLE arme le RTC WDT (RWDT)
- * avec un timeout unique CONFIG_BOOTLOADER_WDT_TIME_MS = 9000 ms AVANT
- * l'appel a bootloader_after_init() (bootloader_init.c, action
- * WDT_STAGE_ACTION_RESET_RTC). Notre boucle de confirmation bloque
- * DELIBEREMENT jusqu'a CONFIRM_HOLD_US = 10 s SANS jamais nourrir ce chien
- * de garde -> il se declenche a 9 s, RESET le chip AVANT d'atteindre le
- * seuil, qui reboote... dans le meme hook, qui rearme le meme WDT pour un
- * nouveau cycle de 9 s max, etc. Tant que l'utilisateur maintient le
- * bouton, le seuil de 10 s n'est donc JAMAIS atteignable : boucle de reset
- * silencieuse (l'ecran n'est jamais rafraichi a ce stade, aucun code appli
- * ne tourne encore) qui se voit de l'exterieur comme un blocage total.
- * Fix : nourrir explicitement le RWDT a chaque iteration du poll, exactement
- * comme le fait bootloader_support/src/flash_encryption/flash_encrypt.c
- * pour ses propres operations longues au meme stade. */
+/* BUGFIX 2026-09-16 (root cause of "no more wake-up or switch to factory
+ * at all, even after 12s"): CONFIG_BOOTLOADER_WDT_ENABLE arms the RTC WDT
+ * (RWDT) with a single CONFIG_BOOTLOADER_WDT_TIME_MS = 9000ms timeout
+ * BEFORE the call to bootloader_after_init() (bootloader_init.c, action
+ * WDT_STAGE_ACTION_RESET_RTC). Our confirmation loop DELIBERATELY blocks
+ * until CONFIRM_HOLD_US = 10s WITHOUT ever feeding this watchdog -> it
+ * fires at 9s, RESETS the chip BEFORE reaching the threshold, which
+ * reboots... into the same hook, which re-arms the same WDT for a
+ * new 9s-max cycle, etc. As long as the user keeps holding the
+ * button, the 10s threshold can therefore NEVER be reached: a silent
+ * reset loop (the screen is never refreshed at this stage, no app code
+ * is running yet) that looks from the outside like a total hang.
+ * Fix: explicitly feed the RWDT on every poll iteration, exactly like
+ * bootloader_support/src/flash_encryption/flash_encrypt.c does for its
+ * own long operations at the same stage. */
 static void feed_bootloader_wdt(void)
 {
     wdt_hal_context_t rwdt_ctx = RWDT_HAL_CONTEXT_DEFAULT();
@@ -188,13 +188,13 @@ static void backup_and_erase_otadata(void)
 
     if (esp_rom_spiflash_read(OTADATA_OFFSET, (uint32_t *)entry1,
                               OTADATA_ENTRY_SIZE) != ESP_ROM_SPIFLASH_RESULT_OK) {
-        HOOK_LOGE(TAG, "lecture otadata secteur 1 impossible");
+        HOOK_LOGE(TAG, "could not read otadata sector 1");
         return;
     }
     if (esp_rom_spiflash_read(OTADATA_OFFSET + FLASH_SECTOR_SIZE,
                               (uint32_t *)entry2,
                               OTADATA_ENTRY_SIZE) != ESP_ROM_SPIFLASH_RESULT_OK) {
-        HOOK_LOGE(TAG, "lecture otadata secteur 2 impossible");
+        HOOK_LOGE(TAG, "could not read otadata sector 2");
         return;
     }
 
@@ -204,24 +204,24 @@ static void backup_and_erase_otadata(void)
     memcpy(buf + BACKUP_MAGIC_OFFSET, &magic, sizeof(magic));
 
     if (esp_rom_spiflash_erase_sector(OTADATA_BACKUP_SECTOR) != ESP_ROM_SPIFLASH_RESULT_OK) {
-        HOOK_LOGE(TAG, "erase secteur backup impossible");
+        HOOK_LOGE(TAG, "could not erase backup sector");
         return;
     }
     if (esp_rom_spiflash_write(OTADATA_BACKUP_OFFSET, (uint32_t *)buf,
                                FLASH_SECTOR_SIZE) != ESP_ROM_SPIFLASH_RESULT_OK) {
-        HOOK_LOGE(TAG, "ecriture backup impossible");
+        HOOK_LOGE(TAG, "could not write backup");
         return;
     }
 
-    HOOK_LOGI(TAG, "otadata sauvegarde @0x%x", OTADATA_BACKUP_OFFSET);
+    HOOK_LOGI(TAG, "otadata backed up @0x%x", OTADATA_BACKUP_OFFSET);
 
     if (esp_rom_spiflash_erase_sector(OTADATA_SECTOR_1) != ESP_ROM_SPIFLASH_RESULT_OK ||
         esp_rom_spiflash_erase_sector(OTADATA_SECTOR_2) != ESP_ROM_SPIFLASH_RESULT_OK) {
-        HOOK_LOGE(TAG, "erase otadata impossible");
+        HOOK_LOGE(TAG, "could not erase otadata");
         return;
     }
 
-    HOOK_LOGI(TAG, "otadata efface — reboot vers factory");
+    HOOK_LOGI(TAG, "otadata erased — rebooting to factory");
 }
 
 /* -----------------------------------------------------------------------
@@ -232,81 +232,83 @@ void bootloader_hooks_include(void) {}
 
 void bootloader_before_init(void)
 {
-    /* Reserve pour usage futur */
+    /* Reserved for future use */
 }
 
 void bootloader_after_init(void)
 {
-    /* BUGFIX 2026-09-16 (root cause identifiee) : quand RECOVERY_BUTTON_PIN
-     * etait Right (GPIO7, jamais utilise comme source de wake), le lire en
-     * digital brut ici etait sans risque. Depuis le passage a Power (GPIO3,
-     * ADR-009 amende) — qui est justement le pin EXT1 ayant reveille le
-     * chip pour TOUT reveil deep sleep — esp_sleep_enable_ext1_wakeup()
-     * route ce pad par le domaine RTC_IO pour la duree du sommeil, et cette
-     * configuration persiste au travers du reveil : lire GPIO3 via la
-     * matrice GPIO digitale (gpio_ll_get_level) sans d'abord rendre la main
-     * au digital cote RTC_IO renvoyait une valeur figee, independante de
-     * l'etat reel du bouton (plus aucun reveil ni bascule factory possible,
-     * observe sur hardware). Fix : rtcio_ll_function_select(...,
-     * RTCIO_LL_FUNC_DIGITAL) — l'equivalent bas niveau (registre) de
-     * rtc_gpio_deinit(), utilisable ici car rtc_io_ll.h est un header HAL
-     * "inline registres" sans dependance driver/FreeRTOS — rend la main au
-     * digital AVANT toute lecture. Sur S3, rtcio_num == gpio_num (offset 0).
-     * Sur un reset "froid" (jamais route RTC), cet appel est un no-op sans
-     * effet de bord. */
+    /* BUGFIX 2026-09-16 (root cause identified): when RECOVERY_BUTTON_PIN
+     * was Right (GPIO7, never used as a wake source), reading it as raw
+     * digital here was risk-free. Since the move to Power (GPIO3,
+     * ADR-009 amended) — which is precisely the EXT1 pin that woke the
+     * chip for EVERY deep sleep wake-up — esp_sleep_enable_ext1_wakeup()
+     * routes this pad through the RTC_IO domain for the duration of
+     * sleep, and this configuration persists across the wake-up: reading
+     * GPIO3 via the digital GPIO matrix (gpio_ll_get_level) without first
+     * handing it back to digital on the RTC_IO side returned a frozen
+     * value, independent of the button's real state (no more wake-up or
+     * switch to factory possible at all, observed on hardware). Fix:
+     * rtcio_ll_function_select(...,
+     * RTCIO_LL_FUNC_DIGITAL) — the low-level (register) equivalent of
+     * rtc_gpio_deinit(), usable here because rtc_io_ll.h is an "inline
+     * register" HAL header with no driver/FreeRTOS dependency — hands it
+     * back to digital BEFORE any read. On S3, rtcio_num == gpio_num (offset 0).
+     * On a "cold" reset (never routed through RTC), this call is a no-op with
+     * no side effect. */
     rtcio_ll_function_select(RECOVERY_BUTTON_PIN, RTCIO_LL_FUNC_DIGITAL);
 
-    /* Demande utilisateur 2026-09-16 : la bascule factory doit rester
-     * pilotable au niveau bootloader, independamment de l'etat de l'app
-     * (app plantee/gelee = toujours reparable). Seule exception : un reset
-     * logiciel (RESET_REASON_CORE_SW, esp_restart) declenche par un chemin
-     * qui a DEJA positionne otadata lui-meme (power_mgr_switch_to_factory()
-     * cote app, action_cancel() cote factory) — relire le bouton ici
-     * ajouterait un 2e delai de confirmation (jusqu'a CONFIRM_HOLD_US)
-     * inutile et deroutant, sans rien changer a la destination du boot. */
+    /* User request 2026-09-16: the switch to factory must remain
+     * controllable at the bootloader level, independent of the app's
+     * state (crashed/frozen app = always recoverable). Sole exception: a
+     * software reset (RESET_REASON_CORE_SW, esp_restart) triggered by a
+     * path that has ALREADY set otadata itself
+     * (power_mgr_switch_to_factory() on the app side, action_cancel() on
+     * the factory side) — re-reading the button here would add a 2nd
+     * confirmation delay (up to CONFIRM_HOLD_US) that is useless and
+     * confusing, without changing the boot destination. */
     soc_reset_reason_t reset_reason = esp_rom_get_reset_reason(0);
     if (reset_reason == RESET_REASON_CORE_SW) {
         return;
     }
 
-    /* Pas de buzzer sur le X4 Pro : pas d'init de sortie, juste le bouton. */
+    /* No buzzer on the X4 Pro: no output init, just the button. */
     esp_rom_gpio_pad_select_gpio(RECOVERY_BUTTON_PIN);
     gpio_ll_input_enable(&GPIO, RECOVERY_BUTTON_PIN);
     gpio_ll_pullup_en(&GPIO, RECOVERY_BUTTON_PIN);
 
     feed_bootloader_wdt();
-    esp_rom_delay_us(100000);  /* 100ms : stabilisation du pull-up */
+    esp_rom_delay_us(100000);  /* 100ms: pull-up stabilization */
 
     if (!is_button_pressed(RECOVERY_BUTTON_PIN)) {
-        return;  /* Boot normal, rien modifie */
+        return;  /* Normal boot, nothing changed */
     }
 
-    HOOK_LOGI(TAG, "POWER (GPIO3) presse — maintenir %u ms pour confirmer...",
+    HOOK_LOGI(TAG, "POWER (GPIO3) pressed — hold %u ms to confirm...",
               (unsigned)(CONFIRM_HOLD_US / 1000));
 
     uint32_t held_us = 0;
-    uint32_t next_log_us = 1000000;   /* diagnostic 2026-09-16 : progression toutes les ~1s */
+    uint32_t next_log_us = 1000000;   /* 2026-09-16 diagnostic: progress every ~1s */
     while (is_button_pressed(RECOVERY_BUTTON_PIN) && held_us < CONFIRM_HOLD_US) {
-        feed_bootloader_wdt();   /* voir feed_bootloader_wdt() : evite le reset RWDT a 9s */
-        held_us += BUTTON_SAMPLE_US;   /* voir BUTTON_SAMPLE_US : compte le temps reel */
+        feed_bootloader_wdt();   /* see feed_bootloader_wdt(): avoids the RWDT reset at 9s */
+        held_us += BUTTON_SAMPLE_US;   /* see BUTTON_SAMPLE_US: counts real time */
         if (held_us >= next_log_us) {
-            HOOK_LOGI(TAG, "... maintenu %u ms", (unsigned)(held_us / 1000));
+            HOOK_LOGI(TAG, "... held %u ms", (unsigned)(held_us / 1000));
             next_log_us += 1000000;
         }
     }
 
     if (held_us < CONFIRM_HOLD_US) {
-        HOOK_LOGW(TAG, "relache trop tot (%u ms) — recovery annule",
+        HOOK_LOGW(TAG, "released too soon (%u ms) — recovery cancelled",
                   (unsigned)(held_us / 1000));
         return;
     }
 
-    HOOK_LOGI(TAG, "seuil atteint — bascule vers factory");
+    HOOK_LOGI(TAG, "threshold reached — switching to factory");
     backup_and_erase_otadata();
 
-    HOOK_LOGI(TAG, "reset logiciel -> bootloader -> partition factory");
+    HOOK_LOGI(TAG, "software reset -> bootloader -> factory partition");
 
     esp_rom_delay_us(200000);
     esp_rom_software_reset_system();
-    while (1) { }  /* Jamais atteint */
+    while (1) { }  /* Never reached */
 }

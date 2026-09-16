@@ -1,9 +1,9 @@
-# Custom bootloader hooks (MySafeFob, ADR-007) — portage du PiBot.
-# Le bootloader est un sous-build séparé : garder ENABLE_FACTORY_DEBUG_LOG
-# en sync avec le CMakeLists.txt racine du sous-projet factory.
-# TEMPORAIRE (diagnostic 2026-09-16, ADR-009) : ON pour voir la trace
-# complete du hook (HOOK_LOGI) pendant les tests du seuil Power >= 10s.
-# Remettre a OFF une fois le mecanisme reconfirme fonctionnel sur hardware.
+# Custom bootloader hooks (MySafeFob, ADR-007) — port of PiBot's.
+# The bootloader is a separate sub-build: keep ENABLE_FACTORY_DEBUG_LOG
+# in sync with the factory sub-project's root CMakeLists.txt.
+# TEMPORARY (2026-09-16 diagnostic, ADR-009): ON to see the full hook
+# trace (HOOK_LOGI) during Power >= 10s threshold testing.
+# Set back to OFF once the mechanism is reconfirmed working on hardware.
 option(ENABLE_FACTORY_DEBUG_LOG "Enable bootloader debug logs" ON)
 
 idf_component_register(SRCS "hooks.c"

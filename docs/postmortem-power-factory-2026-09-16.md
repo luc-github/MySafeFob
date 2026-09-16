@@ -1,350 +1,351 @@
-# Post-mortem : bouton Power / bascule factory (2026-09-16)
+# Post-mortem: Power button / factory switch (2026-09-16)
 
-> Session unique, ~24h de travail effectif. Objectif final atteint et validé
-> sur hardware avec logs à l'appui. Ce document capitalise le *pourquoi* —
-> sept bugs distincts, indépendants les uns des autres, empilés sur un
-> mécanisme qui semblait trivial sur le papier. Les détails techniques
-> exacts (code, valeurs, diffs) vivent dans `docs/ROADMAP.md` (ADR-009 et
-> ses amendements) et dans les commentaires des fichiers cités ; ce document
-> raconte l'enchaînement et ce qu'il faut en retenir.
+> Single session, ~24h of effective work. Final goal reached and validated
+> on hardware with logs to back it up. This document captures the *why* —
+> seven distinct bugs, independent of one another, stacked on a mechanism
+> that looked trivial on paper. The exact technical details (code, values,
+> diffs) live in `docs/ROADMAP.md` (ADR-009 and its amendments) and in the
+> comments of the files cited; this document tells the story of the chain
+> of events and what should be learned from it.
 
-## 1. L'objectif, et pourquoi il semblait simple
+## 1. The goal, and why it looked simple
 
-Design cible, décidé en cours de route (amendement ADR-009) :
+Target design, decided along the way (ADR-009 amendment):
 
-- **Power tenu < 10 s** : veille ↔ réveil (comportement « bouton power »
-  classique).
-- **Power tenu ≥ 10 s** : bascule vers la partition `factory`, **quel que
-  soit l'état de départ** — app éveillée, device endormi, ou même app
-  plantée/gelée.
+- **Power held < 10 s**: sleep ↔ wake (classic "power button" behavior).
+- **Power held ≥ 10 s**: switch to the `factory` partition, **regardless
+  of the starting state** — app awake, device asleep, or even
+  crashed/frozen app.
 
-Sur le papier : un GPIO, un chronomètre, deux seuils. Rien qui justifie une
-journée entière. En pratique, ce mécanisme traverse quatre couches
-radicalement différentes du firmware (RTC/deep-sleep hardware, bootloader
-ROM, driver flash applicatif, FreeRTOS scheduling), et **chacune** a caché
-un bug indépendant. Aucun des sept n'était visible sans avoir déjà corrigé
-les précédents — ils se masquaient les uns les autres.
+On paper: a GPIO, a timer, two thresholds. Nothing that would justify a
+full day. In practice, this mechanism crosses four radically different
+layers of the firmware (RTC/deep-sleep hardware, bootloader ROM,
+application flash driver, FreeRTOS scheduling), and **each one** hid an
+independent bug. None of the seven was visible until the previous ones
+had already been fixed — they were masking each other.
 
-## 2. Le point de départ : un design abandonné
+## 2. The starting point: an abandoned design
 
-Le mécanisme initial (issu du portage PiBot, ADR-007) utilisait un combo
-**Power + Right** : les deux boutons tenus ensemble déclenchaient la
-bascule factory via le hook bootloader (`hooks.c`, alors câblé sur
+The initial mechanism (inherited from the PiBot port, ADR-007) used a
+**Power + Right** combo: both buttons held together triggered the
+factory switch via the bootloader hook (`hooks.c`, at the time wired to
 GPIO7/Right).
 
-Testé empiriquement sur hardware (Test A : Power seul → réveil
-systématique ; Test B : Power+Right ensemble, tenus 10 s, relâchés →
-**aucune réaction, jamais, quelle que soit la durée**) : le combo empêche
-le réveil matériel lui-même de se déclencher. Root cause jamais identifiée
-avec certitude (hypothèse : interférence électrique entre deux pads RTC_IO
-tenus bas simultanément pendant la latch de réveil) — mais peu importe
-la cause exacte, le fait est irréfutable et non contournable côté
-logiciel. **Décision** : abandon total du combo, redesign vers Power seul
-à seuils de durée. C'est ce redesign qui a ouvert la boîte de Pandore.
+Tested empirically on hardware (Test A: Power alone → systematic wake;
+Test B: Power+Right together, held 10 s, released → **no reaction at
+all, ever, regardless of duration**): the combo prevents the hardware
+wake itself from triggering. Root cause never identified with certainty
+(hypothesis: electrical interference between two RTC_IO pads held low
+simultaneously during the wake latch) — but regardless of the exact
+cause, the fact itself is irrefutable and cannot be worked around in
+software. **Decision**: total abandonment of the combo, redesign toward
+Power alone with duration thresholds. This redesign is what opened the
+Pandora's box.
 
-## 3. Les sept bugs, dans l'ordre où ils ont été découverts
+## 3. The seven bugs, in the order they were discovered
 
-Chaque bug a produit un symptôme sur hardware, chaque symptôme a d'abord
-été mal expliqué au moins une fois avant que la vraie cause n'émerge —
-souvent parce que le bug suivant masquait l'effet du fix précédent.
+Each bug produced a symptom on hardware, and each symptom was first
+misdiagnosed at least once before the real cause emerged — often because
+the next bug was masking the effect of the previous fix.
 
-### Bug 1 — réveil immédiat après mise en veille (résolu avant le redesign)
+### Bug 1 — immediate wake right after entering sleep (fixed before the redesign)
 
-**Symptôme** : « je passe en veille et je me réveille aussitôt ».
-**Cause** : `esp_deep_sleep_start()` appelé pendant que Power est encore
-physiquement enfoncé (c'est le geste qui a déclenché la mise en veille) —
-la condition EXT1 (`ANY_LOW`) est donc déjà vraie au moment même où le
-sommeil commence, provoquant un rebond quasi instantané.
-**Fix** : attendre explicitement le relâchement du bouton avant d'armer
-EXT1 et de dormir (`power_mgr_shutdown()`), avec un garde symétrique côté
-réveil (`seen_release` dans `power_button_task()`) pour éviter qu'un appui
-résiduel au réveil ne réarme immédiatement un nouveau long-press.
-**Fichiers** : `components/power_mgr/power_mgr.c`, `main/main.c`.
+**Symptom**: "I go to sleep and wake up immediately."
+**Cause**: `esp_deep_sleep_start()` was called while Power was still
+physically pressed down (it's the gesture that triggered entering
+sleep) — so the EXT1 condition (`ANY_LOW`) is already true at the very
+moment sleep begins, causing an almost instant bounce.
+**Fix**: explicitly wait for the button to be released before arming
+EXT1 and sleeping (`power_mgr_shutdown()`), with a symmetrical guard on
+the wake side (`seen_release` in `power_button_task()`) to prevent a
+residual press at wake time from immediately re-arming a new long
+press.
+**Files**: `components/power_mgr/power_mgr.c`, `main/main.c`.
 
-### Bug 2 — lecture de GPIO3 non fiable juste après un réveil EXT1
+### Bug 2 — unreliable GPIO3 read right after an EXT1 wake
 
-**Symptôme** (après passage du hook sur GPIO3/Power à la place de
-GPIO7/Right) : « impossible de sortir de veille ».
-**Cause** : `esp_sleep_enable_ext1_wakeup()` route le pad GPIO3 via le
-domaine RTC_IO pour la durée du sommeil ; cette configuration persiste au
-travers du réveil. Lire GPIO3 en digital brut (`gpio_ll_get_level`, la
-méthode utilisée sans souci quand le hook lisait GPIO7 — jamais un pin de
-réveil) à ce stade renvoie une valeur figée, indépendante de l'état réel du
-bouton.
-**Deux tentatives** :
-  1. *Rejetée* : ne plus jamais lire GPIO3 sur un réveil deep sleep,
-     déplacer la détection côté app. Fonctionnellement correct mais
-     rejeté sur retour utilisateur — voir §4.
-  2. *Retenue* : `rtcio_ll_function_select(GPIO3, RTCIO_LL_FUNC_DIGITAL)`
-     (header HAL bas niveau, sans dépendance driver/FreeRTOS, donc
-     utilisable en contexte bootloader) — l'équivalent registre de
-     `rtc_gpio_deinit()` — rend explicitement la main au digital avant
-     toute lecture.
-**Fichier** : `boards/x4pro/factory/bootloader_components/custom_bootloader/hooks.c`.
+**Symptom** (after moving the hook from GPIO7/Right to GPIO3/Power):
+"can't come out of sleep."
+**Cause**: `esp_sleep_enable_ext1_wakeup()` routes the GPIO3 pad through
+the RTC_IO domain for the duration of sleep; this configuration persists
+across the wake. Reading GPIO3 as raw digital (`gpio_ll_get_level`, the
+method used without issue when the hook read GPIO7 — never a wake pin)
+at this point returns a frozen value, independent of the button's actual
+state.
+**Two attempts**:
+  1. *Rejected*: never read GPIO3 on a deep sleep wake again, move the
+     detection to the app side. Functionally correct but rejected on
+     user feedback — see §4.
+  2. *Kept*: `rtcio_ll_function_select(GPIO3, RTCIO_LL_FUNC_DIGITAL)`
+     (low-level HAL header, with no driver/FreeRTOS dependency, hence
+     usable in bootloader context) — the register-level equivalent of
+     `rtc_gpio_deinit()` — explicitly hands control back to digital
+     before any read.
+**File**: `boards/x4pro/factory/bootloader_components/custom_bootloader/hooks.c`.
 
-### Bug 3 — chien de garde du bootloader trop court pour le seuil choisi
+### Bug 3 — bootloader watchdog too short for the chosen threshold
 
-**Symptôme** : après le fix du bug 2, symptôme identique en apparence
-(« idem, une fois en veille on ne se réveille pas »), puis découverte que
-même 12 s de maintien ne suffisaient pas non plus à atteindre factory.
-**Cause** : `bootloader_init()` arme le RTC watchdog avec un timeout fixe
-de 9000 ms (`CONFIG_BOOTLOADER_WDT_TIME_MS`) **avant** que le hook ne
-s'exécute. Notre boucle de confirmation bloquait délibérément jusqu'à
-10 000 ms sans jamais nourrir ce chien de garde — il se déclenchait à 9 s,
-resettait le chip *avant* d'atteindre le seuil, ce qui relançait le
-bootloader (qui réarmait le même watchdog pour un nouveau cycle de 9 s
-max). Tant que l'utilisateur maintenait le bouton, le seuil de 10 s était
-**structurellement inatteignable** — boucle de reset silencieuse
-indiscernable, de l'extérieur, d'un blocage total (l'écran n'est jamais
-rafraîchi à ce stade).
-**Fix** : nourrir explicitement le RTC watchdog (`wdt_hal_feed()`) à
-chaque itération de la boucle de confirmation — même pattern que
-`bootloader_support/src/flash_encryption/flash_encrypt.c` pour ses propres
-opérations longues au même stade du boot.
-**Fichier** : `hooks.c`.
+**Symptom**: after fixing bug 2, an apparently identical symptom ("same
+thing, once asleep it doesn't wake up"), then the discovery that even a
+12 s hold wasn't enough to reach factory either.
+**Cause**: `bootloader_init()` arms the RTC watchdog with a fixed
+timeout of 9000 ms (`CONFIG_BOOTLOADER_WDT_TIME_MS`) **before** the hook
+runs. Our confirmation loop deliberately blocked up to 10,000 ms without
+ever feeding this watchdog — it fired at 9 s, resetting the chip
+*before* reaching the threshold, which restarted the bootloader (which
+in turn re-armed the same watchdog for a new 9 s max cycle). As long as
+the user held the button, the 10 s threshold was **structurally
+unreachable** — a silent reset loop indistinguishable, from the outside,
+from a total freeze (the screen never refreshes at this stage).
+**Fix**: explicitly feed the RTC watchdog (`wdt_hal_feed()`) on every
+iteration of the confirmation loop — same pattern as
+`bootloader_support/src/flash_encryption/flash_encrypt.c` for its own
+long operations at the same boot stage.
+**File**: `hooks.c`.
 
-### Bug 4 — comptage de durée erroné (sous-estimation ~3.5×)
+### Bug 4 — incorrect duration counting (~3.5x underestimate)
 
-**Découverte en marge du bug 3**, jamais isolément responsable d'un
-symptôme rapporté mais un vrai bug : `is_button_pressed()` bloque ~25 ms en
-interne (5 lectures × 5 ms), mais la boucle de confirmation ajoutait
-**par-dessus** un délai artificiel de 10 ms tout en ne comptant que ces
-10 ms dans le total — le temps réel écoulé par itération (~35 ms) était
-sous-estimé d'un facteur ~3.5. Concrètement : pour que le compteur
-atteigne 10 s « nominales », il fallait en réalité maintenir le bouton
-~35 s.
-**Fix** : compter le temps réellement écoulé (durée interne mesurée de
-`is_button_pressed()`), sans délai supplémentaire.
-**Fichier** : `hooks.c`.
+**Discovered on the side of bug 3**, never solely responsible for a
+reported symptom but a real bug nonetheless: `is_button_pressed()`
+internally blocks for ~25 ms (5 reads × 5 ms), but the confirmation loop
+added **on top of that** an artificial 10 ms delay while only counting
+those 10 ms toward the total — the real elapsed time per iteration
+(~35 ms) was underestimated by a factor of ~3.5. Concretely: for the
+counter to reach a "nominal" 10 s, the button actually had to be held
+for ~35 s.
+**Fix**: count the time actually elapsed (the measured internal
+duration of `is_button_pressed()`), with no extra delay.
+**File**: `hooks.c`.
 
-### Bug 5 — mauvais bootloader testé (bug de tooling, pas de code)
+### Bug 5 — wrong bootloader tested (a tooling bug, not a code bug)
 
-**Le plus coûteux des sept.** Après trois corrections de code successives
-(bugs 2, 3, 4), toutes confirmées « build clean », toutes signalées cassées
-sur hardware **à l'identique**. La cause était en amont de tout le code :
-`./msf_build.bat build` lancé depuis la racine du repo — ce que *chaque*
-vérification de cette session utilisait — compile un bootloader qui **ne
-contient pas `hooks.c`**. ESP-IDF ne détecte `bootloader_components/` que
-s'il est un enfant direct du `PROJECT_SOURCE_DIR` du projet compilé ; ce
-dossier vit sous `boards/x4pro/factory/`, pas à la racine. Le bootloader
-réellement flashé (`installer/x4pro_app/bootloader_16MB.bin`) est **copié**
-depuis `boards/x4pro/factory/build/bootloader/bootloader.bin` par le
-postbuild de l'app, sans jamais être reconstruit ni vérifié à jour par ce
-chemin.
+**The costliest of the seven.** After three successive code fixes (bugs
+2, 3, 4), all confirmed "clean build," all reported broken on hardware
+**identically**. The cause was upstream of all the code:
+`./msf_build.bat build` run from the repo root — which *every* check in
+this session used — compiles a bootloader that **does not contain
+`hooks.c`**. ESP-IDF only detects `bootloader_components/` if it is a
+direct child of the compiled project's `PROJECT_SOURCE_DIR`; this folder
+lives under `boards/x4pro/factory/`, not at the root. The bootloader
+actually flashed (`installer/x4pro_app/bootloader_16MB.bin`) is
+**copied** from `boards/x4pro/factory/build/bootloader/bootloader.bin`
+by the app's postbuild step, without ever being rebuilt or checked for
+freshness through that path.
 
-Autrement dit : **aucun des trois bugs précédents n'avait encore été
-testé sur le hardware réel** au moment où ils semblaient tous avoir
-« échoué ». Le firmware réellement flashé était une version bien plus
-ancienne, figée depuis le tout début de la session. Chaque « toujours
-cassé, à l'identique » n'était donc pas un signal d'échec du fix — c'était
-la preuve, mal interprétée, que rien de neuf n'avait jamais tourné.
+In other words: **none of the three previous bugs had actually been
+tested on real hardware** by the time they all seemed to have "failed."
+The firmware actually flashed was a much older version, frozen since the
+very start of the session. Each "still broken, identically" was
+therefore not a signal that the fix had failed — it was proof,
+misread, that nothing new had ever run at all.
 
-**Comment ça a été détecté** : en désespoir de cause, inspection directe du
-binaire compilé (`nm bootloader.elf | grep bootloader_after_init` →
-pointait vers le stub faible d'ESP-IDF, pas vers notre hook).
-**Fix** : procédure de build documentée explicitement (`docs/FACTORY.md`
-§3.4) — toujours reconstruire `boards/x4pro/factory` en premier, séparément,
-puis la racine.
+**How it was detected**: as a last resort, direct inspection of the
+compiled binary (`nm bootloader.elf | grep bootloader_after_init` →
+pointed to ESP-IDF's weak stub, not to our hook).
+**Fix**: explicitly documented build procedure (`docs/FACTORY.md` §3.4)
+— always rebuild `boards/x4pro/factory` first, separately, then the
+root.
 
-### Bug 6 — stack overflow dans `power_mgr_switch_to_factory()`
+### Bug 6 — stack overflow in `power_mgr_switch_to_factory()`
 
-**Symptôme** : depuis App0 éveillée, un maintien ≥10 s ne faisait « rien »,
-ou laissait un écran dégradé nécessitant un reset série pour débloquer (le
-bouton « reset » physique n'avait aucun effet — cohérent avec une tâche
-figée qui ne lit plus jamais le GPIO).
-**Cause**, enfin visible une fois le bon binaire testé *avec logs* :
-`power_mgr_switch_to_factory()` déclare `uint8_t buf[FLASH_SECTOR_SIZE]` —
-un buffer local de **4096 octets** — dans une tâche (`power_button_task`)
-créée avec `xTaskCreate(..., 4096, ...)`. Le buffer, à lui seul, occupait
-déjà toute la pile allouée, sans compter le reste des locales ni l'usage de
-pile propre aux appels `esp_flash_read/erase_region/write`. Dépassement
-garanti dès que la fonction était atteinte —
+**Symptom**: from an awake App0, a ≥10 s hold did "nothing," or left a
+degraded screen requiring a serial reset to unblock (the physical
+"reset" button had no effect — consistent with a frozen task that no
+longer reads the GPIO at all).
+**Cause**, finally visible once the right binary was tested *with
+logs*: `power_mgr_switch_to_factory()` declares
+`uint8_t buf[FLASH_SECTOR_SIZE]` — a local buffer of **4096 bytes** — in
+a task (`power_button_task`) created with `xTaskCreate(..., 4096, ...)`.
+The buffer alone already occupied the entire allocated stack, not
+counting the rest of the locals or the stack usage of the
+`esp_flash_read/erase_region/write` calls themselves. Overflow was
+guaranteed as soon as the function was reached —
 `vApplicationStackOverflowHook` → `panic_abort` → reboot.
-Explique rétroactivement le « splash un peu grisé » observé plus tôt dans
-la session : pas du ghosting e-ink, un crash-reboot en plein refresh.
-**Fix** : pile portée à 12 288 octets (marge large, PSRAM abondante).
-**Fichier** : `main/main.c`.
+This retroactively explains the "slightly grayed splash" observed
+earlier in the session: not e-ink ghosting, a crash-reboot mid-refresh.
+**Fix**: stack raised to 12,288 bytes (generous margin, plenty of
+PSRAM).
+**File**: `main/main.c`.
 
-### Bug 7 — `esp3d_log()` compilé en no-op silencieux dans toute l'app
+### Bug 7 — `esp3d_log()` compiled to a silent no-op across the whole app
 
-**Découvert en ajoutant les logs de diagnostic** qui ont permis de trouver
-le bug 6 : aucun appel `esp3d_log()` (macro sans suffixe) de `main.c`
-n'a jamais réellement produit de sortie, y compris la bannière de boot,
-depuis (vraisemblablement) l'écriture initiale de ce fichier — bien avant
-cette session. `esp3d_log()` ne se compile que si `ESP3D_LOG >=
-ESP3D_LOG_LEVEL_ALL` (4), mais `ESP3D_LOG` n'était **jamais défini du
-tout** pour aucun composant : `CMakeLists.txt` racine appelait
-`add_compile_options(-DESP3D_LOG=${MSF_LOG_LEVEL})` **après** `project()`,
-qui ne se propage pas aux composants IDF en 5.5.5 — exactement le même
-piège que celui déjà documenté (et corrigé) pour `MSF_BOARD_NAME` deux
-lignes au-dessus dans ce même fichier, jamais appliqué à cette ligne.
-**Fix** : `idf_build_set_property(COMPILE_DEFINITIONS "ESP3D_LOG=..."
-APPEND)`, même mécanisme que pour `MSF_BOARD_NAME`. Les appels
-`esp3d_log()` de `main.c` ont aussi été repassés en `esp3d_log_d()`
-(niveau debug, cohérent avec `MSF_LOG_LEVEL=3`).
-**Fichiers** : `CMakeLists.txt` (racine), `main/main.c`.
+**Discovered while adding the diagnostic logs** that made it possible to
+find bug 6: no `esp3d_log()` call (the suffix-less macro) in `main.c`
+had ever actually produced output, including the boot banner, since
+(presumably) this file was first written — well before this session.
+`esp3d_log()` only compiles if `ESP3D_LOG >= ESP3D_LOG_LEVEL_ALL` (4),
+but `ESP3D_LOG` was **never defined at all** for any component: the root
+`CMakeLists.txt` called
+`add_compile_options(-DESP3D_LOG=${MSF_LOG_LEVEL})` **after** `project()`,
+which does not propagate to IDF components in 5.5.5 — exactly the same
+trap already documented (and fixed) for `MSF_BOARD_NAME` two lines above
+in this same file, never applied to this line.
+**Fix**: `idf_build_set_property(COMPILE_DEFINITIONS "ESP3D_LOG=..."
+APPEND)`, same mechanism as for `MSF_BOARD_NAME`. The `esp3d_log()`
+calls in `main.c` were also switched back to `esp3d_log_d()` (debug
+level, consistent with `MSF_LOG_LEVEL=3`).
+**Files**: `CMakeLists.txt` (root), `main/main.c`.
 
-## 4. Le détour rejeté : app-level plutôt que bootloader-level
+## 4. The rejected detour: app-level rather than bootloader-level
 
-Entre les bugs 2 et 3, une première tentative de fix (déplacer la mesure
-« Power tenu ≥ 10 s depuis le réveil » côté app plutôt que dans le hook)
-a été **explicitement rejetée sur retour utilisateur** : *« le passage en
-factory devrait être géré côté bootloader je pense »*. Raison : si l'app
-plante ou se bloque, une mesure uniquement côté app ne peut jamais
-garantir l'accès à factory — alors qu'un mécanisme bootloader s'exécute
-avant tout code applicatif, donc reste accessible même app morte.
+Between bugs 2 and 3, a first fix attempt (moving the "Power held ≥ 10 s
+since wake" measurement to the app side rather than into the hook) was
+**explicitly rejected on user feedback**: *"switching to factory should
+be handled bootloader-side, I think."* Reason: if the app crashes or
+freezes, an app-only measurement can never guarantee access to factory
+— whereas a bootloader mechanism runs before any application code, and
+therefore stays reachable even with a dead app.
 
-Ce choix s'est révélé juste et a été validé empiriquement bien plus tard
-dans la session (voir §6) : un crash applicatif (bug 6 inclus) reboote via
-`esp_restart_noos()`, qui produit `RESET_REASON_CPU0_SW`/`CPU1_SW` — un
-type de reset que le hook **continue de vérifier** normalement (seul
-`RESET_REASON_CORE_SW`, réservé aux resets déjà pilotés par du code qui a
-lui-même positionné otadata, est court-circuité). Le hook reste donc la
-voie de secours même en cas de crash-loop, sans action supplémentaire.
+This choice turned out to be right and was empirically validated much
+later in the session (see §6): an application crash (bug 6 included)
+reboots via `esp_restart_noos()`, which produces
+`RESET_REASON_CPU0_SW`/`CPU1_SW` — a reset type the hook **still
+checks** normally (only `RESET_REASON_CORE_SW`, reserved for resets
+already driven by code that itself set otadata, is short-circuited).
+The hook therefore remains the fallback path even during a crash loop,
+with no extra action needed.
 
-## 5. Bilan chiffré
+## 5. Numbers summary
 
-| # | Bug | Couche | Symptôme rapporté | Détecté via |
+| # | Bug | Layer | Reported symptom | Detected via |
 |---|---|---|---|---|
-| — | Combo Power+Right | Hardware/RTC | Réveil ne se déclenche jamais avec les 2 boutons | Test A/B ciblé |
-| 1 | Réveil immédiat post-sleep | `power_mgr.c` | Rebond veille↔réveil instantané | Observation directe |
-| 2 | Pad RTC_IO non rendu au digital | `hooks.c` | Plus aucun réveil après passage à GPIO3 | Lecture doc ESP-IDF + code source HAL |
-| 3 | RTC WDT bootloader (9s) < seuil (10s) | `hooks.c` | Même symptôme après fix #2, ni réveil ni factory à 12s | Lecture code source `bootloader_init.c` |
-| 4 | Comptage de durée ×3.5 sous-estimé | `hooks.c` | (masqué par #3, jamais isolément symptomatique) | Relecture attentive de la boucle |
-| 5 | Mauvais bootloader testé (tooling) | build system | 3 fixes de code consécutifs « sans effet » | `nm`/`grep` sur le binaire compilé |
-| 6 | Stack overflow (buffer 4KB / pile 4KB) | `main.c` | Rien, ou écran figé, reset série requis | Logs de diagnostic ajoutés sur demande |
-| 7 | `esp3d_log()` jamais compilé | `CMakeLists.txt` racine | Silence total côté logs applicatifs | Recherche de strings absentes du binaire |
+| — | Power+Right combo | Hardware/RTC | Wake never triggers with both buttons | Targeted Test A/B |
+| 1 | Immediate wake post-sleep | `power_mgr.c` | Instant sleep↔wake bounce | Direct observation |
+| 2 | RTC_IO pad not handed back to digital | `hooks.c` | No more wake at all after switching to GPIO3 | ESP-IDF doc + HAL source reading |
+| 3 | Bootloader RTC WDT (9s) < threshold (10s) | `hooks.c` | Same symptom after fix #2, neither wake nor factory at 12s | Reading `bootloader_init.c` source |
+| 4 | Duration counting ×3.5 underestimated | `hooks.c` | (masked by #3, never symptomatic on its own) | Careful re-reading of the loop |
+| 5 | Wrong bootloader tested (tooling) | build system | 3 consecutive code fixes "with no effect" | `nm`/`grep` on the compiled binary |
+| 6 | Stack overflow (4KB buffer / 4KB stack) | `main.c` | Nothing, or frozen screen, serial reset required | Diagnostic logs added on request |
+| 7 | `esp3d_log()` never compiled | root `CMakeLists.txt` | Total silence on the application log side | Search for strings missing from the binary |
 
-**Sept bugs, cinq couches différentes** (hardware/RTC, bootloader ROM,
-build system/tooling, driver flash applicatif, FreeRTOS/build config),
-**aucun visible sans avoir déjà corrigé au moins un des autres**.
+**Seven bugs, five different layers** (hardware/RTC, bootloader ROM,
+build system/tooling, application flash driver, FreeRTOS/build config),
+**none visible without having already fixed at least one of the
+others**.
 
-## 6. Validation finale (hardware, avec logs)
+## 6. Final validation (hardware, with logs)
 
-Séquence confirmée fonctionnelle de bout en bout, logs à l'appui :
+Sequence confirmed working end-to-end, logs to back it up:
 
-- **Veille** (app éveillée, maintien ≥1,5s puis relâché) : `Power long:
-  mise en veille` → écran veille → deep sleep. ✅
-- **Réveil court** (endormi, tap bref) : retour app normal, splash → prêt.
-  ✅
-- **Annulation propre** (endormi, maintien < 10s puis relâché, côté hook
-  ou côté app) : `relache trop tot` → boot normal. ✅
-- **Factory depuis le réveil** (endormi, maintien ≥10s continu) : hook
-  bootloader `seuil atteint` → `otadata efface` → boot factory. ✅
-- **Factory depuis l'app éveillée** (App0, maintien ≥10s continu) :
-  `power_mgr_switch_to_factory()` termine sans crash → `esp_restart()` →
-  otadata déjà vide → boot factory. ✅ (validé après le fix du bug 6)
-- **Résilience crash-loop** : confirmée par le comportement observé du
-  hook sur un reset `RTC_SW_CPU_RST` (celui du bug 6 lui-même, avant son
-  fix) — le hook a bien re-vérifié le bouton sur ce reset, prouvant que le
-  chemin de secours reste actif même après un crash applicatif.
+- **Sleep** (app awake, held ≥1.5s then released): `Power long: entering
+  sleep` → sleep screen → deep sleep. ✅
+- **Short wake** (asleep, brief tap): normal return to app, splash →
+  ready. ✅
+- **Clean cancellation** (asleep, held < 10s then released, either on
+  hook or app side): `released too soon` → normal boot. ✅
+- **Factory from wake** (asleep, held continuously ≥10s): bootloader
+  hook `threshold reached` → `otadata erased` → factory boot. ✅
+- **Factory from an awake app** (App0, held continuously ≥10s):
+  `power_mgr_switch_to_factory()` completes without a crash →
+  `esp_restart()` → otadata already empty → factory boot. ✅ (validated
+  after the bug 6 fix)
+- **Crash-loop resilience**: confirmed by the observed hook behavior on
+  an `RTC_SW_CPU_RST` reset (the very one from bug 6, before its fix) —
+  the hook correctly re-checked the button on this reset, proving the
+  fallback path stays active even after an application crash.
 
-## 7. Trade-off restant, assumé et documenté (non « bug »)
+## 7. Remaining trade-off, accepted and documented (not a "bug")
 
-Après une bascule factory déclenchée côté app, le hook bootloader
-re-vérifie *quand même* le bouton sur le reboot qui suit (puisque
-`esp_restart()` produit `CPU0_SW`/`CPU1_SW`, différent du `CORE_SW` que le
-hook court-circuite) — l'utilisateur peut donc se retrouver à tenir Power
-pendant un délai de confirmation redondant après que l'app ait déjà réussi
-sa propre bascule. **Délibérément non corrigé** : le fix évident (ignorer
-aussi `CPU0_SW`/`CPU1_SW`) réouvrirait le point aveugle crash-loop du §4,
-puisqu'un crash produit exactement le même type de reset qu'un
-`esp_restart()` intentionnel — impossible de les distinguer par la seule
-raison de reset. Une vraie solution demanderait un marqueur explicite
-(ex. un octet écrit par l'app juste avant son propre restart, lu et
-effacé par le hook) — non implémentée à ce stade, laissée en décision
-ouverte.
+After a factory switch triggered app-side, the bootloader hook
+*still* re-checks the button on the reboot that follows (since
+`esp_restart()` produces `CPU0_SW`/`CPU1_SW`, different from the
+`CORE_SW` that the hook short-circuits) — the user can therefore end up
+holding Power through a redundant confirmation delay after the app has
+already succeeded in switching itself. **Deliberately not fixed**: the
+obvious fix (also ignoring `CPU0_SW`/`CPU1_SW`) would reopen the
+crash-loop blind spot from §4, since a crash produces exactly the same
+reset type as an intentional `esp_restart()` — impossible to
+distinguish them by reset reason alone. A real solution would require
+an explicit marker (e.g. a byte written by the app right before its own
+restart, read and cleared by the hook) — not implemented at this stage,
+left as an open decision.
 
-## 8. Évitable ou inévitable ? Analyse honnête de l'approche
+## 8. Avoidable or unavoidable? An honest look at the approach
 
-Question posée en fin de session : est-ce que ces sept bugs (huit avec le
-combo) étaient inévitables — seulement solubles par des cycles
-expérimentation/correction sur hardware réel — ou est-ce qu'une meilleure
-discipline en amont en aurait évité une partie ? Réponse honnête : **un
-mélange des deux, mais la majorité était évitable**. Classement bug par
-bug :
+Question raised at the end of the session: were these seven bugs (eight
+counting the combo) unavoidable — solvable only through
+experiment/fix cycles on real hardware — or would better upfront
+discipline have avoided some of them? Honest answer: **a mix of both,
+but the majority was avoidable**. Bug-by-bug breakdown:
 
-| # | Bug | Catégorie | Justification |
+| # | Bug | Category | Justification |
 |---|---|---|---|
-| — | Combo Power+Right ne réveille jamais | **Inévitable** | Comportement électrique/RTC empirique, non documenté, non dérivable par lecture de code ou de datasheet — seul un test hardware isolé (A/B) pouvait le révéler. |
-| 1 | Réveil immédiat post-sleep | **Partiellement évitable** | Le bug EXT1-ANY_LOW-déjà-vrai-à-l'entrée-en-sommeil est un piège connu et documenté d'ESP-IDF (recherché *a priori*, pas découvert par hasard) — mais sa manifestation précise ne s'observe qu'à l'usage réel du bouton, pas en lecture de code seule. |
-| 2 | Pad RTC_IO non rendu au digital | **Évitable avec plus de recherche amont** | `rtc_gpio_deinit()` existe précisément pour ce cas d'usage documenté d'ESP-IDF (réutiliser un pin de réveil EXT1 comme GPIO classique après coup). Une lecture de la doc `esp_sleep`/`rtc_io` *avant* d'écrire le hook (plutôt qu'après l'échec) l'aurait signalé. |
-| 3 | RTC WDT bootloader (9s) < seuil (10s) | **Évitable** | `CONFIG_BOOTLOADER_WDT_TIME_MS` est un `Kconfig` visible, et `bootloader_init.c` (~200 lignes) est court. Vérifier "qu'est-ce qui pourrait interrompre une boucle bloquante de 10s à ce stade du boot" *avant* d'écrire la boucle — plutôt qu'après l'avoir vue échouer deux fois — l'aurait évité. |
-| 4 | Comptage de durée ×3.5 sous-estimé | **Évitable** | Erreur arithmétique locale dans ~10 lignes de code, détectable par une relecture ligne à ligne ou un calcul à la main du temps réel écoulé par itération. Pas besoin de hardware pour la trouver. |
-| 5 | Mauvais bootloader testé (tooling) | **Évitable — et le plus coûteux des sept** | Le commentaire exact expliquant le piège (`postbuild.cmake` : *« le bootloader du build app n'a PAS de hook »*) existait déjà dans la codebase, écrit par une session antérieure. Il n'a pas été relu/appliqué avant de lancer trois cycles de correction. La règle qui aurait évité ce coût : **dès qu'un résultat hardware contredit un fix censément appliqué, vérifier par inspection directe du binaire (`nm`, `grep`) que le fix a bien atteint le hardware — avant de reformuler une nouvelle hypothèse de bug.** |
-| 6 | Stack overflow (buffer 4Ko / pile 4Ko) | **Évitable** | Discipline embarquée de base : tout ajout d'un buffer local de taille notable (ici, exactement `FLASH_SECTOR_SIZE`) dans une fonction appelée depuis une tâche existante appelle une vérification immédiate de la pile de cette tâche. Aurait dû être fait à l'écriture de `power_mgr_switch_to_factory()`, pas après un crash observé. |
-| 7 | `esp3d_log()` jamais compilé | **Évitable — et la codebase le savait déjà** | Le commentaire documentant exactement ce piège CMake (`add_compile_options()` après `project()`) était déjà présent dans le même fichier, appliqué à `MSF_BOARD_NAME` juste au-dessus. Le motif n'a simplement pas été généralisé à la ligne suivante au moment où elle a été écrite. |
+| — | Power+Right combo never wakes | **Unavoidable** | Empirical electrical/RTC behavior, undocumented, not derivable from reading code or a datasheet — only an isolated hardware test (A/B) could reveal it. |
+| 1 | Immediate wake post-sleep | **Partially avoidable** | The EXT1-ANY_LOW-already-true-on-entering-sleep bug is a known, documented ESP-IDF trap (looked up *a priori*, not stumbled upon) — but its precise manifestation is only observable through actual button use, not from reading code alone. |
+| 2 | RTC_IO pad not handed back to digital | **Avoidable with more upfront research** | `rtc_gpio_deinit()` exists precisely for this documented ESP-IDF use case (reusing an EXT1 wake pin as a regular GPIO afterward). Reading the `esp_sleep`/`rtc_io` docs *before* writing the hook (rather than after the failure) would have flagged it. |
+| 3 | Bootloader RTC WDT (9s) < threshold (10s) | **Avoidable** | `CONFIG_BOOTLOADER_WDT_TIME_MS` is a visible `Kconfig` entry, and `bootloader_init.c` (~200 lines) is short. Checking "what could interrupt a blocking 10s loop at this boot stage" *before* writing the loop — rather than after seeing it fail twice — would have avoided it. |
+| 4 | Duration counting ×3.5 underestimated | **Avoidable** | Local arithmetic error in ~10 lines of code, detectable by a line-by-line re-read or a hand calculation of the real elapsed time per iteration. No hardware needed to find it. |
+| 5 | Wrong bootloader tested (tooling) | **Avoidable — and the costliest of the seven** | The exact comment explaining the trap (`postbuild.cmake`: *"the app build's bootloader does NOT have the hook"*) already existed in the codebase, written in an earlier session. It wasn't re-read/applied before launching three fix cycles. The rule that would have avoided this cost: **as soon as a hardware result contradicts a fix supposedly applied, verify by direct binary inspection (`nm`, `grep`) that the fix actually reached the hardware — before formulating a new bug hypothesis.** |
+| 6 | Stack overflow (4KB buffer / 4KB stack) | **Avoidable** | Basic embedded discipline: any addition of a local buffer of notable size (here, exactly `FLASH_SECTOR_SIZE`) in a function called from an existing task calls for an immediate check of that task's stack. Should have been done when writing `power_mgr_switch_to_factory()`, not after observing a crash. |
+| 7 | `esp3d_log()` never compiled | **Avoidable — and the codebase already knew it** | The comment documenting exactly this CMake trap (`add_compile_options()` after `project()`) was already present in the same file, applied to `MSF_BOARD_NAME` right above. The pattern simply wasn't generalized to the next line when it was written. |
 
-**Bilan** : sur huit problèmes, **un seul** (le combo Power+Right) était
-véritablement irréductible à autre chose qu'un cycle d'expérimentation
-hardware — sa cause reste d'ailleurs non confirmée avec certitude à ce
-jour. Les sept autres avaient chacun un signal disponible *avant* le
-premier test raté : une doc ESP-IDF à lire, un fichier de config à
-grepper, un calcul à vérifier à la main, un commentaire déjà écrit dans
-la codebase elle-même. Le bug #5 (mauvais binaire testé) est le cas le
-plus net : il a à lui seul multiplié par ~3 le nombre de cycles
-nécessaires, en faisant passer pour "hardware têtu" ce qui était un
-problème de tooling déjà documenté.
+**Summary**: out of eight problems, **only one** (the Power+Right combo)
+was truly irreducible to anything but a hardware experimentation cycle
+— its cause, in fact, remains unconfirmed with certainty to this day.
+The other seven each had a signal available *before* the first failed
+test: an ESP-IDF doc to read, a config file to grep, a calculation to
+verify by hand, a comment already written in the codebase itself. Bug
+#5 (wrong binary tested) is the clearest case: on its own it multiplied
+the number of required cycles by ~3, making what was an already
+documented tooling problem look like "stubborn hardware."
 
-**Ce qui aurait le plus raccourci la session**, par ordre d'impact
-probable :
-1. Vérifier l'artefact réellement testé (bug #5) dès le premier résultat
-   hardware inattendu, pas après le troisième.
-2. Ajouter le logging de diagnostic (ce qui a débloqué les bugs #5, #6 et
-   révélé #7) *avant* la première tentative de correction sur hardware,
-   pas après plusieurs échecs — chaque round sans logs a coûté un cycle
-   complet de rebuild/reflash/retest pour un résultat ambigu.
-3. Relire systématiquement les commentaires déjà présents dans les
-   fichiers touchés avant de les modifier (bugs #5 et #7 avaient tous
-   deux leur solution déjà écrite, ailleurs dans le même fichier ou un
-   fichier adjacent, avant même de commencer).
+**What would have shortened the session the most**, in likely order of
+impact:
+1. Verify the artifact actually being tested (bug #5) at the first
+   unexpected hardware result, not after the third.
+2. Add diagnostic logging (which unblocked bugs #5, #6 and revealed #7)
+   *before* the first fix attempt on hardware, not after several
+   failures — every round without logs cost a full
+   rebuild/reflash/retest cycle for an ambiguous result.
+3. Systematically re-read the comments already present in the files
+   being touched before modifying them (bugs #5 and #7 both had their
+   solution already written, elsewhere in the same file or an adjacent
+   one, before even starting).
 
-## 9. Leçons à retenir (pour cette codebase, et au-delà)
+## 9. Lessons learned (for this codebase, and beyond)
 
-1. **« Build clean » ne prouve rien sur le contenu du binaire flashé.**
-   Un multi-projet avec artefacts partagés/copiés (ici : bootloader
-   commun entre app et factory) peut faire tourner un binaire ancien
-   pendant qu'on croit tester du code neuf, sans aucune erreur visible.
-   Vérifier par inspection directe (`nm`, `grep` de strings connues) dès
-   qu'un symptôme persiste identique après plusieurs corrections
-   censément indépendantes.
-2. **`add_compile_options()`/`add_compile_definitions()` après `project()`
-   ne se propagent pas aux composants ESP-IDF (5.5.5).** Piège rencontré
-   deux fois dans ce seul fichier (`MSF_BOARD_NAME`, puis `ESP3D_LOG`) —
-   `idf_build_set_property(COMPILE_DEFINITIONS ...)` est la seule méthode
-   fiable après `project()`.
-3. **Un pin utilisé pour le réveil EXT1 ne peut pas être relu en digital
-   brut sans rendre explicitement la main au domaine digital**
-   (`rtcio_ll_function_select(..., RTCIO_LL_FUNC_DIGITAL)`), y compris en
-   contexte bootloader.
-4. **Toute boucle de blocage volontaire au niveau bootloader doit nourrir
-   le RTC watchdog** si sa durée peut dépasser
-   `CONFIG_BOOTLOADER_WDT_TIME_MS` — sinon le watchdog protège le
-   bootloader contre... le bootloader lui-même.
-5. **Dimensionner la pile d'une tâche en fonction de ses buffers locaux
-   les plus gros**, pas d'une estimation générique — un buffer de la
-   taille d'un secteur flash (4 Ko) est un cas fréquent dès qu'on
-   manipule `esp_flash_*` directement.
-6. **La raison de reset seule ne suffit pas à distinguer un crash d'un
-   redémarrage intentionnel** si les deux passent par le même chemin
-   (`esp_restart_noos()`) — un état explicite est nécessaire pour aller
-   plus loin que « toujours vérifier par sécurité ».
-7. **Obtenir des logs réels bat toute hypothèse, même bien argumentée.**
-   Plusieurs rounds de cette session (bugs 2, 3, 6) ont vu une hypothèse
-   plausible mais fausse ou incomplète être proposée puis corrigée « à
-   l'aveugle », avant qu'un vrai log (bug 5 débloqué, logging bug 7
-   corrigé) ne révèle la cause exacte en une seule lecture. Quand une
-   correction censément solide ne change rien sur hardware, la priorité
-   devient d'obtenir de la visibilité (logs), pas de formuler une
-   nouvelle hypothèse.
+1. **"Clean build" proves nothing about the content of the flashed
+   binary.** A multi-project setup with shared/copied artifacts (here: a
+   bootloader shared between app and factory) can run an old binary
+   while you believe you're testing new code, with no visible error.
+   Verify by direct inspection (`nm`, grep for known strings) as soon as
+   a symptom persists identically after several supposedly independent
+   fixes.
+2. **`add_compile_options()`/`add_compile_definitions()` after
+   `project()` do not propagate to ESP-IDF components (5.5.5).** A trap
+   hit twice in this single file (`MSF_BOARD_NAME`, then `ESP3D_LOG`) —
+   `idf_build_set_property(COMPILE_DEFINITIONS ...)` is the only
+   reliable method after `project()`.
+3. **A pin used for EXT1 wake cannot be re-read as raw digital without
+   explicitly handing control back to the digital domain**
+   (`rtcio_ll_function_select(..., RTCIO_LL_FUNC_DIGITAL)`), including in
+   bootloader context.
+4. **Any deliberate blocking loop at the bootloader level must feed the
+   RTC watchdog** if its duration can exceed
+   `CONFIG_BOOTLOADER_WDT_TIME_MS` — otherwise the watchdog protects the
+   bootloader against... the bootloader itself.
+5. **Size a task's stack based on its largest local buffers**, not on a
+   generic estimate — a buffer the size of a flash sector (4 KB) is a
+   frequent case as soon as `esp_flash_*` is used directly.
+6. **The reset reason alone is not enough to distinguish a crash from an
+   intentional restart** if both go through the same path
+   (`esp_restart_noos()`) — an explicit state is needed to go further
+   than "always check just in case."
+7. **Getting real logs beats any hypothesis, however well argued.**
+   Several rounds in this session (bugs 2, 3, 6) saw a plausible but
+   wrong or incomplete hypothesis proposed and then fixed "blindly,"
+   before an actual log (bug 5 unblocked, bug 7's logging fixed)
+   revealed the exact cause in a single read. When a supposedly solid
+   fix changes nothing on hardware, the priority becomes getting
+   visibility (logs), not formulating a new hypothesis.
 
-## 10. Références
+## 10. References
 
-- `docs/ROADMAP.md` — ADR-009 et ses amendements (détail technique complet
-  de chaque fix, dans l'ordre chronologique).
-- `docs/FACTORY.md` §3.4 — procédure de build correcte (bug #5).
-- `boards/x4pro/factory/bootloader_components/custom_bootloader/hooks.c` —
-  hook bootloader (bugs #2, #3, #4).
-- `components/power_mgr/power_mgr.c`, `main/main.c` — logique app-level
+- `docs/ROADMAP.md` — ADR-009 and its amendments (full technical detail
+  of each fix, in chronological order).
+- `docs/FACTORY.md` §3.4 — correct build procedure (bug #5).
+- `boards/x4pro/factory/bootloader_components/custom_bootloader/hooks.c`
+  — bootloader hook (bugs #2, #3, #4).
+- `components/power_mgr/power_mgr.c`, `main/main.c` — app-level logic
   (bugs #1, #6, #7).
-- `CMakeLists.txt` (racine) — bug #7.
+- `CMakeLists.txt` (root) — bug #7.

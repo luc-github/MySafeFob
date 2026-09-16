@@ -1,11 +1,11 @@
 /**
  * @file splash.h
- * @brief MySafeFob App — écran d'accueil statique (board x4pro).
+ * @brief MySafeFob App — static welcome screen (board x4pro).
  *
- * Affiche une page statique sur l'e-ink au boot de l'app, pour savoir où
- * l'on est quand on quitte la factory (demande utilisateur 2026-09-14).
- * Premier slice de la Phase 8c : les drivers e-ink portés de la factory
- * (éprouvés) serviront de base au BSP complet de l'app.
+ * Displays a static page on the e-ink at app boot, so you know where
+ * you are when leaving the factory (user request 2026-09-14).
+ * First slice of Phase 8c: the e-ink drivers ported from the factory
+ * (proven) will serve as the base for the app's full BSP.
  */
 #pragma once
 
@@ -14,22 +14,22 @@ extern "C" {
 #endif
 
 /**
- * @brief Init rails + e-ink, affiche la page statique, power-off du
- *        contrôleur (l'image persiste à consommation nulle).
+ * @brief Init rails + e-ink, displays the static page, powers off the
+ *        controller (the image persists at zero power).
  *
- * Bloquant ~3-4 s (full refresh GC). À appeler une fois au boot.
+ * Blocking ~3-4s (full refresh GC). Call once at boot.
  */
 void board_splash_show(void);
 
 /**
- * @brief Écran "prêt" statique, affiché juste après le splash — distingue
- *        visuellement la transition (splash, transitoire) de l'état stable
- *        (prêt/console active), pour qu'un blocage éventuel après le splash
- *        soit visible au lieu de laisser croire que le device a fini de
- *        démarrer alors qu'il est resté bloqué sur l'image de transition.
- *        Provisoire : remplacé par l'écran UNLOCK réel en tâche 8.4.
+ * @brief Static "ready" screen, displayed right after the splash — visually
+ *        distinguishes the transition (splash, transient) from the stable
+ *        state (ready/console active), so that a possible hang after the
+ *        splash is visible instead of suggesting the device has finished
+ *        booting when it's actually stuck on the transition image.
+ *        Provisional: replaced by the real UNLOCK screen in task 8.4.
  *
- * Bloquant ~3-4 s (full refresh GC).
+ * Blocking ~3-4s (full refresh GC).
  */
 void board_ready_show(void);
 

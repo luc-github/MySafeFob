@@ -1,16 +1,16 @@
 /**
  * @file touch.h
- * @brief MySafeFob Factory — driver touch GT911 X4 Pro (polling).
+ * @brief MySafeFob Factory — X4 Pro GT911 touch driver (polling).
  *
- * Portage/adaptation de touch.h PiBot (FT6336U) vers GT911, avec les
- * sequences validees du probe x4pro-probe :
- *  - dance POR sous reset (RST=GPIO4, INT=GPIO10, rail GPIO2 active-low)
- *  - UPLOAD CONFIG OBLIGATOIRE a chaque boot (OTP vide d'usine sur ce batch :
- *    0x8047 lit 0x00, le panel ne scanne pas sans config hote)
- *  - mapping valide test 4 coins : fb_x = raw_y, fb_y = 479 - raw_x
+ * Port/adaptation of PiBot's touch.h (FT6336U) to GT911, with the
+ * sequences validated on the x4pro-probe probe:
+ *  - POR reset dance (RST=GPIO4, INT=GPIO10, rail GPIO2 active-low)
+ *  - CONFIG UPLOAD MANDATORY on every boot (OTP blank from the factory on
+ *    this batch: 0x8047 reads 0x00, the panel doesn't scan without host config)
+ *  - mapping validated by the 4-corner test: fb_x = raw_y, fb_y = 479 - raw_x
  *
- * Lecture >= 2 octets systematique (anomalie driver I2C IDF 5.4 :
- * les lectures d'1 octet NACKent).
+ * Systematic reads of >= 2 bytes (IDF 5.4 I2C driver quirk:
+ * 1-byte reads get NACKed).
  */
 #pragma once
 
@@ -18,22 +18,22 @@
 #include <stdint.h>
 
 typedef struct {
-    bool pressed;       /* true si un doigt est pose */
-    bool home;          /* true si le point est dans la zone du pad Home
-                         * (mesure validee 01:34 : brut rx<70, ry 380-580) */
-    int16_t x;          /* coords framebuffer paysage 800x480 */
+    bool pressed;       /* true if a finger is down */
+    bool home;          /* true if the point is within the Home pad zone
+                         * (validated measurement 01:34: raw rx<70, ry 380-580) */
+    int16_t x;          /* landscape 800x480 framebuffer coords */
     int16_t y;
 } touch_point_t;
 
 /**
- * @brief Init rails + dance POR GT911 + probe I2C + upload config si besoin.
- * @return true si le controleur repond et scanne.
+ * @brief Init rails + GT911 POR dance + I2C probe + config upload if needed.
+ * @return true if the controller responds and scans.
  */
 bool touch_init(void);
 
 /**
- * @brief Lit l'etat tactile courant (polling, non bloquant).
- *        Ne JAMAIS re-resetter le chip entre deux lectures (bug 2026-09-12 :
- *        re-dancer a chaque poll empechait le scan).
+ * @brief Reads the current touch state (polling, non-blocking).
+ *        NEVER reset the chip between two reads (2026-09-12 bug:
+ *        re-dancing on every poll prevented scanning).
  */
 touch_point_t touch_read(void);

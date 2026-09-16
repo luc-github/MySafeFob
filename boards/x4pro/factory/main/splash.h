@@ -1,8 +1,8 @@
 /**
  * @file splash.h
- * @brief MySafeFob Factory — splash statique au boot (ADR-010 amende
- *   2026-09-15 : FreeInkUI::DisplayTarget, copie figee propre a la factory,
- *   cf. components/freeinkui/CMakeLists.txt).
+ * @brief MySafeFob Factory — static splash at boot (ADR-010 amended
+ *   2026-09-15: FreeInkUI::DisplayTarget, frozen copy specific to the factory,
+ *   see components/freeinkui/CMakeLists.txt).
  */
 #pragma once
 
@@ -11,9 +11,9 @@ extern "C" {
 #endif
 
 /**
- * @brief Dessine et affiche le splash (resources/splash.png, converti par
- *        tools/gen_splash.py) en full refresh. eink_init() doit deja avoir
- *        ete appele.
+ * @brief Draws and displays the splash (resources/splash.png, converted by
+ *        tools/gen_splash.py) with a full refresh. eink_init() must
+ *        already have been called.
  */
 void splash_show(void);
 

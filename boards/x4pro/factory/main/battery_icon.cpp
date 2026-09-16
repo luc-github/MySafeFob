@@ -1,9 +1,9 @@
 /**
  * @file battery_icon.cpp
- * @brief MySafeFob Factory — voir battery_icon.h. Deuxieme (et dernier a ce
- *        jour) point de contact avec FreeInkUI dans la factory, apres le
- *        splash (splash.cpp) — toujours la copie figee de
- *        components/freeinkui/ (ADR-010 amende).
+ * @brief MySafeFob Factory — see battery_icon.h. Second (and so far last)
+ *        point of contact with FreeInkUI in the factory, after the
+ *        splash (splash.cpp) — always the frozen copy of
+ *        components/freeinkui/ (ADR-010 amended).
  */
 #include "battery_icon.h"
 
@@ -30,16 +30,16 @@ void battery_icon_draw(int x, int y, int w, int h, uint8_t percent, bool chargin
     props.charging = charging;
     props.style = BatteryIndicatorStyle::Icon;
     props.color = Color::Black;
-    props.label = nullptr;   /* texte du pourcentage : gfx_draw_string, pas ici */
-    /* BUGFIX 2026-09-16 : glyphWidth/glyphHeight (defaut 22x11) pilotent la
-     * taille REELLE du glyphe, independamment du Rect — agrandir seulement
-     * le Rect ne changeait rien (juste plus de marge autour d'une icone
-     * minuscule). Il faut fixer explicitement la taille voulue ici. */
+    props.label = nullptr;   /* percentage text: gfx_draw_string, not here */
+    /* BUGFIX 2026-09-16: glyphWidth/glyphHeight (default 22x11) drive the
+     * ACTUAL glyph size, independent of the Rect — enlarging just the
+     * Rect changed nothing (just more margin around a tiny icon). The
+     * desired size must be set explicitly here. */
     props.glyphWidth = static_cast<int16_t>(w);
     props.glyphHeight = static_cast<int16_t>(h);
 
-    /* Rect = juste assez large pour glyphe + nub (+2px), aligne a droite
-     * dedans -> body colle a (x,y) comme avant. */
+    /* Rect = just wide enough for glyph + nub (+2px), right-aligned
+     * inside it -> body sticks to (x,y) as before. */
     const int16_t rectW = static_cast<int16_t>(w + 4);
     batteryIndicator(frame, Rect{static_cast<int16_t>(x), static_cast<int16_t>(y),
                                  rectW, static_cast<int16_t>(h)},

@@ -1,37 +1,37 @@
 # Board `m5paper_mono` — M5Stack M5PaperMono (STUB, ADR-008)
 
-> **Statut** : documentation uniquement. **Aucun code avant d'avoir le
-> hardware en main** (hors stock au moment de la décision, 2026-09-13).
-> L'UI converge avec le X4 Pro vers du **480×800 portrait** — c'est la
-> board portuaire naturelle du projet.
+> **Status**: documentation only. **No code before the hardware is
+> in hand** (out of stock at the time of the decision, 2026-09-13).
+> The UI converges with the X4 Pro toward **480×800 portrait** — this is
+> the project's natural porting target board.
 
-## Specs (récoltées du shop M5Stack, 2026-09-13)
+## Specs (gathered from the M5Stack shop, 2026-09-13)
 
-| Élément | Valeur |
+| Element | Value |
 |---|---|
-| Référence | M5PaperMono, SKU C153, 65 $ (out of stock) |
-| SoC | ESP32-S3R8, 16 Mo flash, 8 Mo PSRAM octal, Wi-Fi 2.4 GHz |
-| E-paper | **SSD1677 480×800 natif portrait**, 4 niveaux de gris |
-| Touch | **FT6336G** (driver standard, contrairement au GT911 du X4 Pro) |
+| Reference | M5PaperMono, SKU C153, $65 (out of stock) |
+| SoC | ESP32-S3R8, 16 MB flash, 8 MB octal PSRAM, Wi-Fi 2.4 GHz |
+| E-paper | **SSD1677 480×800 native portrait**, 4 grayscale levels |
+| Touch | **FT6336G** (standard driver, unlike the X4 Pro's GT911) |
 | RTC | RX8130CE |
-| Batterie | 1150 mAh (via M5PM1), M5IOE1 IO expander |
-| Boutons | 2 user + power ; microSD ; USB-C |
-| Extras (jamais utilisés — air-gap) | NFC ST25R3916, LoRa SX1262, micro PDM, buzzer, IMU BMI270, RGB LED |
+| Battery | 1150 mAh (via M5PM1), M5IOE1 IO expander |
+| Buttons | 2 user + power; microSD; USB-C |
+| Extras (never used — air-gap) | NFC ST25R3916, LoRa SX1262, PDM mic, buzzer, IMU BMI270, RGB LED |
 
-## Notes de portage anticipé
+## Anticipated porting notes
 
-- Le probe `test_apps/x4pro-probe/` contient déjà un chemin driver SSD1677
-  (commandes `eink_ssd`, busy=**HIGH** — polarité inverse du UC8279) : c'est
-  la base du futur driver e-ink de cette board.
-- E-paper natif **portrait** : pas de rotation matérielle à gérer (simplifie
-  le driver vs X4 Pro).
-- Les extras radio (NFC/LoRa) restent désactivés par le modèle air-gapped.
+- The `test_apps/x4pro-probe/` probe already contains an SSD1677 driver
+  path (`eink_ssd` commands, busy=**HIGH** — inverse polarity from the
+  UC8279): this is the basis for this board's future e-ink driver.
+- Native **portrait** e-paper: no hardware rotation to handle (simplifies
+  the driver compared to the X4 Pro).
+- The radio extras (NFC/LoRa) stay disabled under the air-gapped model.
 
-## Pour activer cette board plus tard
+## To enable this board later
 
 1. `boards/m5paper_mono/board_config.cmake` + `sdkconfig.defaults`
-   (calques de `boards/x4pro/`).
-2. `boards/m5paper_mono/flash_params.json` + README mis à jour avec les
-   mesures réelles.
-3. Drivers : SSD1677 (base `eink_ssd` du probe), FT6336G (driver existant
-   dans l'écosystème IDF), RX8130CE.
+   (modeled on `boards/x4pro/`).
+2. `boards/m5paper_mono/flash_params.json` + README updated with the
+   actual measurements.
+3. Drivers: SSD1677 (based on the probe's `eink_ssd`), FT6336G (existing
+   driver in the IDF ecosystem), RX8130CE.

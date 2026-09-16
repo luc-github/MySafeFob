@@ -1,7 +1,7 @@
 /**
  * @file gfx.c
- * @brief MySafeFob Factory — GFX 1 bpp : framebuffer + primitives.
- *   Portage de gfx.c PiBot (LCD RGB565 direct) vers framebuffer 1 bpp e-ink.
+ * @brief MySafeFob Factory — 1 bpp GFX: framebuffer + primitives.
+ *   Port of PiBot's gfx.c (direct RGB565 LCD) to a 1 bpp e-ink framebuffer.
  */
 #include "gfx.h"
 #include "eink.h"
@@ -9,18 +9,19 @@
 
 #include <string.h>
 
-/* Framebuffer DRAM interne (zero PSRAM requise — le probe a valide ce choix).
- * Bit 1 = blanc, bit 0 = noir, MSB-first (bit 7 = pixel x de gauche). */
+/* Internal DRAM framebuffer (zero PSRAM required — the probe validated this choice).
+ * Bit 1 = white, bit 0 = black, MSB-first (bit 7 = leftmost pixel). */
 static uint8_t s_fb[SCREEN_FB_SIZE];
 
 static inline void put_pixel(int x, int y, uint8_t color)
 {
     if (x < 0 || x >= SCREEN_WIDTH || y < 0 || y >= SCREEN_HEIGHT) return;
-    /* Transpose portrait UI -> fb paysage. Valide mesure fleche 12:38 :
-     *   fb +x affiche VERS LE BAS (sy = fb_x)
-     *   fb (0,0) s'affiche en HAUT-DROITE (sx = 479 - fb_y)
-     * Donc user(ux,uy) -> fb_x = uy, fb_y = 479 - ux. Sans le miroir X le
-     * texte serait inverse. Identique a l'ancien mapping touch valide. */
+    /* Transpose portrait UI -> landscape fb. Validated by the 12:38 arrow
+     * measurement:
+     *   fb +x displays DOWNWARD (sy = fb_x)
+     *   fb (0,0) displays at the TOP-RIGHT (sx = 479 - fb_y)
+     * So user(ux,uy) -> fb_x = uy, fb_y = 479 - ux. Without the X mirror the
+     * text would be reversed. Same as the previously validated touch mapping. */
     uint8_t *b = &s_fb[(SCREEN_WIDTH - 1 - x) * EINK_WB + (y >> 3)];
     if (color) {
         *b |= (uint8_t)(0x80 >> (y & 7));
@@ -62,7 +63,7 @@ void gfx_draw_char(int x, int y, char c, uint8_t fg, uint8_t bg)
         uint8_t bits = glyph[row * FONT_BYTES_PER_ROW];
         for (int col = 0; col < FONT_WIDTH; col++) {
             uint8_t color = (bits & (0x80 >> col)) ? fg : bg;
-            /* Rendu x2 : bloc GFX_FONT_SCALE x GFX_FONT_SCALE par pixel. */
+            /* x2 rendering: a GFX_FONT_SCALE x GFX_FONT_SCALE block per pixel. */
             for (int dy = 0; dy < GFX_FONT_SCALE; dy++) {
                 for (int dx = 0; dx < GFX_FONT_SCALE; dx++) {
                     put_pixel(x + col * GFX_FONT_SCALE + dx,

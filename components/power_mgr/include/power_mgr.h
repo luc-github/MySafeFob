@@ -1,36 +1,36 @@
 /**
  * @file power_mgr.h
- * @brief MySafeFob — gestion on/off logiciel (contrat, ADR-009).
+ * @brief MySafeFob — software power on/off management (contract, ADR-009).
  *
- * Le bouton Power (GPIO3, actif-LOW) est une simple entree : la fonction
- * on/off est realisee par DEEP SLEEP + wake-up GPIO. Le device vit "eteint"
- * entre deux usages ; les codes TOTP sont calcules a la demande au reveil
- * (le RTC BM8563 tient l'heure sur batterie).
+ * The Power button (GPIO3, active-LOW) is a plain input: the on/off
+ * function is achieved via DEEP SLEEP + GPIO wake-up. The device lives
+ * "off" between uses; TOTP codes are computed on demand at wake-up
+ * (the BM8563 RTC keeps time on battery).
  *
- * Sequence d'arret (power_mgr_shutdown) :
- *   1. e-ink power-off (image conservee — bistable)
- *   2. frontlight off, rails optionnels coupes (hold RTC)
- *   3. esp_deep_sleep_start() + wake-up GPIO3 LOW (pull-up RTC)
+ * Shutdown sequence (power_mgr_shutdown):
+ *   1. e-ink power-off (image kept — bistable)
+ *   2. frontlight off, optional rails cut (RTC hold)
+ *   3. esp_deep_sleep_start() + GPIO3 LOW wake-up (RTC pull-up)
  *
- * Au reveil : reboot S3, esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1
- *   (GPIO3 = RTC IO -> EXT1 ANY_LOW ; le wake-up GPIO digital n'existe pas
- *   sur S3 : pas de SOC_GPIO_SUPPORT_DEEPSLEEP_WAKEUP)
- *   => l'app saute directement a l'ecran UNLOCK.
+ * At wake-up: S3 reboot, esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1
+ *   (GPIO3 = RTC IO -> EXT1 ANY_LOW; digital GPIO wake-up doesn't exist
+ *   on S3: no SOC_GPIO_SUPPORT_DEEPSLEEP_WAKEUP)
+ *   => the app jumps straight to the UNLOCK screen.
  *
- *   SEMANTIQUE BOUTONS (ADR-009 amende 2026-09-16) : **Power seul**, mesure
- *   de duree, plus de combo Power+Right — abandonne car empiriquement le
- *   combo empechait le reveil lui-meme de se declencher (teste sur
- *   hardware : Power seul reveille systematiquement, Power+Right ensemble
- *   ne reveille JAMAIS, quelle que soit la duree de maintien — probleme en
- *   amont du hook bootloader, pas un souci de timing logiciel).
- *     - Power tenu < 10 s (depuis l'app eveillee) => deep sleep normal.
- *     - Power tenu >= 10 s (eveille OU pendant la fenetre de reveil
- *       depuis la veille) => bascule factory :
- *         - Eveille : power_mgr_switch_to_factory() (logiciel, esp_ota).
- *         - Endormi : hooks.c (bootloader) mesure directement la duree de
- *           maintien de GPIO3 (meme seuil 10 s), plus de dependance a
- *           GPIO7 pendant la fenetre de reveil.
- *   Left+Power reste impossible (GPIO0 strapping -> download mode).
+ *   BUTTON SEMANTICS (ADR-009 amended 2026-09-16): **Power alone**, duration
+ *   measurement, no more Power+Right combo — dropped because empirically the
+ *   combo prevented the wake-up itself from triggering (tested on
+ *   hardware: Power alone wakes systematically, Power+Right together
+ *   NEVER wakes, regardless of hold duration — a problem upstream of the
+ *   bootloader hook, not a software timing issue).
+ *     - Power held < 10s (from the awake app) => normal deep sleep.
+ *     - Power held >= 10s (awake OR during the wake window from
+ *       sleep) => switch to factory:
+ *         - Awake: power_mgr_switch_to_factory() (software, esp_ota).
+ *         - Asleep: hooks.c (bootloader) directly measures GPIO3's hold
+ *           duration (same 10s threshold), no more dependency on GPIO7
+ *           during the wake window.
+ *   Left+Power remains impossible (GPIO0 strapping -> download mode).
  *
  * STATUS (2026-09-14): wake/shutdown flow wired for validation —
  * power_mgr_init() at boot logs the wake cause, the REPL `sleep` command
@@ -47,40 +47,40 @@ extern "C" {
 #endif
 
 /**
- * @brief Configure la source de reveil (GPIO Power, actif-LOW) et le
- *        pull-up RTC. A appeler une fois au boot, avant toute veille.
+ * @brief Configures the wake-up source (Power GPIO, active-LOW) and the
+ *        RTC pull-up. Call once at boot, before any sleep.
  */
 esp_err_t power_mgr_init(void);
 
 /**
- * @brief Vrai si le boot courant est un reveil par bouton Power (deep sleep).
- *        L'app l'utilise pour sauter le splash et aller direct a UNLOCK.
+ * @brief True if the current boot is a wake-up via the Power button (deep sleep).
+ *        The app uses this to skip the splash and go straight to UNLOCK.
  */
 bool power_mgr_wakeup_from_power(void);
 
 /**
- * @brief Etat de la batterie cote gestion d'energie : true si le seuil
- *        critique est atteint et qu'un shutdown imminent est recommande.
- *        (Implementation avec CW2017 en 8c ; retourne false par defaut.)
+ * @brief Battery state from the power management side: true if the
+ *        critical threshold is reached and an imminent shutdown is
+ *        recommended. (Implemented with CW2017 in 8c; returns false by default.)
  */
 bool power_mgr_battery_critical(void);
 
 /**
- * @brief Met le device en veille profondee. NE RETOURNE JAMAIS
- *        (reboot au reveil). Consomme les deinitialisations board
- *        (e-ink POF, frontlight, rails) avant esp_deep_sleep_start().
+ * @brief Puts the device into deep sleep. NEVER RETURNS
+ *        (reboots on wake). Runs the board deinitializations
+ *        (e-ink POF, frontlight, rails) before esp_deep_sleep_start().
  */
 void power_mgr_shutdown(void);
 
 /**
- * @brief Bascule logicielle vers la partition factory (Power tenu >= 10 s
- *        depuis l'app eveillee — ADR-009 amende 2026-09-16). Sauvegarde
- *        otadata @0xB000 (meme contrat que hooks.c / factory main.c — la
- *        factory restaure ce backup a son demarrage, donc un Cancel depuis
- *        la factory revient proprement sur l'app), efface otadata, puis
- *        esp_restart(). NE RETOURNE JAMAIS en cas de succes ; en cas
- *        d'echec (lecture/ecriture flash), retourne et log l'erreur —
- *        l'appelant reste eveille, ne rentre pas en veille par erreur.
+ * @brief Software switch to the factory partition (Power held >= 10s
+ *        from the awake app — ADR-009 amended 2026-09-16). Backs up
+ *        otadata @0xB000 (same contract as hooks.c / factory main.c — the
+ *        factory restores this backup at its startup, so a Cancel from
+ *        the factory cleanly returns to the app), erases otadata, then
+ *        esp_restart(). NEVER RETURNS on success; on failure
+ *        (flash read/write), returns and logs the error —
+ *        the caller stays awake, doesn't sleep by mistake.
  */
 void power_mgr_switch_to_factory(void);
 

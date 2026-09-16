@@ -1,17 +1,17 @@
 /**
  * @file main.c
- * @brief MySafeFob — point d'entrée applicatif (squelette Phase 8).
+ * @brief MySafeFob — application entry point (Phase 8 skeleton).
  *
- * Pour l'instant : banner + self-tests TOTP + console REPL minimale.
- * Le boot applicatif réel (UNLOCK -> UI) arrive avec la tâche 8.2/8.4.
+ * For now: banner + TOTP self-tests + minimal REPL console.
+ * The real app boot (UNLOCK -> UI) arrives with task 8.2/8.4.
  *
- * La console REPL (F-20, docs/FEATURES.md) N'EST PAS temporaire : elle
- * reste en place en continu, même une fois l'UI tactile livrée — utile
- * pour lancer des commandes et vérifier des statuts sans l'écran. Seul
- * son contenu (commandes disponibles) grossira au fil des phases.
+ * The REPL console (F-20, docs/FEATURES.md) is NOT temporary: it
+ * stays in place permanently, even once the touch UI ships — useful
+ * for running commands and checking status without the screen. Only
+ * its content (available commands) will grow across the phases.
  *
- * Logging applicatif : esp3d_log (hooks -> historique erreurs à l'écran
- * en 8.4). Les drivers/board restent sur ESP_LOG* (écosystème IDF).
+ * Application logging: esp3d_log (hooks -> on-screen error history
+ * in 8.4). Drivers/board code stays on ESP_LOG* (IDF ecosystem).
  */
 #include <stdio.h>
 #include <string.h>
@@ -34,27 +34,28 @@
 
 static bool s_wake_from_sleep = false;
 
-/* Splash e-ink au boot — implémenté par le composant board
- * (boards/<board>/app/splash.c, déclaré via EXTRA_COMPONENT_DIRS dans
- * board_config.cmake). Pas de symbole faible : avec une archive statique,
- * le faible satisfait la référence et l'implémentation forte n'est jamais
- * tirée du lien (constaté au build 2026-09-14). Un board sans e-ink doit
- * fournir un stub, le link error est explicite. */
+/* E-ink splash at boot — implemented by the board component
+ * (boards/<board>/app/splash.c, declared via EXTRA_COMPONENT_DIRS in
+ * board_config.cmake). No weak symbol: with a static archive, the
+ * weak symbol satisfies the reference and the strong implementation
+ * is never pulled from the link (observed at the 2026-09-14 build). A
+ * board without e-ink must provide a stub, the link error is explicit. */
 void board_splash_show(void);
-void board_ready_show(void);          /* écran "prêt", après le splash */
-void board_sleep_screen_show(void);   /* écran de veille (deep sleep) */
+void board_ready_show(void);          /* "ready" screen, after the splash */
+void board_sleep_screen_show(void);   /* sleep screen (deep sleep) */
 
-/* BUGFIX 2026-09-16 : cmd_sleep() (REPL, sa propre tache esp_console) et
- * power_button_task() (appui physique Power) menent chacun independamment
- * vers board_sleep_screen_show()+power_mgr_shutdown() (et power_button_task
- * vers power_mgr_switch_to_factory()) sans aucune exclusion mutuelle. Deux
- * taches FreeRTOS distinctes declenchant l'une de ces sequences en meme
- * temps toucheraient l'e-ink concurremment (eink.c utilise des buffers
- * `static` dans ses fonctions de transfert ligne par ligne, pas de mutex) :
- * corruption plausible de l'affichage (SPI entrelace), etat indefini.
- * Un seul appelant peut "revendiquer" une transition terminale (veille ou
- * factory) — le second, s'il arrive, est ignore plutot que de s'executer
- * en parallele. */
+/* BUGFIX 2026-09-16: cmd_sleep() (REPL, its own esp_console task) and
+ * power_button_task() (physical Power press) each independently lead
+ * to board_sleep_screen_show()+power_mgr_shutdown() (and
+ * power_button_task also to power_mgr_switch_to_factory()) with no
+ * mutual exclusion at all. Two distinct FreeRTOS tasks triggering one
+ * of these sequences at the same time would touch the e-ink
+ * concurrently (eink.c uses `static` buffers in its line-by-line
+ * transfer functions, no mutex): plausible display corruption
+ * (interleaved SPI), undefined state.
+ * Only one caller may "claim" a terminal transition (sleep or
+ * factory) — the second one, if it arrives, is ignored rather than
+ * running in parallel. */
 static atomic_bool s_terminal_action_claimed = false;
 
 static bool claim_terminal_action(void)
@@ -66,7 +67,7 @@ static bool claim_terminal_action(void)
 static int cmd_about(int argc, char **argv)
 {
     (void)argc; (void)argv;
-    printf("MySafeFob (MSF) — squelette Phase 8\n");
+    printf("MySafeFob (MSF) — Phase 8 skeleton\n");
     printf("  board : %s\n", MSF_BOARD_NAME);
     printf("  IDF   : %s\n", esp_get_idf_version());
     printf("  wake  : %s\n", s_wake_from_sleep ? "deep-sleep (Power)" : "cold boot");
@@ -77,15 +78,15 @@ static int cmd_sleep(int argc, char **argv)
 {
     (void)argc; (void)argv;
     if (!claim_terminal_action()) {
-        printf("Deja en cours (bouton Power presse ?) — ignore.\n");
+        printf("Already in progress (Power button pressed?) — ignored.\n");
         return 0;
     }
-    printf("Deep sleep : ecran de veille, puis veille. Reveil = Power (GPIO3).\n");
-    printf("(Power tenu >= 10s = bascule factory — cf. ADR-009)\n");
-    vTaskDelay(pdMS_TO_TICKS(500));   /* laisser le message sortir sur USB */
+    printf("Deep sleep: sleep screen, then sleep. Wake = Power (GPIO3).\n");
+    printf("(Power held >= 10s = switch to factory — see ADR-009)\n");
+    vTaskDelay(pdMS_TO_TICKS(500));   /* let the message get out over USB */
     board_sleep_screen_show();
     power_mgr_shutdown();
-    return 0;   /* jamais atteint */
+    return 0;   /* never reached */
 }
 
 static int cmd_totpselftest(int argc, char **argv)
@@ -93,20 +94,20 @@ static int cmd_totpselftest(int argc, char **argv)
     (void)argc; (void)argv;
     esp_err_t err = totp_engine_run_self_tests();
     if (err == ESP_OK) {
-        printf("TOTP self-tests (RFC 6238) : OK\n");
+        printf("TOTP self-tests (RFC 6238): OK\n");
     } else {
-        printf("TOTP self-tests : ECHEC (%s)\n", esp_err_to_name(err));
+        printf("TOTP self-tests: FAILED (%s)\n", esp_err_to_name(err));
     }
     return 0;
 }
 
 /* -----------------------------------------------------------------------
- * Bouton Power (ADR-009 amende 2026-09-16) — version squelette, remplacee
- * par l'indev LVGL en 8.4. GPIO3 (Power, actif-LOW), mesure de duree
- * unique (plus de combo Right — abandonne, cf. power_mgr.h) :
- *   - relache < MSF_POWER_LONG_MS   : rien (appui court ignore ici)
- *   - maintenu >= MSF_POWER_LONG_MS et < MSF_POWER_FACTORY_MS : veille
- *   - maintenu >= MSF_POWER_FACTORY_MS : bascule factory (esp_ota, logiciel)
+ * Power button (ADR-009 amended 2026-09-16) — skeleton version, replaced
+ * by the LVGL indev in 8.4. GPIO3 (Power, active-LOW), single duration
+ * measurement (no more Right combo — dropped, see power_mgr.h):
+ *   - released < MSF_POWER_LONG_MS   : nothing (short press ignored here)
+ *   - held >= MSF_POWER_LONG_MS and < MSF_POWER_FACTORY_MS : sleep
+ *   - held >= MSF_POWER_FACTORY_MS : switch to factory (esp_ota, software)
  * ----------------------------------------------------------------------- */
 #define MSF_BTN_POWER_PIN      GPIO_NUM_3
 #define MSF_POWER_LONG_MS      1500
@@ -115,25 +116,27 @@ static int cmd_totpselftest(int argc, char **argv)
 static void power_button_task(void *arg)
 {
     (void)arg;
-    /* GPIO3 deja configure par power_mgr_init */
+    /* GPIO3 already configured by power_mgr_init */
 
     bool held = false;
     int64_t t0_us = 0;
     bool factory_triggered = false;
-    int64_t next_log_ms = 0;   /* diagnostic 2026-09-16 : progression toutes les ~1s */
-    /* BUGFIX 2026-09-16 (symetrique au fix de power_mgr_shutdown) : au
-     * reveil, Power est encore physiquement enfonce (c'est le geste qui a
-     * reveille le device) — sans ca, cette tache armerait son timer de
-     * long-press immediatement sur cet appui residuel, et rendormirait le
-     * device 1,5 s plus tard sans jamais laisser voir l'app. On exige un
-     * relachement observe au moins une fois avant d'armer un premier appui.
+    int64_t next_log_ms = 0;   /* 2026-09-16 diagnostic: progress every ~1s */
+    /* BUGFIX 2026-09-16 (symmetrical to the power_mgr_shutdown fix): on
+     * wake, Power is still physically held down (that's the gesture that
+     * woke the device) — without this, this task would arm its
+     * long-press timer immediately on that residual press, and put the
+     * device back to sleep 1.5s later without ever letting the app be
+     * seen. We require an observed release at least once before arming
+     * a first press.
      *
-     * NOTE 2026-09-16 : le cas "Power tenu >= 10 s en continu depuis la
-     * veille" n'est PAS gere ici — il est resolu par le hook bootloader
-     * (hooks.c) AVANT que cette tache (et l'app en general) ne demarre :
-     * la bascule factory reste ainsi disponible meme si l'app plante ou se
-     * bloque, ce qu'une mesure uniquement cote app ne pourrait pas garantir.
-     * Cette tache ne gere que les appuis effectues APRES que l'app tourne. */
+     * NOTE 2026-09-16: the case "Power held >= 10s continuously since
+     * sleep" is NOT handled here — it is resolved by the bootloader hook
+     * (hooks.c) BEFORE this task (and the app in general) starts: the
+     * switch to factory therefore stays available even if the app
+     * crashes or hangs, which a measurement done only on the app side
+     * could not guarantee. This task only handles presses made AFTER
+     * the app is running. */
     bool seen_release = false;
 
     while (1) {
@@ -147,23 +150,23 @@ static void power_button_task(void *arg)
             factory_triggered = false;
             t0_us = esp_timer_get_time();
             next_log_ms = 1000;
-            esp3d_log_d("Power presse — detection en cours...");
+            esp3d_log_d("Power pressed — detecting...");
         }
         if (held && p) {
             int64_t held_ms = (esp_timer_get_time() - t0_us) / 1000;
             if (held_ms >= next_log_ms) {
-                esp3d_log_d("Power: maintenu %lld ms", (long long)held_ms);
+                esp3d_log_d("Power: held %lld ms", (long long)held_ms);
                 next_log_ms += 1000;
             }
             if (!factory_triggered && held_ms >= MSF_POWER_FACTORY_MS) {
                 factory_triggered = true;
                 if (claim_terminal_action()) {
-                    esp3d_log_d("Power >= 10s : bascule vers factory");
-                    power_mgr_switch_to_factory();   /* ne retourne jamais si OK */
-                    esp3d_log_d("Power: bascule factory ECHOUEE, on reste eveille");
+                    esp3d_log_d("Power >= 10s: switching to factory");
+                    power_mgr_switch_to_factory();   /* never returns if OK */
+                    esp3d_log_d("Power: switch to factory FAILED, staying awake");
                     atomic_store(&s_terminal_action_claimed, false);
                 } else {
-                    esp3d_log_d("Power >= 10s : transition deja en cours (REPL sleep ?), ignore");
+                    esp3d_log_d("Power >= 10s: transition already in progress (REPL sleep?), ignored");
                 }
             }
         }
@@ -171,11 +174,11 @@ static void power_button_task(void *arg)
             int64_t held_ms = (esp_timer_get_time() - t0_us) / 1000;
             if (!factory_triggered && held_ms >= MSF_POWER_LONG_MS) {
                 if (claim_terminal_action()) {
-                    esp3d_log_d("Power long: mise en veille");
+                    esp3d_log_d("Power long press: going to sleep");
                     board_sleep_screen_show();
-                    power_mgr_shutdown();               /* jamais atteint */
+                    power_mgr_shutdown();               /* never reached */
                 } else {
-                    esp3d_log_d("Power long: transition deja en cours (REPL sleep ?), ignore");
+                    esp3d_log_d("Power long press: transition already in progress (REPL sleep?), ignored");
                 }
             }
             held = false;
@@ -189,7 +192,7 @@ void app_main(void)
     esp3d_log_init();
 
     esp3d_log_d("======================================");
-    esp3d_log_d("  MySafeFob (MSF) — squelette Phase 8");
+    esp3d_log_d("  MySafeFob (MSF) — Phase 8 skeleton");
     esp3d_log_d("  board=%s  IDF=%s", MSF_BOARD_NAME,
               esp_get_idf_version());
     esp3d_log_d("======================================");
@@ -202,21 +205,21 @@ void app_main(void)
     s_wake_from_sleep = power_mgr_wakeup_from_power();
 
     if (s_wake_from_sleep) {
-        /* Interim feedback (session 2026-09-14 : wake fonctionnel mais
-         * invisible -> "le bouton ne fait rien"). Remplace par l'ecran
-         * UNLOCK en 8.4 ; a garder en dev pour valider le flux wake. */
+        /* Interim feedback (2026-09-14 session: wake worked but was
+         * invisible -> "the button does nothing"). Replaced by the
+         * UNLOCK screen in 8.4; keep in dev to validate the wake flow. */
         esp3d_log_d("Wake from deep sleep — showing splash (UNLOCK screen in 8.4)");
         board_splash_show();
     } else {
-        /* Page statique e-ink (no-op si le board n'en a pas) : ~3-4 s
-         * bloquantes, avant la REPL — on sait toujours où l'on est. */
+        /* Static e-ink page (no-op if the board doesn't have one): ~3-4s
+         * blocking, before the REPL — so we always know where we are. */
         board_splash_show();
     }
-    /* Ecran "pret" juste apres le splash (demande 2026-09-16) : distingue
-     * la transition (splash, transitoire) de l'etat stable — sans lui, un
-     * blocage apres le splash resterait indiscernable d'un demarrage
-     * reussi (l'image de transition resterait affichee dans les deux cas).
-     * Provisoire, remplace par l'ecran UNLOCK reel en 8.4. */
+    /* "Ready" screen right after the splash (2026-09-16 request): tells
+     * apart the transition (splash, transient) from the stable state —
+     * without it, a hang after the splash would be indistinguishable from
+     * a successful boot (the transition image would stay displayed in
+     * both cases). Provisional, replaced by the real UNLOCK screen in 8.4. */
     board_ready_show();
 
     esp_err_t ret = nvs_flash_init();
@@ -227,41 +230,41 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
-    /* Console REPL (debug/dev — l'UI e-ink arrive en 8.4).
-     * Backend selon CONFIG_ESP_CONSOLE_* : le X4 Pro utilise le
-     * USB-Serial/JTAG natif (le dock ne câble pas UART0). */
+    /* REPL console (debug/dev — the e-ink UI arrives in 8.4).
+     * Backend depends on CONFIG_ESP_CONSOLE_*: the X4 Pro uses the
+     * native USB-Serial/JTAG (the dock doesn't wire UART0). */
     esp_console_repl_config_t repl_cfg = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
     repl_cfg.prompt = "msf> ";
     esp_console_register_help_command();
     const esp_console_cmd_t about_cmd = {
         .command = "about",
-        .help = "Identité du firmware",
+        .help = "Firmware identity",
         .func = &cmd_about,
     };
     const esp_console_cmd_t selftest_cmd = {
         .command = "totpselftest",
-        .help = "Self-tests RFC 6238 du moteur TOTP",
+        .help = "RFC 6238 self-tests for the TOTP engine",
         .func = &cmd_totpselftest,
     };
     const esp_console_cmd_t sleep_cmd = {
         .command = "sleep",
-        .help = "Ecran de veille puis deep sleep (reveil = Power GPIO3)",
+        .help = "Sleep screen then deep sleep (wake = Power GPIO3)",
         .func = &cmd_sleep,
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&about_cmd));
     ESP_ERROR_CHECK(esp_console_cmd_register(&selftest_cmd));
     ESP_ERROR_CHECK(esp_console_cmd_register(&sleep_cmd));
-    /* BUGFIX 2026-09-16 : commentaire precedent errone — esp_console_new_repl_*()
-     * cree bien la tache REPL, mais celle-ci reste parquee a l'etat
-     * CONSOLE_REPL_STATE_INIT (boucle de lecture jamais executee) tant que
-     * esp_console_start_repl() n'a pas explicitement bascule l'etat vers
-     * CONSOLE_REPL_STATE_START (esp_console_common.c, IDF 5.5.5). Sans cet
-     * appel (oublie ici, `(void)repl;` le jetait), la console affiche bien
-     * la banniere/les logs (esp3d_log/printf ne dependent pas de cette
-     * tache) mais ne traite plus jamais aucune commande tapee — confirme
-     * par comparaison avec `references/test_apps/x4pro-probe/main/main.c`
-     * qui appelle bien esp_console_start_repl(repl) et dont la console
-     * fonctionnait. */
+    /* BUGFIX 2026-09-16: previous comment was wrong — esp_console_new_repl_*()
+     * does create the REPL task, but it stays parked in the
+     * CONSOLE_REPL_STATE_INIT state (read loop never executed) until
+     * esp_console_start_repl() explicitly switches the state to
+     * CONSOLE_REPL_STATE_START (esp_console_common.c, IDF 5.5.5). Without
+     * this call (missing here, `(void)repl;` was throwing it away), the
+     * console does show the banner/logs (esp3d_log/printf don't depend on
+     * this task) but never processes any typed command again — confirmed
+     * by comparison with `references/test_apps/x4pro-probe/main/main.c`
+     * which does call esp_console_start_repl(repl) and whose console
+     * worked. */
     esp_console_repl_t *repl = NULL;
 #if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
     esp_console_dev_usb_serial_jtag_config_t usb_cfg =
@@ -273,22 +276,22 @@ void app_main(void)
         ESP_CONSOLE_DEV_UART_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_console_new_repl_uart(&uart_cfg, &repl_cfg, &repl));
 #else
-#error "Console REPL : ni USB_SERIAL_JTAG ni UART configures"
+#error "REPL console: neither USB_SERIAL_JTAG nor UART configured"
 #endif
     ESP_ERROR_CHECK(esp_console_start_repl(repl));
 
-    /* Bouton Power : appui < 10s = veille / appui >= 10s = factory (ADR-009).
-     * BUGFIX 2026-09-16 (stack overflow confirme sur hardware, log) :
-     * power_mgr_switch_to_factory() declare un buffer local
-     * uint8_t buf[FLASH_SECTOR_SIZE] (4096 octets) — a lui seul deja egal
-     * a l'ancienne taille de pile totale de cette tache (4096), sans
-     * compter entry1/entry2, l'usage de pile propre aux appels
-     * esp_flash_read/erase_region/write, ni les autres locales de cette
-     * boucle. Plantage systematique (vApplicationStackOverflowHook) des
-     * que power_mgr_switch_to_factory() est atteinte depuis l'app eveillee
-     * (jamais depuis le hook bootloader, qui tourne dans un contexte de
-     * pile different). Marge large car PSRAM abondante sur cette board. */
+    /* Power button: press < 10s = sleep / press >= 10s = factory (ADR-009).
+     * BUGFIX 2026-09-16 (stack overflow confirmed on hardware, logged):
+     * power_mgr_switch_to_factory() declares a local buffer
+     * uint8_t buf[FLASH_SECTOR_SIZE] (4096 bytes) — on its own already
+     * equal to this task's former total stack size (4096), not counting
+     * entry1/entry2, the stack usage of the esp_flash_read/erase_region/write
+     * calls, or this loop's other locals. Systematic crash
+     * (vApplicationStackOverflowHook) as soon as power_mgr_switch_to_factory()
+     * is reached from the awake app (never from the bootloader hook, which
+     * runs in a different stack context). Wide margin since this board has
+     * abundant PSRAM. */
     xTaskCreate(power_button_task, "pwr_btn", 12288, NULL, 5, NULL);
 
-    esp3d_log_d("Squelette pret. Commandes : help, about, totpselftest, sleep");
+    esp3d_log_d("Skeleton ready. Commands: help, about, totpselftest, sleep");
 }

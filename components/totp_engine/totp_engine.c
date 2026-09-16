@@ -19,7 +19,7 @@ static const char *TAG = "totp_engine";
  * Base32 decode
  * ========================================================================== */
 
-/* valeur = décodé + 1, 0 = caractère invalide (designated initializer, C99) */
+/* value = decoded + 1, 0 = invalid character (designated initializer, C99) */
 static const uint8_t base32_dec[256] = {
     ['A'] = 1,  ['B'] = 2,  ['C'] = 3,  ['D'] = 4,  ['E'] = 5,  ['F'] = 6,
     ['G'] = 7,  ['H'] = 8,  ['I'] = 9,  ['J'] = 10, ['K'] = 11, ['L'] = 12,

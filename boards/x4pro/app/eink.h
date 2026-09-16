@@ -1,18 +1,18 @@
 /**
  * @file eink.h
- * @brief MySafeFob Factory — driver E-Ink UC8279 (X4 Pro).
+ * @brief MySafeFob Factory — E-Ink UC8279 driver (X4 Pro).
  *
- * Extrait du probe valide test_apps/x4pro-probe/main/eink_test.c
- * (sequences UC8279 mesurees 2026-09-13 — docs/hardware-specs.md).
+ * Extracted from the validated probe test_apps/x4pro-probe/main/eink_test.c
+ * (UC8279 sequences measured 2026-09-13 — docs/hardware-specs.md).
  *
- * Contraintes critiques (NE PAS modifier sans revalidation hardware) :
- *  - PSR 0x37 (REG=1) a l'init ; entre PON et DRF re-ecriture COMPLETE des
- *    registres avec PSR 0x17 (REG=0, scan MTP). JAMAIS 0x37 au DRF
- *    (full GC bloque : BUSY LOW > 20 s, ecran gris).
- *  - Stream mode "brut" : gates 0..119 blancs (pad), 480 lignes fb en ordre
- *    direct octets tels quels, pad blanc jusqu'a 600 gates.
- *    => rotation 90 CW materielle, aucun transform logiciel.
- *  - BUSY actif-LOW ; timeout DRF 20 s ; chunk SPI <= 16 Ko (DMA S3).
+ * Critical constraints (DO NOT modify without hardware revalidation):
+ *  - PSR 0x37 (REG=1) at init; between PON and DRF a FULL rewrite of the
+ *    registers with PSR 0x17 (REG=0, MTP scan). NEVER 0x37 at DRF
+ *    (full GC hangs: BUSY LOW > 20s, grey screen).
+ *  - "Raw" stream mode: gates 0..119 white (pad), 480 fb lines in direct
+ *    byte order as-is, white pad up to 600 gates.
+ *    => 90 CW hardware rotation, no software transform.
+ *  - BUSY active-LOW; DRF timeout 20s; SPI chunk <= 16 KB (S3 DMA).
  */
 #pragma once
 
@@ -20,19 +20,19 @@
 #include "esp_err.h"
 
 /**
- * @brief Init SPI + GPIO + reset + sequence d'init UC8279 (PSR 0x37).
+ * @brief Init SPI + GPIO + reset + UC8279 init sequence (PSR 0x37).
  */
 esp_err_t eink_init(void);
 
 /**
- * @brief Affiche le framebuffer complet (1 bpp, 0xFF = blanc, 0x00 = noir,
- *        MSB-first, 100 octets/ligne x 480) puis refresh FULL GC.
+ * @brief Displays the full framebuffer (1 bpp, 0xFF = white, 0x00 = black,
+ *        MSB-first, 100 bytes/line x 480) then a FULL GC refresh.
  *
- * Un full refresh dure ~2-4 s (bloquant). Ne pas appeler en boucle rapide.
+ * A full refresh takes ~2-4s (blocking). Do not call in a fast loop.
  */
 esp_err_t eink_display_fb(const uint8_t *fb);
 
 /**
- * @brief Met le controleur en power-off (POF + attente idle).
+ * @brief Powers off the controller (POF + wait idle).
  */
 esp_err_t eink_power_off(void);
