@@ -1,0 +1,14 @@
+# X4 Pro — sdkconfig complémentaire (apres le sdkconfig.defaults commun)
+# Hardware : ESP32-S3R8, flash 16 MB quad, PSRAM octal 8 Mo.
+# Pinout et drivers : docs/hardware-specs.md (bring-up valide 2026-09-13).
+# Les reglages specifiques drivers (SPI e-ink, I2C, SDMMC...) seront
+# ajoutes ici avec les drivers de la tâche 8c.
+
+# Table de partitions propre a cette board (chemin relatif au projet src/).
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="boards/x4pro/partitions.csv"
+
+# Requis par power_mgr_switch_to_factory() (2026-09-16, ADR-009 amende) :
+# l'app ecrit/efface le secteur de backup otadata @0xB000, avant la 1re
+# partition (NVS @0xD000) -> "dangerous" par defaut. Meme contrat que
+# boards/x4pro/factory/sdkconfig.defaults (hooks.c bootloader).
+CONFIG_SPI_FLASH_DANGEROUS_WRITE_ALLOWED=y

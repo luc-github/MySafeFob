@@ -53,3 +53,117 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# ============================================
+# ESP-IDF specific
+# ============================================
+
+# Build output
+build/
+build_*/
+**/build/
+**/build_*/
+
+# Installers generes (postbuild cmake -> flash_mgr / web installer)
+installer/
+**/installer/
+# Memoire des choix interactifs des outils (build_mgr / flash_mgr)
+**/.build_mgr_prefs.json
+**/.flash_mgr_prefs.json
+
+# ESP-IDF generated config
+sdkconfig
+sdkconfig.old
+sdkconfig.defaults.backup
+
+# IDF Component Manager
+dependencies.lock
+managed_components/
+__idf_*/
+idf_component.yml.bak
+
+# Flash artifacts
+*.bin
+!**/prebuilt/*.bin
+*.flash
+flasher_args.json
+
+# Partition table generated
+partition_table/
+
+# Python virtual environments (IDF install)
+.venv/
+venv/
+esp-idf-env/
+
+# ESPTool / flashing logs
+*.log
+
+# ============================================
+# Secrets — NEVER commit these
+# ============================================
+
+# TOTP secrets
+*.secret
+*.secret.txt
+*-secret.txt
+*-secret.*
+secrets/
+secret*.txt
+!secret*.example.txt
+
+# Recovery codes
+*recovery*codes*
+*backup-codes*
+
+# Credentials
+*.pem
+*.key
+*.crt
+.env
+.env.*
+
+# ============================================
+# OS / Editor
+# ============================================
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# macOS
+.DS_Store
+._*
+
+# VS Code
+.vscode/
+!.vscode/settings.json.example
+
+# JetBrains
+.idea/
+*.iml
+
+# Vim / Emacs
+*~
+*.swp
+*.swo
+\#*\#
+.\#*
+
+# ============================================
+# Project specific
+# ============================================
+
+# Test logs
+test_apps/*/test-log.md
+!test_apps/*/test-log.example.md
+
+# Downloaded datasheets
+docs/datasheets/
+*.pdf
+!docs/**/*.pdf
+Luc-Pibot-cnc-pendant-firmware/
+crosspoint-reader-develop/
+github-recovery-codes.txt
+_ext/
+references/

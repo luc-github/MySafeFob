@@ -1,0 +1,20 @@
+{
+  "board": "x4pro",
+  "description": "XTEINK X4 Pro Developer Edition — ESP32-S3R8, 16 MB flash, 8 MB PSRAM octal, e-paper UC8279 800x480, touch GT911, RTC BM8563, gauge CW2017. Bring-up complet : docs/hardware-specs.md",
+  "chip": "esp32s3",
+  "flash_mode": "dio",
+  "flash_freq": "80m",
+  "flash_size": "16MB",
+  "offsets": {
+    "bootloader": "0x0",
+    "_comment_bootloader": "S3 = 0x0 (pas 0x1000 des ESP32 classic — piège documente dans le flash_mgr PiBot : flashe a 0x1000 = boot loop invalid header).",
+    "partition_table": "0xC000",
+    "otadata": "0x10000",
+    "factory": "0x20000",
+    "app0": "0x120000"
+  },
+  "console": {
+    "port_hint": "USB-Serial/JTAG natif via pogo dock (COMx)",
+    "reset_auto": true
+  }
+}

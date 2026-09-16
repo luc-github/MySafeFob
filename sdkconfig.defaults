@@ -1,0 +1,42 @@
+# MySafeFob — sdkconfig par défaut (tous boards)
+# Les réglages spécifiques board sont ajoutés par boards/<name>/sdkconfig.defaults
+# via board_config.cmake (sélection -DMSF_BOARD=<name>).
+
+CONFIG_IDF_TARGET="esp32s3"
+
+# Flash 16 MB quad (X4 Pro ; à surcharger par board si besoin)
+# DIAG 2026-09-14 : DIO (pas QIO) — seule config PROUVEE sur notre unite
+# (boot loop TG0WDT en ROM loader avec QIO ; le probe x4pro-probe tournait
+# en DIO). A retester/repasser en qio une fois la cause confirmee.
+CONFIG_ESPTOOLPY_FLASHMODE="dio"
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# Console : USB-Serial/JTAG natif (le dock du X4 Pro = COMx via USB natif,
+# UART0 non connecte). Sans cela : zero log visible, bootloader compris.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# Logs bootloader visibles pendant le diagnostic (boot loop usine).
+# Repasser a INFO/NONE en release.
+CONFIG_BOOTLOADER_LOG_LEVEL_DEBUG=y
+CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+CONFIG_LOG_DEFAULT_LEVEL_DEBUG=y
+
+# Table de partitions custom (ADR-007) : offset 0xC000 obligatoire
+# pour libérer le secteur 0xB000 (backup otadata du bootloader hook).
+# Le NOM du fichier est défini par board (boards/<name>/sdkconfig.defaults),
+# car chaque board apporte sa propre table partitions.csv.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_OFFSET=0xC000
+
+# PSRAM octal 8 Mo (ESP32-S3R8)
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+# Air-gap : jamais de credentials Wi-Fi persistés (ADR-001 / règle 5)
+CONFIG_ESP_WIFI_NVS_ENABLED=n
+
+# Hook bootloader custom (recovery factory — ADR-007).
+# VERIFIE 5.5.5 (build factory 2026-09-13) : pas d'option Kconfig — le
+# mecanisme est inconditionnel (weak hooks bootloader_hooks.h, appelés si
+# definis). Le composant custom_bootloader dans bootloader_components/ suffit.

@@ -1,0 +1,14 @@
+# MySafeFob — partition table 16 MB (ADR-007, validé 2026-09-13 ;
+# app1 retiré ADR-011, 2026-09-15 : factory est l'unique recovery, pas
+# d'OTA réseau (ADR-003) -> pas besoin du 2e slot esp_ota. Espace libéré
+# donné a `secrets` (F-05b : recovery codes + coffre passwords).
+# Offsets fixes (pas d'auto) : le backup otadata @0xB000 et la factory @0x20000
+# sont des contrats partagés avec le bootloader hook (boards/x4pro/factory).
+#
+# Name,   Type, SubType,  Offset,   Size,     Flags
+nvs,      data, nvs,      0xD000,   0x3000,
+otadata,  data, ota,      0x10000,  0x2000,
+factory,  app,  factory,  0x20000,  0x100000,
+app0,     app,  ota_0,    0x120000, 0x200000,
+secrets,  data, spiffs,   0x320000, 0x240000,
+coredump, data, coredump, 0x560000, 0x10000,

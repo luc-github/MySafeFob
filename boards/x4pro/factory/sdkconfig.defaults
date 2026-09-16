@@ -1,0 +1,29 @@
+# MySafeFob Factory — sdkconfig (ADR-007)
+# OBLIGATOIRE : la factory efface le backup otadata @0xB000 (avant la 1re
+# partition @0xD000) ; avec le défaut ABORTS de CONFIG_SPI_FLASH_DANGEROUS_WRITE,
+# cet accès abort()e. Voir factory/README du PiBot (factory_app_technical_doc).
+
+CONFIG_IDF_TARGET="esp32s3"
+# DIAG 2026-09-14 : DIO — cf. sdkconfig.defaults racine (QIO = boot loop
+# TG0WDT constate sur cette unite ; DIO = config du probe valide).
+CONFIG_ESPTOOLPY_FLASHMODE="dio"
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# Console USB-Serial/JTAG natif (meme raison que la racine) + logs DEBUG
+# pour le diagnostic du boot loop.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_BOOTLOADER_LOG_LEVEL_DEBUG=y
+CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+CONFIG_LOG_DEFAULT_LEVEL_DEBUG=y
+
+# La factory boote sur la partition "factory" — meme table que l'app.
+# Chemin relatif depuis boards/<board>/factory/ vers boards/<board>/partitions.csv.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../partitions.csv"
+CONFIG_PARTITION_TABLE_OFFSET=0xC000
+
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+CONFIG_SPI_FLASH_DANGEROUS_WRITE_ALLOWED=y
