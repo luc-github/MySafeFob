@@ -125,6 +125,35 @@ mises à jour uniquement par SD.
   geste factory reste dans la doc.
 - L'écran de veille est aussi l'écran d'accueil après un boot en mode principal.
 
+### F-20 — Interpréteur de commandes série (permanent, pas un outil jetable)
+- **Décision (2026-09-16)** : la console REPL (`esp_console`, USB-Serial/JTAG)
+  démarrée dans `main.c` n'est **pas** un outil de debug temporaire voué à
+  disparaître une fois l'UI tactile (F-06/tâche 8.4) livrée — elle reste en
+  place en continu, pour lancer des commandes et vérifier des statuts sans
+  passer par l'écran (diagnostic, support, tests). Un interpréteur de
+  commandes reste utile même une fois le produit fini.
+- **Menace** : accessible uniquement par connexion USB physique — même
+  niveau de confiance que la mise à jour firmware par SD (F-06) ou le
+  recovery factory (ADR-007/009) : nécessite déjà un accès physique au
+  device. N'expose aucun secret par défaut (pas de commande de dump des
+  credentials tant que F-03/F-04 ne sont pas en place).
+- **Portée actuelle** (squelette Phase 8) : `help`, `about`,
+  `totpselftest`, `sleep`. À étoffer au fil des phases (ex. statut
+  batterie/RTC, diagnostic stockage) plutôt que remplacé.
+- **⚠️ Piège rencontré (2026-09-16), point de contrôle pour la suite** :
+  `esp_console_new_repl_usb_serial_jtag()`/`_uart()` créent bien la tâche
+  REPL, mais celle-ci reste parquée à l'état `CONSOLE_REPL_STATE_INIT`
+  (aucune commande traitée, bannière/logs quand même visibles car
+  indépendants de cette tâche) tant que **`esp_console_start_repl(repl)`**
+  n'est pas appelé explicitement pour la faire passer à
+  `CONSOLE_REPL_STATE_START` (`esp_console_common.c`, IDF 5.5.5). Piège
+  facile à rater précisément parce que le symptôme est trompeur : tout
+  semble fonctionner (prompt affiché, logs qui défilent), seule la saisie
+  ne fait jamais rien. Repéré par comparaison avec
+  `references/test_apps/x4pro-probe/main/main.c`, qui l'appelle bien. **À
+  chaque nouvel usage d'`esp_console_new_repl_*()` dans ce projet,
+  vérifier que `esp_console_start_repl()` suit bien l'appel.**
+
 ## 4. Should Have (si le temps/budget mémoire le permet)
 
 | # | Feature | Notes |

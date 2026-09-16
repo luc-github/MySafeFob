@@ -5,6 +5,11 @@
  * Pour l'instant : banner + self-tests TOTP + console REPL minimale.
  * Le boot applicatif réel (UNLOCK -> UI) arrive avec la tâche 8.2/8.4.
  *
+ * La console REPL (F-20, docs/FEATURES.md) N'EST PAS temporaire : elle
+ * reste en place en continu, même une fois l'UI tactile livrée — utile
+ * pour lancer des commandes et vérifier des statuts sans l'écran. Seul
+ * son contenu (commandes disponibles) grossira au fil des phases.
+ *
  * Logging applicatif : esp3d_log (hooks -> historique erreurs à l'écran
  * en 8.4). Les drivers/board restent sur ESP_LOG* (écosystème IDF).
  */
@@ -246,8 +251,17 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_console_cmd_register(&about_cmd));
     ESP_ERROR_CHECK(esp_console_cmd_register(&selftest_cmd));
     ESP_ERROR_CHECK(esp_console_cmd_register(&sleep_cmd));
-    /* IDF 5.5 : esp_console_new_repl_*() spawn le thread REPL lui-meme
-     * (plus de esp_console_repl_start). */
+    /* BUGFIX 2026-09-16 : commentaire precedent errone — esp_console_new_repl_*()
+     * cree bien la tache REPL, mais celle-ci reste parquee a l'etat
+     * CONSOLE_REPL_STATE_INIT (boucle de lecture jamais executee) tant que
+     * esp_console_start_repl() n'a pas explicitement bascule l'etat vers
+     * CONSOLE_REPL_STATE_START (esp_console_common.c, IDF 5.5.5). Sans cet
+     * appel (oublie ici, `(void)repl;` le jetait), la console affiche bien
+     * la banniere/les logs (esp3d_log/printf ne dependent pas de cette
+     * tache) mais ne traite plus jamais aucune commande tapee — confirme
+     * par comparaison avec `references/test_apps/x4pro-probe/main/main.c`
+     * qui appelle bien esp_console_start_repl(repl) et dont la console
+     * fonctionnait. */
     esp_console_repl_t *repl = NULL;
 #if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
     esp_console_dev_usb_serial_jtag_config_t usb_cfg =
@@ -261,7 +275,7 @@ void app_main(void)
 #else
 #error "Console REPL : ni USB_SERIAL_JTAG ni UART configures"
 #endif
-    (void)repl;
+    ESP_ERROR_CHECK(esp_console_start_repl(repl));
 
     /* Bouton Power : appui < 10s = veille / appui >= 10s = factory (ADR-009).
      * BUGFIX 2026-09-16 (stack overflow confirme sur hardware, log) :
