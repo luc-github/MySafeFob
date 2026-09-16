@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""flash_mgr.py — flash des variants depuis installer/ (portage PiBot).
+"""flash_mgr.py — flashes variants from installer/.
 
-Le repertoire installer/<variant>/ est alimente par les postbuild cmake.
-Chaque variant possede une flash map JSON (<variant>.json, format
-{meta, files:[{file, offset}]}) — source unique de verite, regenerée a
-partir du contenu reel du dossier (jamais stale), consommée AUSSI par un
-eventuel web installer.
+The installer/<variant>/ directory is fed by the postbuild cmake steps.
+Each variant has a JSON flash map (<variant>.json, format
+{meta, files:[{file, offset}]}) — single source of truth, regenerated
+from the folder's actual contents (never stale), ALSO consumed by a
+possible web installer.
 
-Usage :
-  python tools/flash_scripts/flash_mgr.py                  # interactif + memoire
+Usage:
+  python tools/flash_scripts/flash_mgr.py                  # interactive + memory
   python tools/flash_scripts/flash_mgr.py --list
   python tools/flash_scripts/flash_mgr.py --variant x4pro_app --port COM5
   python tools/flash_scripts/flash_mgr.py --variant x4pro_factory --port COM5
@@ -17,16 +17,16 @@ Usage :
   python tools/flash_scripts/flash_mgr.py --variant x4pro_app --app-only --port COM5
   python tools/flash_scripts/flash_mgr.py --generate --variant x4pro_app
 
-Modes :
-  x4pro_app       install complet : firmware + factory + bootloader (hook)
-                  + partitions + otadata (boot direct sur l'app)
-  x4pro_factory   rescue : factory + bootloader + partitions + otadata zero
-                  -> boot GARANTI sur le menu recovery
-  --app-only      firmware seul (boucle dev rapide, otadata conserve)
-  --erase-flash   efface tout le flash avant ecriture
+Modes:
+  x4pro_app       full install: firmware + factory + bootloader (hook)
+                  + partitions + otadata (boots straight into the app)
+  x4pro_factory   rescue: factory + bootloader + partitions + otadata zero
+                  -> GUARANTEED boot into the recovery menu
+  --app-only      firmware only (fast dev loop, otadata kept as-is)
+  --erase-flash   erases the whole flash before writing
 
-Memoire : .flash_mgr_prefs.json retient variant/port/baud/erase — Enter
-relance le dernier flash. Detection de ports via pyserial (venv IDF).
+Memory: .flash_mgr_prefs.json remembers variant/port/baud/erase — Enter
+reruns the last flash. Port detection via pyserial (IDF venv).
 """
 import argparse
 import json
@@ -44,8 +44,8 @@ PREFS_FILE = SCRIPT_DIR / ".flash_mgr_prefs.json"
 
 ESPTOOL_EXE = Path(r"C:\Espressif\tools\python\v5.5.5\venv\Scripts\esptool.exe")
 
-# Offset bootloader par chip (0x1000 = ESP32 classic SEULEMENT) — le piège
-# du S3 flashe a 0x1000 : boot loop "invalid header" (vécu sur le PiBot).
+# Bootloader offset per chip (0x1000 = ESP32 classic ONLY) — the trap:
+# flashing the S3 at 0x1000 causes a boot loop ("invalid header").
 _BOOTLOADER_OFFSET_BY_CHIP = {
     "esp32": 0x1000, "esp32s2": 0x1000,
     "esp32s3": 0x0, "esp32c3": 0x0, "esp32c6": 0x0,

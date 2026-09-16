@@ -1,9 +1,9 @@
 # ---------------------------------------------------------------------------
-# MySafeFob — postbuild FACTORY : alimente installer/<board>_factory/.
+# MySafeFob — postbuild FACTORY: feeds installer/<board>_factory/.
 #
-# Contenu : factory_16MB.bin + bootloader_16MB.bin (hook) + partitions_16mb.bin
-# + ota_data_initial_16MB.bin ZERO-filled (celui du build idf = "aucune app
-# OTA selectionnee" -> boot factory GARANTI apres flash de cette variante).
+# Content: factory_16MB.bin + bootloader_16MB.bin (hook) + partitions_16mb.bin
+# + ota_data_initial_16MB.bin ZERO-filled (the idf build's own = "no OTA app
+# selected" -> GUARANTEED boot into factory after flashing this variant).
 # ---------------------------------------------------------------------------
 
 set(MSF_INSTALLER_DIR "${CMAKE_SOURCE_DIR}/../../../installer/x4pro_factory")
@@ -25,7 +25,7 @@ add_custom_command(TARGET app POST_BUILD
         "${MSF_INSTALLER_DIR}/ota_data_initial_16MB.bin"
     COMMAND ${CMAKE_COMMAND} -E echo ""
     COMMAND ${CMAKE_COMMAND} -E echo "============================================"
-    COMMAND ${CMAKE_COMMAND} -E echo "  Installer pret : ${MSF_INSTALLER_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E echo "  Installer ready: ${MSF_INSTALLER_DIR}"
     COMMAND ${CMAKE_COMMAND} -E echo "    - factory_16MB.bin"
     COMMAND ${CMAKE_COMMAND} -E echo "    - bootloader_16MB.bin (hook recovery)"
     COMMAND ${CMAKE_COMMAND} -E echo "    - partitions_16mb.bin"

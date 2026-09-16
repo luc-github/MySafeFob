@@ -1,6 +1,24 @@
+/* 
+ Project: MySafeFob  eink.h
+  Copyright (c) 2026 Luc Lebosse. All rights reserved.
+
+  This code is free software; you can redistribute it and/or
+  modify it under the terms of the GNU Lesser General Public
+  License as published by the Free Software Foundation; either
+  version 2.1 of the License, or (at your option) any later version.
+
+  This code is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+  Lesser General Public License for more details.
+
+  You should have received a copy of the GNU Lesser General Public
+  License along with this library; if not, write to the Free Software
+  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+*/
 /**
  * @file eink.h
- * @brief MySafeFob Factory — E-Ink UC8279 driver (X4 Pro).
+ * @brief MySafeFob App — E-Ink UC8279 driver (X4 Pro).
  *
  * Extracted from the validated probe test_apps/x4pro-probe/main/eink_test.c
  * (UC8279 sequences measured 2026-09-13 — docs/hardware-specs.md).
@@ -31,6 +49,17 @@ esp_err_t eink_init(void);
  * A full refresh takes ~2-4s (blocking). Do not call in a fast loop.
  */
 esp_err_t eink_display_fb(const uint8_t *fb);
+
+/**
+ * @brief Displays the framebuffer with a fast DU refresh (stock FW OTP
+ *        waveform: TSSET 0x5A + CDI 0xD7 + full PTL window).
+ *
+ * No inverting flash, ~0.5-1s blocking. Differential: diffs against the
+ * previous frame, resyncs DTM1 afterwards. Automatically falls back to a
+ * full GC when the previous frame is unknown (first display) or every
+ * EINK_FAST_BUDGET (30) fasts (ghost purge).
+ */
+esp_err_t eink_display_fb_fast(const uint8_t *fb);
 
 /**
  * @brief Powers off the controller (POF + wait idle).

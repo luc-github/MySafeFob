@@ -1,21 +1,23 @@
 # ---------------------------------------------------------------------------
-# MySafeFob — postbuild APP : alimente installer/<board>_app/ (portage PiBot).
+# MySafeFob — postbuild APP: feeds installer/<board>_app/.
 #
-# Copie apres chaque build de l'app :
-#   firmware_16MB_mysafefob.bin  l'app (slot app0 au flash)
-#   bootloader_16MB.bin          celui du build FACTORY (hook recovery) — le
-#                                bootloader du build app n'a PAS de hook
-#   partitions_16mb.bin          table de la board (boards/<board>/partitions.csv)
-#   factory_16MB.bin             factory depuis le build factory (si present)
-#   ota_data_initial_16MB.bin    genere (seq=1 -> boot app0 direct, pas factory)
+# Copies after every app build:
+#   firmware_16MB_mysafefob.bin  the app (app0 slot when flashed)
+#   bootloader_16MB.bin          the one from the FACTORY build (recovery
+#                                hook) — the app build's own bootloader has
+#                                NO hook
+#   partitions_16mb.bin          the board's table (boards/<board>/partitions.csv)
+#   factory_16MB.bin             factory from the factory build (if present)
+#   ota_data_initial_16MB.bin    generated (seq=1 -> boots straight into app0,
+#                                not factory)
 #
-# Le dossier installer/<variant>/ + sa flash map JSON sont consommes par
-# tools/flash_scripts/flash_mgr.py et, plus tard, un web installer.
+# The installer/<variant>/ folder + its JSON flash map are consumed by
+# tools/flash_scripts/flash_mgr.py and, later, a web installer.
 #
-# Les artefacts factory passent par copy_if_exists.cmake (mode script) :
-# le build factory n'est pas obligatoire pour compiler l'app — un artefact
-# absent produit un warning, pas une erreur. build_mgr construit toujours
-# les variants factory en PREMIER, donc en pratique ils sont la.
+# Factory artifacts go through copy_if_exists.cmake (script mode): the
+# factory build is not required to compile the app — a missing artifact
+# produces a warning, not an error. build_mgr always builds the factory
+# variants FIRST, so in practice they're already there.
 # ---------------------------------------------------------------------------
 
 set(MSF_INSTALLER_DIR "${CMAKE_SOURCE_DIR}/installer/${MSF_BOARD}_app")
@@ -26,14 +28,14 @@ set(MSF_COPY_IF_EXISTS "${CMAKE_SOURCE_DIR}/boards/${MSF_BOARD}/cmake/copy_if_ex
 add_custom_command(TARGET app POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E remove_directory "${MSF_INSTALLER_DIR}"
     COMMAND ${CMAKE_COMMAND} -E make_directory "${MSF_INSTALLER_DIR}"
-    # Firmware (l'app elle-meme)
+    # Firmware (the app itself)
     COMMAND ${CMAKE_COMMAND} -E copy
         "${CMAKE_BINARY_DIR}/${PROJECT_NAME}.bin"
         "${MSF_INSTALLER_DIR}/firmware_16MB_mysafefob.bin"
-    # otadata -> boot direct sur app0
+    # otadata -> boots straight into app0
     COMMAND ${PYTHON} "${MSF_GEN_OTA}"
         --output "${MSF_INSTALLER_DIR}/ota_data_initial_16MB.bin"
-    # Artefacts factory (bootloader AVEC hook, table, factory bin)
+    # Factory artifacts (bootloader WITH hook, table, factory bin)
     COMMAND ${CMAKE_COMMAND}
         -D "SRC_DIR=${MSF_FACTORY_BUILD}"
         -D "DST_DIR=${MSF_INSTALLER_DIR}"
@@ -41,11 +43,11 @@ add_custom_command(TARGET app POST_BUILD
         -P "${MSF_COPY_IF_EXISTS}"
     COMMAND ${CMAKE_COMMAND} -E echo ""
     COMMAND ${CMAKE_COMMAND} -E echo "============================================"
-    COMMAND ${CMAKE_COMMAND} -E echo "  Installer pret : ${MSF_INSTALLER_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E echo "  Installer ready: ${MSF_INSTALLER_DIR}"
     COMMAND ${CMAKE_COMMAND} -E echo "    - firmware_16MB_mysafefob.bin"
     COMMAND ${CMAKE_COMMAND} -E echo "    - ota_data_initial_16MB.bin (boot app0)"
-    COMMAND ${CMAKE_COMMAND} -E echo "    + artefacts factory (bootloader hook,"
-    COMMAND ${CMAKE_COMMAND} -E echo "      partitions, factory) si build factory present"
+    COMMAND ${CMAKE_COMMAND} -E echo "    + factory artifacts (bootloader hook,"
+    COMMAND ${CMAKE_COMMAND} -E echo "      partitions, factory) if a factory build is present"
     COMMAND ${CMAKE_COMMAND} -E echo "============================================"
     VERBATIM
 )

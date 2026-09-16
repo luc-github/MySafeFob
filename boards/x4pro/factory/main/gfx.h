@@ -1,9 +1,27 @@
+/* 
+ Project: MySafeFob  gfx.h
+  Copyright (c) 2026 Luc Lebosse. All rights reserved.
+
+  This code is free software; you can redistribute it and/or
+  modify it under the terms of the GNU Lesser General Public
+  License as published by the Free Software Foundation; either
+  version 2.1 of the License, or (at your option) any later version.
+
+  This code is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+  Lesser General Public License for more details.
+
+  You should have received a copy of the GNU Lesser General Public
+  License along with this library; if not, write to the Free Software
+  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+*/
 /**
  * @file gfx.h
- * @brief MySafeFob Factory — 1 bpp GFX for e-paper (port of PiBot gfx.h).
+ * @brief MySafeFob Factory — 1 bpp GFX for e-paper.
  *
- * Major difference vs PiBot: PiBot wrote directly to the LCD
- * (ili9341_flush by zone). Here the primitives write into a 1 bpp
+ * Major difference vs an LCD-based design (direct `ili9341_flush` by
+ * zone): here the primitives write into a 1 bpp
  * framebuffer in RAM (800x480/8 = 48 KB, internal DRAM) and gfx_flush()
  * pushes the ENTIRE framebuffer to the e-ink panel (full refresh ~2-4s).
  * E-ink usage rule: draw the whole screen in RAM, then a SINGLE flush.

@@ -15,18 +15,18 @@ src/
 ├── components/
 │   ├── totp_engine/        # RFC 6238 TOTP engine (copied from the validated Phase 4 test)
 │   ├── secret_store/       # encrypted keystore — CONTRACT + stub (task 8.2)
-│   └── esp3d_log/          # application logging (PiBot port — hooks -> UI)
+│   └── esp3d_log/          # application logging (hooks -> UI)
 ├── boards/
 │   ├── x4pro/              # actual board (config + README, full bring-up)
 │   │   ├── partitions.csv  #   16 MB table specific to the board (ADR-007):
 │   │   │                   #   fixed, contractual offsets
-│   │   ├── factory/        #   STANDALONE sub-project per board (PiBot
-│   │   │                   #   alignment): recovery app + bootloader hook.
+│   │   ├── factory/        #   STANDALONE sub-project per board:
+│   │   │                   #   recovery app + bootloader hook.
 │   │   │                   #   Dedicated hardware drivers (UC8279/GT911/SDMMC) —
 │   │   │                   #   see ../docs/FACTORY.md. Each future board carries
 │   │   │                   #   ITS OWN factory (no shared core).
 │   │   ├── build_scripts/  #   build_one.py <app|factory|all> [--clean]
-│   │   │                   #   (PiBot port — auto-configured IDF env)
+│   │   │                   #   (auto-configured IDF env)
 │   │   ├── flash_scripts/  #   one-click .bat files: flash_all / flash_app /
 │   │   │                   #   flash_factory / erase_flash [COMx]
 │   │   ├── cmake/          #   postbuild.cmake -> feeds installer/
@@ -44,7 +44,7 @@ src/
     └── x4pro_factory/      #   rescue: factory + bootloader hook + pt + otadata 0
 ```
 
-**Structural rule** (PiBot alignment): everything hardware-dependent
+**Structural rule**: everything hardware-dependent
 lives under `boards/<board>/`. The factory is a recovery tool — it must
 stay minimal, self-contained, and tested as-is: duplication (gfx/menu)
 between boards is accepted rather than a shared core that could break
@@ -52,7 +52,7 @@ several boards at once. Same logic applies to build_scripts/flash_scripts.
 
 ## Quickstart (IDF 5.5.5 — no environment to activate)
 
-**A single interface, a single memory** (PiBot port):
+**A single interface, a single memory**:
 
 ```bash
 cd src

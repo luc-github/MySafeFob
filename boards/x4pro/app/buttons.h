@@ -18,11 +18,14 @@
 */
 /**
  * @file buttons.h
- * @brief MySafeFob Factory — X4 Pro physical buttons.
- *   Left=GPIO0 (up), Right=GPIO7 (down). Power=GPIO3 = FALLBACK select
- *   (the primary select is the Home pad, GT911 touch zone in touch.c).
- *   All active-LOW, internal pull-up. GPIO0 = strapping: never held
- *   at boot (the bootloader hook uses GPIO7 for recovery).
+ * @brief MySafeFob App — X4 Pro physical buttons.
+ *   Left=GPIO0 (up), Right=GPIO7 (down). Power=GPIO3 stays exclusively
+ *   owned by power_mgr / power_button_task (main.c) — never read from
+ *   here in the app (unlike the factory, where it's a fallback select);
+ *   BTN_3 is only reported for completeness, callers in the app's nav
+ *   loop must ignore it. All active-LOW, internal pull-up. GPIO0 =
+ *   strapping: never held at boot (the bootloader hook uses GPIO3, see
+ *   ADR-009).
  */
 #pragma once
 
@@ -30,9 +33,9 @@
 
 typedef enum {
     BTN_NONE = 0,
-    BTN_1,      /* Left  (GPIO0) — up */
-    BTN_2,      /* Right (GPIO7) — down */
-    BTN_3,      /* Power (GPIO3) — select */
+    BTN_1,      /* Left  (GPIO0) — focus prev */
+    BTN_2,      /* Right (GPIO7) — focus next */
+    BTN_3,      /* Power (GPIO3) — reserved for power_mgr, ignore in nav */
 } button_id_t;
 
 void buttons_init(void);

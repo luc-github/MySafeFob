@@ -18,7 +18,7 @@
 */
 /**
  * @file buttons.c
- * @brief MySafeFob Factory — boutons physiques X4 Pro (polling + debounce).
+ * @brief MySafeFob App — X4 Pro physical buttons (polling + debounce).
  */
 #include "buttons.h"
 
@@ -54,7 +54,7 @@ button_id_t button_wait_press(int timeout_ms)
         if (b != BTN_NONE) {
             vTaskDelay(pdMS_TO_TICKS(30));          /* debounce */
             if (read_pressed() == b) {
-                while (read_pressed() == b) {       /* attend le relachement */
+                while (read_pressed() == b) {       /* wait for release */
                     vTaskDelay(pdMS_TO_TICKS(10));
                 }
                 return b;

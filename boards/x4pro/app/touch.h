@@ -18,7 +18,7 @@
 */
 /**
  * @file touch.h
- * @brief MySafeFob Factory — X4 Pro GT911 touch driver (polling).
+ * @brief MySafeFob App — X4 Pro GT911 touch driver (polling).
  *
  * GT911 driver, with the sequences validated on the x4pro-probe probe:
  *  - POR reset dance (RST=GPIO4, INT=GPIO10, rail GPIO2 active-low)
@@ -28,6 +28,12 @@
  *
  * Systematic reads of >= 2 bytes (IDF 5.4 I2C driver quirk:
  * 1-byte reads get NACKed).
+ *
+ * Identical copy of boards/x4pro/factory/main/touch.h (ADR-010: same
+ * hardware, no board divergence expected) — kept independent from the
+ * factory's per ADR-010 pt.3 (the factory copy is only updated by an
+ * explicit action tested on hardware, never automatically alongside the
+ * app's copy).
  */
 #pragma once
 

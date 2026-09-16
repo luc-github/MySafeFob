@@ -279,11 +279,11 @@ air-gapped model. RTC drift (±20 ppm ≈ 1.7 s/day) requires a sync every
 
 ---
 
-### ADR-007: Recovery factory partition + bootloader hook (ported from PiBot)
+### ADR-007: Recovery factory partition + bootloader hook (ported from an earlier reference design)
 
 **Context**: with the dual-slot esp_ota alone, a device whose both slots are
 corrupted requires a PC + cable to reflash. The user has a proven bootloader
-hook (PiBot project): on button press at boot,
+hook (an earlier ESP32 project, same author): on button press at boot,
 `bootloader_after_init` backs up otadata (free offset 0xB000, magic
 0xAA55AA55), erases it and resets → the standard bootloader boots the
 `factory` partition. Identical logical trigger from the app
@@ -295,14 +295,15 @@ hook (PiBot project): on button press at boot,
 2. The current recovery path remains dual-slot (in-app update to the
    inactive slot + rollback); the factory is the **PC-less fallback**
    (flash from SD or serial).
-3. The factory app reuses PiBot's logic (SD → `esp_ota_write`, restore
+3. The factory app reuses that earlier design's logic (SD → `esp_ota_write`, restore
    otadata); its UI is ported to the UC8279 e-ink driver (plain, text-based).
 4. **Port to be validated on IDF 5.5.5** (the original code runs on 5.4.3):
    exact name of the hooks config, S3 `esp_rom_spiflash_*` signatures,
    non-strapping trigger GPIO (avoid GPIO0/3/45/46), S3 bootloader size.
 
-**Technical documentation**: `FACTORY.md` (detailed PiBot → MySafeFob port,
-differences table, otadata mechanism, 5.5.5 validation points).
+**Technical documentation**: `FACTORY.md` (detailed port from the earlier
+reference design, differences table, otadata mechanism, 5.5.5 validation
+points).
 
 ---
 
@@ -317,7 +318,7 @@ toward a 480x800 portrait UI.
 **Decision (validated 2026-09-13)**:
 1. The `src/` skeleton is board-agnostic: the board is selected via
    `-DMSF_BOARD=x4pro` (default), which includes `boards/${MSF_BOARD}/board_config.cmake`.
-   Pattern inspired by PiBot, simplified (no variant matrix).
+   Pattern inspired by an earlier project's board layout, simplified (no variant matrix).
 2. `boards/x4pro/`: real configuration, validated on hardware (pins,
    UC8279/GT911/BM8563/CW2017 drivers, e-ink rotated 90° CW mode 0).
 3. `boards/m5paper_mono/`: **documentation-only stub** (README specs) —
@@ -522,6 +523,26 @@ Power held ≥ 10 s continuously since wake-up" is indeed handled **on the
 bootloader hook side** (`hooks.c`), as initially stated — `main.c` only
 handles long presses made once the app is already started and running.
 
+**Amendment 2026-09-16 (continued) — task 8c, rails held through the RTC
+domain during deep sleep**: point 4 of this ADR ("rails held via
+`rtc_gpio_hold_en`") implemented in `boards/x4pro/app/splash.cpp`. The
+digital domain powers down in deep sleep — a plain `gpio_set_level()` on
+the touch (GPIO2) / SD (GPIO5) rails, both active-LOW, would leave the pad
+floating for the whole sleep duration and could silently re-enable the
+rail, defeating the point of turning it off first. `rails_hold_for_sleep()`
+(called at the end of `board_sleep_screen_show()`, right after
+`eink_power_off()`) latches touch=OFF, SD=OFF and periph=ON via
+`rtc_gpio_*` (RTC domain, stays powered through sleep); `rails_for_splash()`
+now starts with `rtc_gpio_hold_dis()` on the same three pins so the next
+boot's normal `gpio_config()` can actually take effect (the hold otherwise
+survives the deep-sleep reset). Build-verified only — the actual current
+measurement (multimeter in series with the battery, comparing sleep
+consumption with and without this hold) is still to be done on hardware,
+which decides whether this strategy is kept as-is or needs to go further
+(e.g. also isolating the pads with `esp_deep_sleep_disable_rom_logging()`/
+`gpio_deep_sleep_hold_en()` at the SoC level, or revisiting the periph
+rail).
+
 **Amendment 2026-09-16 (continued) — 3rd bug: the bootloader's own
 watchdog was preventing the 10 s threshold from ever being reached**:
 
@@ -615,9 +636,28 @@ Power feedback added 2026-09-15, **Right combo dropped and replaced by
 Power-only (duration) on 2026-09-16** — 5 bugs fixed successively: the
 Power+Right combo preventing wake-up, unreliable GPIO3 reads after EXT1
 wake-up, bootloader watchdog too short, wrong bootloader tested
-(tooling), app-level stack overflow. The bootloader hook path validated on
-hardware with logs; the app-level path (`power_mgr_switch_to_factory()`)
-fixed but still to be revalidated on hardware with the stack fix).
+(tooling), app-level stack overflow. Both the bootloader hook path and the
+app-level path (`power_mgr_switch_to_factory()`, with the stack fix)
+revalidated on hardware with logs across all button-flow states, repeated
+multiple times — 2026-09-16).
+
+**Open observation — occasional unexplained freeze, not yet root-caused**:
+across repeated test runs, the app-awake → factory switch
+(`power_mgr_switch_to_factory()`, ≥10 s Power hold) has frozen on the splash
+screen a small number of times (recurring, not a single isolated event),
+with no serial log and no reboot. At least one occurrence coincided with
+the USB/serial connector being physically detached at that moment, which
+would explain a silent freeze (power/UART interruption mid-flash-write,
+with no link left to log anything). Never reproduced on demand, and never
+observed yet with the connector solidly attached and logs available end to
+end. Treated as a connection/power artifact rather than a confirmed
+firmware bug (a real stack overflow, the closest known candidate, always
+produces an explicit `***ERROR*** stack overflow` message before its
+reboot — not a silent permanent hang). **Not blocking** for this ADR's
+validation, but left as an open watch item: if it recurs with a solid
+connection and logs captured, it becomes a real bug to investigate (most
+likely candidate: a flash erase/write to the otadata backup sector
+@0xB000 interrupted mid-operation, leaving an inconsistent state).
 
 ---
 
@@ -723,6 +763,19 @@ not an LVGL-style complex UI).
 
 **Status**: ✅ VALIDATED 2026-09-15 (port to be carried out in task 8.4).
 
+**Amendment (task 8.4 minimal slice, 2026-09-16 session)**: point 2's plan
+to port `EpdBus`/`Uc8279X4Driver` from `freeink-sdk` is **dropped**.
+Research into the already-working `references/test_apps/freeinkui-poc/`
+proof-of-concept showed it never used those SDK files at all — it drives
+`FreeInkUI::DisplayTarget` directly on top of MySafeFob's own,
+already-validated `eink.c`/`touch.c`/`buttons.c`. Porting the SDK's
+low-level driver would have been pure duplication with no benefit (the
+2 hardware criteria that mattered — native X4 Pro/UC8279 support and a
+simple UI — are already satisfied by our own drivers). Only
+`eink_display_fb_fast()` (DU/ghost-budget refresh, previously
+factory-only) was ported into the app's `eink.c` — needed for a
+responsive nav loop, still 100% our own code.
+
 ---
 
 ### ADR-011: app1 removed — single app slot, factory as the safety net
@@ -775,7 +828,7 @@ does the 2nd slot still bring anything?
 
 **Amendment 2026-09-15 (same day) — `SD -> factory` removed**: while
 implementing the above, a second risk was identified (by the user):
-the `SD -> factory` action inherited from PiBot performed
+the `SD -> factory` action inherited from the earlier reference design performed
 `esp_partition_erase_range` + `esp_partition_write` **on the `factory`
 partition while it is running from that same partition (XIP)** —
 unlike `SD -> app0`, which writes an inactive partition. Any interruption
@@ -788,6 +841,104 @@ main.c`). The factory is now treated like the bootloader: updated
 **only via USB/serial** (`flash_mgr.py --variant x4pro_factory`),
 never self-service in the field — consistent with "tested as-is"
 (ADR-007). Final factory menu: `Boot app0`, `SD -> app0`.
+
+---
+
+### ADR-012 (proposed): Auto-sleep on inactivity — activity manager
+
+**Context**: ADR-009 only triggers deep sleep on an explicit long Power
+press — nothing today puts the device back to sleep automatically if the
+user simply forgets it awake (left on the READY/unlock/menu screen). Since
+the X4 Pro's casing cannot be opened (confirmed 2026-09-16, previously
+assumed possible for task 8c's bench measurement), the actual deep-sleep
+current draw can no longer be measured or tuned on this unit by direct
+instrumentation — the only lever left to control real-world battery drain
+is making sure the device is **never left awake longer than necessary**,
+rather than trying to shave the sleep current itself.
+
+**Decision (spec only — implementation deferred, see below; validated
+2026-09-16)**:
+1. An **activity manager** tracks the last user interaction across the
+   **three** available input sources — Power button, touch, and the
+   serial/REPL console — and triggers the same path as a manual long
+   Power press (`board_sleep_screen_show()` + `power_mgr_shutdown()`,
+   frontlight already turned off as part of that sequence per ADR-009
+   pt.1) once **all three** have been idle for the timeout.
+2. **Idle timeout: 45 s** of no input on any of the three sources
+   (button, touch, serial). Fixed default for now — the F-03
+   "adjustable delay" wording still applies for a future settings screen,
+   but 45 s is the validated starting value, not a placeholder.
+3. **Scope carved out from task 8c**: this ADR only documents the
+   decision now (project philosophy, "no code without a document"/"no
+   feature without a test" — ROADMAP.md intro). The actual implementation
+   needs a real activity signal loop (touch events, in particular), which
+   does not exist yet in the Phase 8 skeleton (no touch driver wired into
+   the app — see ADR-010, task 8.4). **Implementation deferred to task
+   8.4**, alongside the FreeInkUI touch integration it depends on. Until
+   then, the REPL `sleep` command and the manual Power long-press
+   (ADR-009) remain the only ways to enter deep sleep.
+4. **Trade-off accepted for now**: between today and task 8.4, a device
+   left awake (e.g. on the READY screen) stays awake indefinitely (no
+   auto sleep) — acceptable since the Phase 8 skeleton is a dev/bring-up
+   build, not the shipped UX.
+
+**Status**: ✅ VALIDATED 2026-09-16 (45 s timeout, three tracked sources:
+button/touch/serial). **Implemented and hardware-validated** as part of
+task 8.4's minimal slice (`boards/x4pro/app/ui_nav.cpp`, see ADR-013):
+the device correctly enters deep sleep on its own after 45 s of no
+button/touch/serial input, confirmed on hardware.
+
+---
+
+### ADR-013: Task 8.4 minimal slice — touch+button navigation, ADR-012 wired in
+
+**Context**: ADR-012 was written as a spec-only decision because no real
+touch/navigation loop existed yet. Rather than bolt a temporary idle timer
+onto the REPL and redo it later, the decision was to build a minimal real
+interactive screen first, and wire the activity manager on top of real
+input handling from the start (see ADR-010's amendment above for why the
+SDK's low-level driver port was skipped).
+
+**Implementation**:
+1. `touch.c`/`touch.h`, `buttons.c`/`buttons.h`, `i2c_bus.c`/`i2c_bus.h`
+   copied as-is from the factory into `boards/x4pro/app/` (hardware-
+   validated, no divergence expected — ADR-010 pt.3's "frozen, independent
+   copy" rule extended to these drivers too).
+2. `eink_display_fb_fast()` ported into the app's `eink.c` (previously
+   factory-only) — needed for a responsive nav loop instead of a 2-4s
+   full refresh per interaction.
+3. `boards/x4pro/app/ui_nav.cpp` (new): the interactive menu
+   (`board_ui_nav_task`), following the double-draw-per-input-cycle
+   pattern proven in `references/test_apps/freeinkui-poc/` (Frame/
+   InteractionBuffer route() mutates focus AFTER the draw that used it —
+   draw once to register hit-rects + route, redraw with the fresh state,
+   only that one gets flushed). Left/Right move focus, touch-Home
+   confirms; Power (GPIO3) stays out of this loop entirely — it remains
+   exclusively owned by `power_mgr`/`power_button_task` (main.c). Also
+   owns the ADR-012 idle timer: `board_activity_notify()` is called from
+   here (button/touch events) and from `main.c` (Power presses, REPL
+   commands = "serial activity").
+4. `power_mgr_claim_terminal_action()`/`power_mgr_release_terminal_action()`
+   added to `power_mgr` — the sleep/factory-transition exclusivity guard
+   (previously a local atomic in `main.c`, duplicated per caller) moved
+   there since it now has 4 callers (Power long-press, REPL `sleep`, the
+   ADR-012 idle timeout, and the nav menu's "Sleep now" item).
+5. Replaces the old static "READY" screen (`board_ready_show()`, removed)
+   — the nav menu's first draw is the new resting screen after the splash.
+
+**Hardware validation (2026-09-16 session, user-confirmed)**:
+- Left/Right focus navigation and touch-Home confirm work.
+- The 45 s idle timeout correctly triggers deep sleep on its own — no
+  button/touch/serial input needed to fall asleep.
+- **Known, accepted quirk**: no menu item is focused on the very first
+  draw (focus only updates after the first Left/Right/touch event, a
+  POC-inherited pattern) — momentarily unclear on boot which item (if
+  any) is selected. Deliberately left as-is: this menu is a provisional
+  placeholder (2 items, "About"/"Sleep now") that will be replaced by the
+  real UNLOCK/menu UI later in task 8.4 — not worth fixing on throwaway UI.
+
+**Status**: ✅ VALIDATED on hardware 2026-09-16 (navigation + auto-sleep
+both confirmed working; the real UI content itself remains to be built).
 
 ---
 

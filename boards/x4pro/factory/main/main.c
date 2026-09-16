@@ -1,15 +1,31 @@
+/* 
+ Project: MySafeFob  main.c
+  Copyright (c) 2026 Luc Lebosse. All rights reserved.
+
+  This code is free software; you can redistribute it and/or
+  modify it under the terms of the GNU Lesser General Public
+  License as published by the Free Software Foundation; either
+  version 2.1 of the License, or (at your option) any later version.
+
+  This code is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+  Lesser General Public License for more details.
+
+  You should have received a copy of the GNU Lesser General Public
+  License along with this library; if not, write to the Free Software
+  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+*/
 /**
  * @file main.c
- * @brief MySafeFob Recovery (factory) — port of PiBot Recovery to X4 Pro.
- *   Copyright (c) 2025-2026 Luc LEBOSSE. All rights reserved.
- *   Licensed under GNU Lesser General Public License v2.1 or later.
+ * @brief MySafeFob Recovery (factory) — X4 Pro recovery/bootstrap app.
  *
  * Recovery menu (e-ink, no LVGL — homemade 1 bpp gfx):
  *   Left (GPIO0) = up   Right (GPIO7) = down
  *   Home pad (GT911, validated touch zone) = confirm (OK)
  *   Power (GPIO3) = Cancel: reboot to the default partition
  *
- * Flow (identical to PiBot, ADR-007):
+ * Flow (ADR-007):
  *   The bootloader hook backed up otadata @0xB000 then erased it before
  *   jumping here. At startup we restore otadata: a power-off from the
  *   factory returns to the correct OTA partition.
@@ -68,7 +84,7 @@ static const char *TAG = "RECOVERY";
 #define BACKUP_MAGIC            0xAA55AA55
 
 /* -----------------------------------------------------------------------
- * Restore otadata (same logic as PiBot)
+ * Restore otadata
  * ----------------------------------------------------------------------- */
 
 static bool restore_otadata_from_backup(void)
@@ -575,7 +591,7 @@ void app_main(void)
     FACTORY_LOGD(TAG, "MySafeFob Recovery starting");
 
     /* 1. Restore otadata FIRST OF ALL (power-off from the factory =
-     *    return to the correct OTA partition). Same logic as PiBot. */
+     *    return to the correct OTA partition). */
     restore_otadata_from_backup();
     cache_active_ota_label();
     ESP_LOGI(TAG, "active partition: %s", s_active_label);

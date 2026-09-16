@@ -1,9 +1,27 @@
+/* 
+ Project: MySafeFob  hooks.c
+  Copyright (c) 2026 Luc Lebosse. All rights reserved.
+
+  This code is free software; you can redistribute it and/or
+  modify it under the terms of the GNU Lesser General Public
+  License as published by the Free Software Foundation; either
+  version 2.1 of the License, or (at your option) any later version.
+
+  This code is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+  Lesser General Public License for more details.
+
+  You should have received a copy of the GNU Lesser General Public
+  License along with this library; if not, write to the Free Software
+  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+*/
 /**
  * @file hooks.c
  * @brief MySafeFob — custom bootloader hooks (ADR-007).
  *
- * Port of the proven hook from the PiBot project (PiBot CNC Pendant, Luc LEBOSSE,
- * LGPL-2.1+) to ESP32-S3 / IDF 5.5.x, X4 Pro.
+ * Port of a proven bootloader-hook mechanism from an earlier ESP32
+ * project (same author) to ESP32-S3 / IDF 5.5.x, X4 Pro.
  *
  * Recovery trigger (ADR-009 amended 2026-09-16): POWER button (GPIO3)
  * held at wake for >= 10s:
@@ -23,7 +41,7 @@
  * already Power), so it's enough to keep measuring how long
  * GPIO3 stays low after wake-up.
  *
- * Validated PiBot->MSF porting points (ADR-007 §4):
+ * Validated porting points (ADR-007 §4):
  *   - No buzzer on the X4 Pro: acknowledgment = esp_rom_printf logs.
  *   - Trigger = GPIO3 (Power): GPIO0 is strapping (Left).
  *   - esp_rom_spiflash_* signatures on S3 / IDF 5.5.5: TO BE VERIFIED at

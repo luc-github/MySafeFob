@@ -1,4 +1,4 @@
-# Custom bootloader hooks (MySafeFob, ADR-007) — port of PiBot's.
+# Custom bootloader hooks (MySafeFob, ADR-007) — ported from an earlier project.
 # The bootloader is a separate sub-build: keep ENABLE_FACTORY_DEBUG_LOG
 # in sync with the factory sub-project's root CMakeLists.txt.
 # TEMPORARY (2026-09-16 diagnostic, ADR-009): ON to see the full hook

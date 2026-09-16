@@ -18,7 +18,11 @@
 */
 /**
  * @file touch.c
- * @brief MySafeFob Factory — X4 Pro GT911 touch driver.
+ * @brief MySafeFob App — X4 Pro GT911 touch driver.
+ *
+ * Identical copy of boards/x4pro/factory/main/touch.c (ADR-010: same
+ * hardware, no board divergence expected) — kept independent from the
+ * factory's per ADR-010 pt.3.
  *
  * Assembles the sequences validated on the x4pro-probe/main/main.c probe:
  *  - gt911_begin()      : POR dance under reset (self-load guaranteed)

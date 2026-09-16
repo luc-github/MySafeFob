@@ -1,3 +1,21 @@
+/* 
+ Project: MySafeFob  splash.h
+  Copyright (c) 2026 Luc Lebosse. All rights reserved.
+
+  This code is free software; you can redistribute it and/or
+  modify it under the terms of the GNU Lesser General Public
+  License as published by the Free Software Foundation; either
+  version 2.1 of the License, or (at your option) any later version.
+
+  This code is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+  Lesser General Public License for more details.
+
+  You should have received a copy of the GNU Lesser General Public
+  License along with this library; if not, write to the Free Software
+  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+*/
 /**
  * @file splash.h
  * @brief MySafeFob App — static welcome screen (board x4pro).
@@ -20,18 +38,6 @@ extern "C" {
  * Blocking ~3-4s (full refresh GC). Call once at boot.
  */
 void board_splash_show(void);
-
-/**
- * @brief Static "ready" screen, displayed right after the splash — visually
- *        distinguishes the transition (splash, transient) from the stable
- *        state (ready/console active), so that a possible hang after the
- *        splash is visible instead of suggesting the device has finished
- *        booting when it's actually stuck on the transition image.
- *        Provisional: replaced by the real UNLOCK screen in task 8.4.
- *
- * Blocking ~3-4s (full refresh GC).
- */
-void board_ready_show(void);
 
 /**
  * @brief Draw the deep-sleep screen (static, then controller POF).

@@ -1,10 +1,33 @@
+/* 
+ Project: MySafeFob  eink.c
+  Copyright (c) 2026 Luc Lebosse. All rights reserved.
+
+  This code is free software; you can redistribute it and/or
+  modify it under the terms of the GNU Lesser General Public
+  License as published by the Free Software Foundation; either
+  version 2.1 of the License, or (at your option) any later version.
+
+  This code is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+  Lesser General Public License for more details.
+
+  You should have received a copy of the GNU Lesser General Public
+  License along with this library; if not, write to the Free Software
+  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+*/
 /**
  * @file eink.c
- * @brief MySafeFob Factory — E-Ink UC8279 driver (X4 Pro).
+ * @brief MySafeFob App — E-Ink UC8279 driver (X4 Pro).
  *
  * Direct port of the sequences validated in the x4pro-probe probe (eink_test.c,
  * einkucinit/einkuc2 mode 0 commands). Do not "simplify" the delays or
  * the register order — every deviation has already been measured to break it.
+ *
+ * eink_display_fb_fast() (task 8.4) ported verbatim from
+ * boards/x4pro/factory/main/eink.c — same DU sequence, same ghost-budget
+ * state, kept in sync manually (ADR-010: deliberately separate, frozen
+ * copies for app vs factory, never shared).
  */
 #include "eink.h"
 #include "hw_config.h"
@@ -14,6 +37,7 @@
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 
@@ -38,11 +62,74 @@ static const char *TAG = "eink";
 #define UC_TRES_H            600     /* gates addressed (480 visible) */
 #define UC_GATE_OFFSET       120     /* gates 0..119 = non-visible area */
 
+/* ---- Fast DU refresh (partial OTP waveform from stock FW, reverse-
+ * engineered from Uc8279X4Driver::startBwRefresh fast=true — reference
+ * extracted from freeink-sdk, docs/xteink-x3-uc8279-support.md). KEY
+ * POINTS measured from the stock firmware:
+ *   - DU = OTP waveform (REG=0), NO host LUT: selection is done via
+ *     TSSET 0x5A + CDI 0xD7. The probe froze the UC8279 with REG=1.
+ *   - PTIN requires a prior PTL window, otherwise DU scans without
+ *     developing (field observation: DRF 443ms, no image).
+ *   - OLD plane = previous frame (differential diff); after each
+ *     refresh, DTM1 is resynced with the displayed frame.
+ *   - A periodic full GC remains mandatory (ghost budget). */
+#define UC_CMD_PTL           0x90    /* PTL: partial window */
+#define UC_CMD_PTL_IN        0x91    /* PTIN */
+#define UC_CMD_PTL_OUT       0x92    /* PTOUT */
+#define UC_CDI_FAST          0xD7
+#define UC_TSSET_FAST        0x5A
+#define EINK_FAST_BUDGET     30      /* fast DUs between two full GCs —
+                                      * see boards/x4pro/factory/main/eink.c
+                                      * for the tuning history (validated
+                                      * on hardware, factory session). */
+
 static spi_device_handle_t s_spi = NULL;
 static bool s_initialized = false;
 
+static uint8_t *s_prev = NULL;        /* PSRAM: last displayed frame */
+static bool s_prev_valid = false;
+static uint8_t s_fast_count = 0;
+static bool s_screen_on = false;
+
+/* Defined further down in the file (driver's historical order). */
+static void write_cmd(uint8_t cmd);
+static bool wait_idle(const char *what, uint32_t timeout_ms);
+
 static void cs_low(void)  { gpio_set_level(EINK_CS, 0); }
 static void cs_high(void) { gpio_set_level(EINK_CS, 1); }
+
+/* Idempotent PON (stock FW avoids a second PON while the screen is on). */
+static esp_err_t power_on(void)
+{
+    if (s_screen_on) return ESP_OK;
+    write_cmd(UC_CMD_POWER_ON);
+    if (wait_idle("PON", 2000)) return ESP_ERR_TIMEOUT;
+    s_screen_on = true;
+    return ESP_OK;
+}
+
+/* "Previous frame" buffer in PSRAM (48 KB) — basis of the DU diff. */
+static bool prev_alloc(void)
+{
+    if (s_prev) return true;
+    s_prev = heap_caps_malloc(SCREEN_FB_SIZE,
+                              MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_prev) {
+        ESP_LOGW(TAG, "PSRAM unavailable for the DU diff — full GC only");
+    }
+    return s_prev != NULL;
+}
+
+static void record_prev(const uint8_t *fb)
+{
+    if (!prev_alloc()) {
+        s_prev_valid = false;
+        return;
+    }
+    memcpy(s_prev, fb, SCREEN_FB_SIZE);
+    s_prev_valid = true;
+    s_fast_count = 0;   /* new cycle: fast budget reset to 0 */
+}
 
 /* Waits for BUSY_N to go back HIGH (idle). true = timeout (abnormal state). */
 static bool wait_idle(const char *what, uint32_t timeout_ms)
@@ -216,8 +303,7 @@ esp_err_t eink_display_fb(const uint8_t *fb)
     write_cmd(UC_CMD_TSSET);
     { uint8_t v = 0x1E; write_data(&v, 1); }
 
-    write_cmd(UC_CMD_POWER_ON);
-    if (wait_idle("PON", 2000)) return ESP_ERR_TIMEOUT;
+    if (power_on() != ESP_OK) return ESP_ERR_TIMEOUT;
 
     /* FULL rewrite of the registers between PON and DRF with PSR 0x17
        (REG=0, MTP scan) — UC8279 rev v0.2 requirement (measured 11:58). */
@@ -235,8 +321,99 @@ esp_err_t eink_display_fb(const uint8_t *fb)
         ESP_LOGE(TAG, "DRF timeout — refresh did not complete");
         write_cmd(UC_CMD_POWER_OFF);
         wait_idle("POF-recovery", 3000);
+        s_screen_on = false;
+        s_prev_valid = false;
         return ESP_ERR_TIMEOUT;
     }
+    record_prev(fb);
+    return ESP_OK;
+}
+
+esp_err_t eink_display_fb_fast(const uint8_t *fb)
+{
+    if (!s_initialized) return ESP_ERR_INVALID_STATE;
+
+    /* A fast DU is only possible on a healthy differential diff:
+       previous frame known AND ghost budget not exhausted. Otherwise full. */
+    if (!s_prev_valid || !s_prev || s_fast_count >= EINK_FAST_BUDGET) {
+        return eink_display_fb(fb);
+    }
+
+    /* NEW = frame, OLD = previous frame (diff, no flashing clear). */
+    stream_plane(UC_CMD_DTM2, fb);
+    stream_plane(UC_CMD_DTM1, s_prev);
+
+    /* Stock FW DU trigger (reverse-engineered from
+       Uc8279X4Driver::startBwRefresh fast=true): CDI 0xD7, CCSET, TSSET 0x5A, PFS, gate scan, PON,
+       PTIN + FULL PTL window (mandatory — without PTL, DU scans
+       without developing), PSR 0x17 (OTP), DRF. */
+    write_cmd(UC_CMD_CDI);
+    { uint8_t v = UC_CDI_FAST; write_data(&v, 1); }
+    write_cmd(UC_CMD_CCSET);
+    { uint8_t v = 0x02; write_data(&v, 1); }
+    write_cmd(UC_CMD_TSSET);
+    { uint8_t v = UC_TSSET_FAST; write_data(&v, 1); }
+    write_cmd(UC_CMD_PFS);
+    { uint8_t v = 0x20; write_data(&v, 1); }
+    write_cmd(UC_CMD_GATE_SCAN);
+    { uint8_t v = 0x02; write_data(&v, 1); }
+
+    if (power_on() != ESP_OK) {
+        s_prev_valid = false;
+        return ESP_ERR_TIMEOUT;
+    }
+
+    /* PTL: full window, gate coords with the +120 visible offset,
+       PT_SCAN=1. Byte-exact from Uc8279X4Driver. */
+    write_cmd(UC_CMD_PTL_IN);
+    write_cmd(UC_CMD_PTL);
+    {
+        const uint8_t v[9] = {
+            0x00, 0x00,             /* x start */
+            0x03, 0x1F,             /* x end 799|0x07 */
+            (uint8_t)(UC_GATE_OFFSET >> 8), (uint8_t)(UC_GATE_OFFSET & 0xFF),
+            (uint8_t)((UC_GATE_OFFSET + EINK_H - 1) >> 8),
+            (uint8_t)((UC_GATE_OFFSET + EINK_H - 1) & 0xFF),
+            0x01,                   /* PT_SCAN */
+        };
+        write_data(v, sizeof(v));
+    }
+
+    write_cmd(UC_CMD_PANEL_SETTING);
+    { const uint8_t v[2] = {0x17, 0x4D}; write_data(v, 2); }
+
+    write_cmd(UC_CMD_DRF);
+    {
+        uint64_t t0 = esp_timer_get_time();
+        while (gpio_get_level(EINK_BUSY) == 1 &&
+               (esp_timer_get_time() - t0) / 1000 < 50) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+    }
+    if (wait_idle("DRF-fast", 20000)) {
+        ESP_LOGE(TAG, "DRF fast timeout");
+        write_cmd(UC_CMD_PTL_OUT);
+        write_cmd(UC_CMD_POWER_OFF);
+        wait_idle("POF-recovery", 3000);
+        s_screen_on = false;
+        s_prev_valid = false;
+        return ESP_ERR_TIMEOUT;
+    }
+    write_cmd(UC_CMD_PTL_OUT);
+
+    /* Resync DTM1 with the displayed frame (the next fast diffs
+       against it) — must be done while the screen is still powered, like stock. */
+    stream_plane(UC_CMD_DTM1, fb);
+
+    /* BUGFIX (ported from the factory driver): s_prev (software cache of
+     * the last frame actually displayed) MUST track every successful fast
+     * DU, otherwise the next DU diffs against a stale frame (the last
+     * full refresh's) instead of the current screen state -> incorrect
+     * toggles accumulate over the budget (ghosting / local inversions),
+     * only fixed at the next forced full refresh. */
+    memcpy(s_prev, fb, SCREEN_FB_SIZE);
+
+    s_fast_count++;
     return ESP_OK;
 }
 
@@ -245,5 +422,7 @@ esp_err_t eink_power_off(void)
     if (!s_initialized) return ESP_ERR_INVALID_STATE;
     write_cmd(UC_CMD_POWER_OFF);
     wait_idle("POF", 2000);
+    s_screen_on = false;
+    /* The bistable image persists: s_prev remains physically valid. */
     return ESP_OK;
 }

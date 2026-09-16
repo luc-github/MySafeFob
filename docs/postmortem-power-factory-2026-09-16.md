@@ -26,7 +26,7 @@ had already been fixed — they were masking each other.
 
 ## 2. The starting point: an abandoned design
 
-The initial mechanism (inherited from the PiBot port, ADR-007) used a
+The initial mechanism (inherited from the earlier reference design, ADR-007) used a
 **Power + Right** combo: both buttons held together triggered the
 factory switch via the bootloader hook (`hooks.c`, at the time wired to
 GPIO7/Right).

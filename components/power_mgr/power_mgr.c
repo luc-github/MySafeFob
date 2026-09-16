@@ -1,3 +1,21 @@
+/* 
+ Project: MySafeFob  power_mgr.c
+  Copyright (c) 2026 Luc Lebosse. All rights reserved.
+
+  This code is free software; you can redistribute it and/or
+  modify it under the terms of the GNU Lesser General Public
+  License as published by the Free Software Foundation; either
+  version 2.1 of the License, or (at your option) any later version.
+
+  This code is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+  Lesser General Public License for more details.
+
+  You should have received a copy of the GNU Lesser General Public
+  License along with this library; if not, write to the Free Software
+  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+*/
 /**
  * @file power_mgr.c
  * @brief MySafeFob power_mgr — STUB Phase 8 (ADR-009 contract).
@@ -10,6 +28,7 @@
 #include "power_mgr.h"
 
 #include <string.h>
+#include <stdatomic.h>
 
 #include "driver/gpio.h"
 #include "esp_sleep.h"
@@ -20,6 +39,23 @@
 #include "freertos/task.h"
 
 static const char *TAG = "power_mgr";
+
+/* Moved here from main.c (task 8.4): the sleep/factory trampoline now has
+ * more than two callers (physical Power press, REPL `sleep`, ADR-012 idle
+ * timeout, "Sleep now" menu item) — one shared guard instead of a
+ * per-caller copy. */
+static atomic_bool s_terminal_action_claimed = false;
+
+bool power_mgr_claim_terminal_action(void)
+{
+    bool expected = false;
+    return atomic_compare_exchange_strong(&s_terminal_action_claimed, &expected, true);
+}
+
+void power_mgr_release_terminal_action(void)
+{
+    atomic_store(&s_terminal_action_claimed, false);
+}
 
 /* X4 Pro Power GPIO (board hw_config — duplicated here until the
  * shared board_config from task 8c ; DO NOT let it diverge). */

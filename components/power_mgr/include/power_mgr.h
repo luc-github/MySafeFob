@@ -1,3 +1,21 @@
+/* 
+ Project: MySafeFob  power_mgr.h
+  Copyright (c) 2026 Luc Lebosse. All rights reserved.
+
+  This code is free software; you can redistribute it and/or
+  modify it under the terms of the GNU Lesser General Public
+  License as published by the Free Software Foundation; either
+  version 2.1 of the License, or (at your option) any later version.
+
+  This code is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+  Lesser General Public License for more details.
+
+  You should have received a copy of the GNU Lesser General Public
+  License along with this library; if not, write to the Free Software
+  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+*/
 /**
  * @file power_mgr.h
  * @brief MySafeFob — software power on/off management (contract, ADR-009).
@@ -83,6 +101,29 @@ void power_mgr_shutdown(void);
  *        the caller stays awake, doesn't sleep by mistake.
  */
 void power_mgr_switch_to_factory(void);
+
+/**
+ * @brief Claims exclusive ownership of a terminal transition (entering
+ *        deep sleep, or switching to factory). Several independent
+ *        sources can lead to one of these transitions (a physical Power
+ *        press, the REPL `sleep` command, the ADR-012 idle-activity
+ *        timeout, a "Sleep now" menu action): only the first caller may
+ *        proceed, so two of them can never race and touch the e-ink /
+ *        flash state concurrently.
+ *
+ * @return true if the caller won the claim (must proceed with the
+ *         transition); false if another one is already in progress
+ *         (caller must not proceed).
+ */
+bool power_mgr_claim_terminal_action(void);
+
+/**
+ * @brief Releases a claim taken via power_mgr_claim_terminal_action().
+ *        Only needed after a FAILED power_mgr_switch_to_factory() (it
+ *        returns instead of rebooting) — power_mgr_shutdown() never
+ *        returns, so its callers never need to call this.
+ */
+void power_mgr_release_terminal_action(void);
 
 #ifdef __cplusplus
 }

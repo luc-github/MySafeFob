@@ -1,3 +1,21 @@
+/* 
+ Project: MySafeFob  main.c
+  Copyright (c) 2026 Luc Lebosse. All rights reserved.
+
+  This code is free software; you can redistribute it and/or
+  modify it under the terms of the GNU Lesser General Public
+  License as published by the Free Software Foundation; either
+  version 2.1 of the License, or (at your option) any later version.
+
+  This code is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+  Lesser General Public License for more details.
+
+  You should have received a copy of the GNU Lesser General Public
+  License along with this library; if not, write to the Free Software
+  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+*/
 /**
  * @file main.c
  * @brief MySafeFob — application entry point (Phase 8 skeleton).
@@ -15,7 +33,6 @@
  */
 #include <stdio.h>
 #include <string.h>
-#include <stdatomic.h>
 
 #include "esp_err.h"
 #include "esp_console.h"
@@ -31,6 +48,7 @@
 #include "totp_engine.h"
 #include "secret_store.h"
 #include "power_mgr.h"
+#include "ui_nav.h"
 
 static bool s_wake_from_sleep = false;
 
@@ -41,7 +59,6 @@ static bool s_wake_from_sleep = false;
  * is never pulled from the link (observed at the 2026-09-14 build). A
  * board without e-ink must provide a stub, the link error is explicit. */
 void board_splash_show(void);
-void board_ready_show(void);          /* "ready" screen, after the splash */
 void board_sleep_screen_show(void);   /* sleep screen (deep sleep) */
 
 /* BUGFIX 2026-09-16: cmd_sleep() (REPL, its own esp_console task) and
@@ -55,18 +72,15 @@ void board_sleep_screen_show(void);   /* sleep screen (deep sleep) */
  * (interleaved SPI), undefined state.
  * Only one caller may "claim" a terminal transition (sleep or
  * factory) — the second one, if it arrives, is ignored rather than
- * running in parallel. */
-static atomic_bool s_terminal_action_claimed = false;
-
-static bool claim_terminal_action(void)
-{
-    bool expected = false;
-    return atomic_compare_exchange_strong(&s_terminal_action_claimed, &expected, true);
-}
+ * running in parallel. Task 8.4: this guard moved into power_mgr
+ * (power_mgr_claim_terminal_action()) since board_ui_nav_task
+ * (ui_nav.cpp — "Sleep now" menu item, ADR-012 idle timeout) is now a
+ * 3rd/4th caller. */
 
 static int cmd_about(int argc, char **argv)
 {
     (void)argc; (void)argv;
+    board_activity_notify();
     printf("MySafeFob (MSF) — Phase 8 skeleton\n");
     printf("  board : %s\n", MSF_BOARD_NAME);
     printf("  IDF   : %s\n", esp_get_idf_version());
@@ -77,7 +91,8 @@ static int cmd_about(int argc, char **argv)
 static int cmd_sleep(int argc, char **argv)
 {
     (void)argc; (void)argv;
-    if (!claim_terminal_action()) {
+    board_activity_notify();
+    if (!power_mgr_claim_terminal_action()) {
         printf("Already in progress (Power button pressed?) — ignored.\n");
         return 0;
     }
@@ -92,6 +107,7 @@ static int cmd_sleep(int argc, char **argv)
 static int cmd_totpselftest(int argc, char **argv)
 {
     (void)argc; (void)argv;
+    board_activity_notify();
     esp_err_t err = totp_engine_run_self_tests();
     if (err == ESP_OK) {
         printf("TOTP self-tests (RFC 6238): OK\n");
@@ -150,6 +166,7 @@ static void power_button_task(void *arg)
             factory_triggered = false;
             t0_us = esp_timer_get_time();
             next_log_ms = 1000;
+            board_activity_notify();   /* ADR-012: any button = activity */
             esp3d_log_d("Power pressed — detecting...");
         }
         if (held && p) {
@@ -160,11 +177,11 @@ static void power_button_task(void *arg)
             }
             if (!factory_triggered && held_ms >= MSF_POWER_FACTORY_MS) {
                 factory_triggered = true;
-                if (claim_terminal_action()) {
+                if (power_mgr_claim_terminal_action()) {
                     esp3d_log_d("Power >= 10s: switching to factory");
                     power_mgr_switch_to_factory();   /* never returns if OK */
                     esp3d_log_d("Power: switch to factory FAILED, staying awake");
-                    atomic_store(&s_terminal_action_claimed, false);
+                    power_mgr_release_terminal_action();
                 } else {
                     esp3d_log_d("Power >= 10s: transition already in progress (REPL sleep?), ignored");
                 }
@@ -173,7 +190,7 @@ static void power_button_task(void *arg)
         if (!p && held) {
             int64_t held_ms = (esp_timer_get_time() - t0_us) / 1000;
             if (!factory_triggered && held_ms >= MSF_POWER_LONG_MS) {
-                if (claim_terminal_action()) {
+                if (power_mgr_claim_terminal_action()) {
                     esp3d_log_d("Power long press: going to sleep");
                     board_sleep_screen_show();
                     power_mgr_shutdown();               /* never reached */
@@ -215,12 +232,12 @@ void app_main(void)
          * blocking, before the REPL — so we always know where we are. */
         board_splash_show();
     }
-    /* "Ready" screen right after the splash (2026-09-16 request): tells
-     * apart the transition (splash, transient) from the stable state —
-     * without it, a hang after the splash would be indistinguishable from
-     * a successful boot (the transition image would stay displayed in
-     * both cases). Provisional, replaced by the real UNLOCK screen in 8.4. */
-    board_ready_show();
+    /* Interactive menu (task 8.4, ui_nav.cpp) right after the splash: its
+     * first draw (full refresh) replaces the old static "READY" screen,
+     * and it keeps redrawing/responding for the whole session — also owns
+     * the ADR-012 idle-activity timeout. Runs in its own task since it
+     * blocks polling touch/buttons forever. */
+    xTaskCreate(board_ui_nav_task, "ui_nav", 8192, NULL, 4, NULL);
 
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
