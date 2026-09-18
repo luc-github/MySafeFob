@@ -82,9 +82,9 @@ Each phase produces a documented and validated deliverable before moving on to t
 
 | # | Deliverable | Description |
 |---|----------|-------------|
-| 6.1 | `FEATURES.md` | Finalized feature list (must have / should have / nice to have) |
-| 6.2 | `UI-SPECS.md` | Textual mockups of each screen |
-| 6.3 | `SECURITY-THREAT-MODEL.md` | Attack scenarios and mitigations |
+| 6.1 | `FEATURES.md` | ✅ Finalized feature list (must have / should have / nice to have) |
+| 6.2 | `UI-SPECS.md` | ✅ Textual mockups of each screen (written retroactively during task 8.4, 2026-09-16 — draft, awaiting review) |
+| 6.3 | `SECURITY-THREAT-MODEL.md` | ⏳ Attack scenarios and mitigations |
 
 **Exit gates**: The project scope is frozen. No new features until v1.0.
 
@@ -888,6 +888,43 @@ task 8.4's minimal slice (`boards/x4pro/app/ui_nav.cpp`, see ADR-013):
 the device correctly enters deep sleep on its own after 45 s of no
 button/touch/serial input, confirmed on hardware.
 
+**Amendment 2026-09-18**: the timeout is now a runtime, NVS-persisted
+value (`settings_store_get/set_idle_timeout_s()`,
+`boards/x4pro/app/settings_store.c`) instead of the compile-time
+`IDLE_TIMEOUT_MS` constant above — **`0` means disabled** (never
+auto-sleeps from inactivity alone). **Default changed to `0`
+(disabled)**, deliberately, for development — this codebase is being
+actively exercised on hardware right now, and the device falling asleep
+mid-session is friction, not the behavior being validated. A shipped
+device should default back to the originally-validated 45 s; UI-SPECS.md
+§2.13's SETTINGS_SECURITY "Auto-sleep after inactivity" field is the
+(not yet built) screen that will let it be changed. Not yet
+re-hardware-validated with this dev default.
+
+**Amendment 2026-09-18 (settings engine refactor)**: `settings_store.c`
+rewritten from hand-written per-setting NVS getter/setter pairs to a
+table-driven engine — `settings_defs.inc` (X-macro: id, NVS key, type,
+default, one line per setting) generates an internal id enum + lookup
+table; two generic, mutex-protected functions (`settings_get_u32`/
+`settings_set_u32`) do the actual NVS access, with the existing named
+accessors (`settings_store_get/set_power_short_confirm`,
+`..._idle_timeout_s`) becoming thin wrappers — public API unchanged, zero
+changes needed in `ui_nav.cpp`/`main.c`. Prompted by a user question
+comparing this to `references/Luc-Pibot-cnc-pendant-firmware`'s
+`ESP3DSettings` module (`esp3d_settings.h`, X-macro-table + mutex +
+schema versioning, doc: `docs/codewiki/settings.md` in that reference
+tree) — that module's actual C++ class is too coupled to PiBot's own
+WiFi/CNC/INI-update type system to import wholesale, but the table-driven
+*pattern* was worth adopting now, cheaply, while there are only 2
+settings to migrate, rather than after the duplication from hand-written
+pairs gets worse (PIN, frontlight, owner info, and more are already
+anticipated in `UI-SPECS.md`). The mutex closes a real, previously-latent
+gap: multiple tasks (`ui_nav`, `power_button_task`, REPL commands) call
+these accessors, and nothing serialized NVS access before this.
+Schema versioning (also part of PiBot's module) was **not** adopted —
+premature with 2 settings, revisit once there are enough to make a
+breaking layout change plausible.
+
 ---
 
 ### ADR-013: Task 8.4 minimal slice — touch+button navigation, ADR-012 wired in
@@ -939,6 +976,738 @@ SDK's low-level driver port was skipped).
 
 **Status**: ✅ VALIDATED on hardware 2026-09-16 (navigation + auto-sleep
 both confirmed working; the real UI content itself remains to be built).
+
+---
+
+### ADR-014: First real screens — Settings menu + Controls + touch diagnostic
+
+**Context**: `docs/UI-SPECS.md` specs a full screen set, but only ADR-013's
+placeholder existed. Rather than implement screens in spec order, the
+decision (2026-09-17) was to start with Settings specifically: it's the
+one area buildable today with zero dependency on unbuilt work
+(`secret_store`/PIN, `time_svc`, frontlight UI binding), and it's the only
+way to actually validate the "Power short press = Select" idea from
+`docs/touch-calibration-notes.md` §8 — that setting needs a real, persisted
+toggle and a real screen before it means anything. This is also the first
+screen beyond a single placeholder, so it's where multi-screen navigation
+(the ⚙ fixed zone, the Settings "return-to" slot, `Screen` switching)
+gets introduced for the first time.
+
+**Explicit scope cuts vs. `UI-SPECS.md`** (documented there too, §s
+referenced): only SETTINGS (menu), SETTINGS_CONTROLS, and SETTINGS_ABOUT
+get real content; SETTINGS_SECURITY/DISPLAY/TIME_SYNC/BACKUP/OWNER_INFO
+render as disabled rows (their dependencies don't exist yet) so the
+menu's shape won't need to change later, only each row's `enabled` flag.
+The touch diagnostic screen ships UI-SPECS §2.12's "minimum useful"
+version — a live raw-coordinate readout — not the full guided 3×3 grid
+(deferred, real added scope of its own).
+
+**Implementation**:
+1. `boards/x4pro/app/ui_nav.cpp` restructured from one hardcoded
+   `draw_screen()` into a `Screen` enum (`Home`, `Settings`,
+   `SettingsControls`, `SettingsAbout`, `TouchDiag`) with a `draw_*()` per
+   screen and a `switch_screen()` helper that also resets
+   `InteractionBuffer`'s focused index (a stale index from the previous
+   screen otherwise carries over — `Frame`/`InteractionBuffer` intentionally
+   persist focus across redraws within one screen). Double-draw-per-input-
+   cycle discipline (ADR-013) unchanged — only what gets drawn changes.
+2. `InteractionBuffer`/`Frame` widened from `<8>` to `<16>` (SETTINGS
+   alone needs the ⚙ + Back + row hit-targets).
+3. **Direct tap now works**, not just Left/Right+Home — `InputSnapshot`'s
+   `touchPressed`/`touchReleased`/`touchX`/`touchY` are now fed from
+   `touch_read()`'s press/release edges (previously only `.confirm` from
+   the Home zone was ever set, per `FreeInkUICore.h`'s `routeAgainst()`: a
+   plain tap fires on the release edge via `findTouch(slot, touchX, touchY,
+   InputTouch)`). This was UI-SPECS §1.2's flagged-but-deferred "first
+   implementation task" — needed now since every new screen has more than
+   one widget and Left/Right-only navigation across e.g. 7 Settings rows
+   would be tedious to actually use.
+4. **New `boards/x4pro/app/settings_store.h`/`.c`**: the first NVS-backed
+   persistence anywhere in this codebase (previously only the bare
+   `nvs_flash_init()` call existed, no `nvs_open`/`nvs_get_*`/`nvs_set_*`
+   usage). Scoped to exactly one setting for now:
+   `settings_store_get/set_power_short_confirm()`, default on.
+5. **Power-short-press → confirm bridge**: `board_ui_nav_power_confirm()`
+   (`ui_nav.h`/`.cpp`) sets a pending flag consumed by the nav loop's next
+   iteration as `input.confirm = true` — same effect as a Home-pad tap.
+   `main.c`'s `power_button_task`, on a Power release with
+   `held_ms < MSF_POWER_LONG_MS` (previously a confirmed no-op, ADR-013's
+   own research), calls it when the setting is on. Power still never
+   joins the nav loop's own input reads — one pulse, not GPIO3 becoming a
+   screen-level actor.
+6. `nvs_flash_init()` moved earlier in `main.c`'s `app_main()` — it used
+   to run *after* `xTaskCreate(board_ui_nav_task, ...)`, which could let
+   the nav task read a setting before NVS was open. Now runs, followed by
+   `settings_store_init()`, before that `xTaskCreate` call.
+
+**Status**: build-verified only (`./msf_build.bat build`, clean). Hardware
+validation (⚙ reachable by tap and Left/Right from every screen, the
+toggle persisting across a reboot, the short-press bridge, the touch
+diagnostic's live readout) still to be done.
+
+**Amendment 2026-09-18 (hardware validation round 1)**:
+- Left/Right + Home-pad navigation confirmed working end to end
+  (Settings reachable, sub-screens, Back).
+- **Direct tap bug found and fixed**: a tap on the fixed-zone "Settings"
+  button (originally `Rect{10,10,120,34}`, right at the panel edge) never
+  registered, while a tap on a centrally placed button (Home's "Sleep
+  now") worked correctly — isolating the problem to a likely capacitive
+  dead zone near the bezel, not a coordinate-system bug (ruled out:
+  Left/Right+Home always reached the same button fine). Fixed by moving
+  both edge-adjacent buttons (`Settings`, `< Back`) inward to
+  `x=24`/`y=20`. Full details and the still-open "how wide is the dead
+  zone" question: `docs/touch-calibration-notes.md` §9. Not yet
+  re-validated on hardware.
+- **Battery % added to the fixed zone** (user request, same session):
+  `boards/x4pro/app/battery.c`/`.h`, copied from the factory's
+  already-validated CW2017 driver (I2C 0x63 + GPIO21 charge detection).
+  Read on every redraw, no caching (cheap enough at this input-driven
+  refresh rate). Not yet hardware-validated.
+
+**Amendment 2026-09-18 (continued) — Lucide battery status icons**: the
+"no bitmap asset system vendored, text-only" state above lasted about an
+hour. User pointed out `freeink-sdk` uses Lucide icons (not LVGL's
+default Font Awesome — this session's memory now has a reference note on
+the distinction) and that Lucide has battery-status icons matching
+exactly this use case: `battery-charging`/`-full`/`-medium`/`-low`/
+`-warning`. Implemented:
+- `tools/gen_icons.py` (new) — adapted from `freeink-sdk/libs/assets/
+  Icons/tools/gen_icons.py` (MIT), rasterizing via ImageMagick's `magick`
+  instead of `rsvg-convert`: installing the latter via Chocolatey failed
+  on this machine (`Access to the path 'C:\ProgramData\chocolatey\lib'
+  is denied` — no admin rights in this session), ImageMagick was already
+  installed and verified to rasterize these SVGs correctly (spot-checked
+  pixel content, not just "didn't error"). Same 1bpp packed output
+  format, byte-for-byte compatible with the original tool's `Icon.h`
+  struct.
+- `boards/x4pro/app/Icon.h` — vendored verbatim from `freeink-sdk`
+  (MIT), no MySafeFob copyright header since it's third-party code we
+  didn't write (`docs/esp-project-boilerplate/importing-features.md`'s
+  "copy verbatim" bucket).
+- `boards/x4pro/app/icons_manifest.txt` + generated
+  `battery_icons_gen.h` (6 icons × 24px, from the Lucide SVGs already
+  vendored under `references/crosspoint-reader/freeink-sdk/`).
+- **Fixed a latent bug in our own vendored `FreeInkUIIcon.h`** while
+  wiring it in: two `//` comment lines ended with a trailing `\`, which
+  GCC's `-Wcomment` (escalated to error by this project's `-Werror=all`)
+  flags as an accidental multi-line comment. Never triggered before
+  because this header was never actually `#include`d until now — fixed
+  by dropping the trailing backslashes, noted inline as a local patch in
+  case this component is ever re-vendored from upstream.
+- `ui_nav.cpp`'s fixed zone now draws the icon (24×24, right edge) with
+  the `"NN%"` text just to its left; charging overrides the SoC-based
+  icon choice; no dedicated "critical" icon in Lucide's set,
+  `battery-warning` fills that role below 20%.
+
+Not yet hardware-validated (build-verified only).
+
+**Amendment 2026-09-18 (continued) — battery text/icon size mismatch**:
+user reported the "100%" text visibly larger than the new 24×24 icon next
+to it. Root cause: all 8 `DisplayTarget` font slots default to the same
+single bundled `kNotoSansFont` (~24px, rasterized from
+`NotoSans-Regular.ttf`); nothing in this codebase had ever called
+`setFont()` to register an alternate, smaller font in any slot. Fixed by
+generating one with `references/crosspoint-reader/freeink-sdk/libs/ui/
+FreeInkUI/tools/gen_font.py` (Pillow/FreeType-based — no missing
+native-binary dependency this time, unlike the icon tool) at 16px from
+the same `NotoSans-Regular.ttf` already vendored locally
+(`references/crosspoint-reader/lib/EpdFont/builtinFonts/source/NotoSans/`):
+`boards/x4pro/app/SmallFont.h` (new, `kNotoSansSmallFont`). Registered on
+a dedicated slot (`kSmallFontSlot = 1`) via
+`target.setFont(kSmallFontSlot, kNotoSansSmallFont)` once at task start,
+applied only to the battery-percentage `TextStyle` — slot 0 (default,
+used by every other label so far: button text, screen titles, row text)
+is untouched, so this is a scoped fix, not a global font-size change.
+
+Build-verified only — not yet hardware-validated.
+
+**Amendment 2026-09-18 (continued) — touch responsiveness investigation**:
+user reported touch as "barely reactive" (needing 5+ second holds to see
+a value change in the touch diagnostic screen) and the fixed-zone
+Settings/Back buttons never registering at all via touch, while
+Left/Right/Power (plain GPIO, `buttons.c`) always work.
+
+Two distinct findings:
+1. **Real bug, fixed**: `touch.c`'s `touch_read()` ignored bits[3:0] of
+   the GT911 status register (0x814E) — the datasheet-documented active
+   touch-point count. It treated *any* "buffer ready" event (bit7 set) as
+   a touch, including a release event (buffer ready, 0 points), parsing
+   stale/garbage point data and reporting `pressed=true` for it. A real
+   release edge was therefore only ever detected later, whenever a poll
+   happened to see "no new buffer at all" instead of the chip's own
+   release signal — a source of flaky/delayed release detection. Fixed by
+   gating the point-register read (and `pressed=true`) on
+   `touch_count > 0`; a 0-point buffer-ready event now correctly leaves
+   `pt.pressed = false`. Also added an unconditional `ESP_LOGI` of the raw
+   status byte + point count on every real chip activity sample (bounded
+   rate — only fires while the chip actually has something to report), so
+   the next hardware run's log shows exactly what the GT911 reports even
+   for samples the caller's edge detection doesn't turn into an action —
+   directly the "log the values" ask.
+2. **Architectural, not yet fixed — needs a decision**: `board_ui_nav_task`
+   is one single-threaded loop: read buttons -> read touch -> draw ->
+   `eink_display_fb()`/`_fast()` (blocks the whole task for the flush
+   duration, ~0.5-1s partial / ~2-4s full) -> loop. Both button and touch
+   polling only happen once per loop iteration, so **any touch press or
+   release that starts and ends entirely within a flush's blocking window
+   is never sampled at all** — the loop resumes with the finger already
+   up, sees no edge, and drops the tap silently. Physical buttons don't
+   suffer this because they're level-based and the debounce
+   (`buttons.c`'s `button_wait_press`) blocks on GPIO level, not a single
+   instant sample: if a button is still held whenever the loop reaches it,
+   it's caught, no matter how long the wait was. A quick tap is exactly
+   the transient event this architecture is bad at. This plausibly
+   explains both symptoms: needing to hold long enough to guarantee the
+   press survives past whatever flush is in flight, and the Settings/Back
+   buttons specifically feeling worse (each screen transition forces a
+   full ~2-4s refresh via `s_force_full_refresh`, and a same-session
+   Back tap right after opening Settings has to survive that whole
+   window).
+
+**Decision (2026-09-18)**: decouple input sampling from the render/flush
+task rather than the smaller press/release mitigation — a real fix for
+inputs dropped during a flush, not just a reduced-odds one.
+Implemented:
+- New `input_sampler_task` (`ui_nav.cpp`, its own FreeRTOS task, created
+  from `board_ui_nav_task`) owns `button_wait_press()`/`touch_read()`
+  exclusively now — the exact polling/edge-detection/settle-window logic
+  that used to live inline in the render loop, unchanged in substance,
+  just moved. It translates raw samples into discrete `InputEvent`s
+  (`ButtonLeft`/`ButtonRight`/`ButtonPowerActivity`/`TouchPress`/
+  `TouchRelease`) and posts them to a 16-deep `QueueHandle_t`
+  (`s_input_queue`) — deep enough to buffer a realistic burst of taps
+  across one flush.
+- `board_ui_nav_task`'s render loop no longer touches hardware directly:
+  it does `xQueueReceive(s_input_queue, &inev, pdMS_TO_TICKS(50))`
+  (the 50ms timeout doubles as its existing idle-timeout polling tick),
+  builds the same `InputSnapshot` it always did, and proceeds through
+  the unchanged draw/flush pass. Since the sampler task is never blocked
+  by the render task's `eink_display_fb()`/`_fast()` calls, a tap that
+  happens mid-flush is now queued and processed on the very next loop
+  iteration once the flush completes, instead of never being sampled at
+  all. A backlog of several queued taps (e.g. from a long full-refresh
+  transition) drains one event — and one full draw+flush cycle — per
+  loop iteration, in order; no drops, at the cost of visibly "catching up"
+  through a short train of redraws rather than losing the input.
+- **REPL/serial input deliberately NOT folded into this queue**:
+  `esp_console`'s REPL (`main.c`) already owns its own dedicated task
+  with its own blocking serial read loop, was never coupled to
+  `board_ui_nav_task`'s flush blocking to begin with, and already calls
+  `board_activity_notify()` directly from its command handlers. Merging
+  it in would mean reimplementing the REPL's read/parse loop ourselves
+  for no actual gain.
+
+Build-verified only — not yet hardware-validated.
+
+**Amendment 2026-09-18 (continued) — battery text/icon baseline mismatch,
+touch heartbeat logging**: after the small-font fix (font size now
+matches the icon), the user found the "100%" text still visually lower
+than the icon — not a size problem this time, an alignment one.
+Root cause: `FreeInkUIDisplayTarget.h`'s `text()` places a multi-glyph run
+at `baseline = rect.y + font.ascent`, unlike its single-centered-glyph
+special case, which does vertically center against the glyph's own
+height. `SmallFont`'s `ascent` (18) is taller than what digits/`%`
+actually draw (~12px), so the old `rect.y = 22` baseline sat a few
+pixels lower than the icon's visual center. Fixed by using `icon_y` (18,
+the icon's own rect top) as the text rect's `y` too — picked
+empirically against this specific font's metrics, not a general formula
+(noted inline in `ui_nav.cpp` so it's not mistaken for one next time the
+font changes).
+
+Separately, the user reported touch "does nothing" when pressing the
+screen, with no log output at all — which is indistinguishable, from the
+outside, between "the chip never reports the touch" and "an I2C read is
+silently failing every time" (the latter previously produced zero log
+lines). Added a 1-second-throttled heartbeat log in `touch_read()`
+(`touch.c`) that fires either way when there's no real touch activity to
+log: `"status I2C read FAILED"` on a bus error, `"status 0x00 (idle, no
+new buffer)"` otherwise — so the next hardware run's serial log will show
+which of the two it is (or that `touch_read()` isn't even being reached,
+if there's silence even with this heartbeat in place).
+
+Build-verified only — not yet hardware-validated.
+
+**Amendment 2026-09-18 (continued) — version/build-timestamp footer**:
+user asked for a fixed footer mirroring the header (`draw_fixed_zone()`):
+one horizontal line, one line of text below it, at the bottom of every
+screen — showing firmware version + build timestamp, to make it obvious
+at a glance which binary is actually running on the device (came up
+directly from the confusion diagnosing the touch logging: no easy way to
+tell whether a build had actually been reflashed). `draw_footer()`
+(`ui_nav.cpp`), called once at the end of `draw_current_screen()`, uses
+`esp_app_get_description()` — ESP-IDF already embeds `version` (falls
+back to `git describe --always --dirty` since no `PROJECT_VER` is set
+in the root `CMakeLists.txt`) and `date`/`time` (this binary's *compile*
+timestamp, not a device wall clock — there's no RTC-backed time source
+wired up yet) into every app image, zero extra bookkeeping needed.
+Added `esp_app_format` to `boards/x4pro/app/CMakeLists.txt`'s `REQUIRES`
+(where `esp_app_get_description()` actually lives). Positioned at
+`screen.height - 40` — comfortably below every screen's content today
+(Settings' 7 rows end around y=586, footer line at y=760 in the 480x800
+logical portrait frame).
+
+Build-verified only — not yet hardware-validated.
+
+**Amendment 2026-09-18 (continued) — deep sleep disabled for touch
+testing, GT911 log tag**: user reported touching anywhere still produces
+no serial output despite the footer confirming the latest build is
+flashed, and that a tap "below" the Sleep button sometimes actually
+triggers sleep and sometimes produces a run of screen refreshes instead
+(the latter is expected/correct: the decoupled input queue draining a
+backlog of taps one redraw at a time, per this ADR's earlier
+amendment — not a new bug). The working theory this amendment acts on:
+**deep sleep drops the USB-serial-JTAG connection**, so if a touch is
+occasionally landing on/near the Sleep action, the device sleeps before
+any buffered log lines reach the terminal, or the reconnect after wake
+loses the scrollback — which would make earlier touch activity look like
+it produced no log at all, independent of whether the touch/status
+logging itself is working.
+- `enter_sleep_from_idle_or_menu()` (`ui_nav.cpp`) gated behind a new
+  `MSF_DEBUG_NO_SLEEP` macro (`1` for now): instead of actually calling
+  `power_mgr_shutdown()`, it logs `"sleep button activated (%s) --
+  MSF_DEBUG_NO_SLEEP=1, staying awake"` (`%s` = the same `reason` string
+  real sleep would have used — Sleep-menu tap vs. idle timeout) and
+  returns. Covers both the Sleep button and the idle-timeout path (same
+  function, single gate). **Testing-only, must be set back to 0 before
+  shipping** — flagged inline as such.
+- `touch.c`'s log tag renamed `"touch"` -> `"GT911"` so every register
+  read/heartbeat line stands out distinctly in the serial log while this
+  is being chased down, plus a heartbeat log added for the
+  not-yet-initialized case (`!s_bus || !s_addr`) — the earlier heartbeat
+  additions only covered "initialized but idle/failing", not "never
+  initialized at all".
+
+Build-verified only — not yet hardware-validated.
+
+**Amendment 2026-09-18 (continued) — decisive task-entry log, ruling out
+"code never runs"**: the pasted boot log (through the `msf>` REPL prompt)
+showed zero output from either `ui_nav` or `GT911` tags — not just the
+new diagnostics, but lines that have existed since `touch_init()` was
+first written, which should log unconditionally during startup. Since
+the screen visibly renders and redraws (functionally proving
+`board_ui_nav_task` runs), this ruled out "the task never executes" and
+pointed at something specific to *this task's* serial output not
+reaching the terminal — matching the user's own "race condition on the
+serial output?" suspicion, and consistent with `board_ui_nav_task`/
+`input_sampler_task` running at FreeRTOS priority 4 (higher than the
+default main/REPL task) and potentially starving the console output
+path during a long blocking e-ink flush. Added one `ESP_LOGE` at the
+very first line of each task (`"=== board_ui_nav_task ENTER
+(core=%d) ==="` / same for `input_sampler_task`), before touching
+buttons/touch/eink at all — zero dependency on anything touch-specific,
+so its presence or absence settles whether the drop is upstream of
+touch entirely. `ESP_LOGE` chosen deliberately (hardest level to filter
+away) and the message padded with `===` to make it trivial to spot by
+eye in a long log.
+
+Build-verified only — not yet hardware-validated.
+
+**Amendment 2026-09-18 (continued) — ENTER log confirmed missing, adding
+a raw printf() to isolate ESP_LOG vs. task-scheduling**: the user
+reflashed and retested with the new `ESP_LOGE` "ENTER" lines in place —
+still zero output from `ui_nav`/`GT911`, confirmed against a full log
+through the `msf>` prompt and a "Sleep now" tap. Also noted: not one
+standard `I (ms) TAG: msg`-formatted line appears anywhere after
+`Calling app_main()` in that log — only the project's own `esp3d_log`
+format (`;[file:line] func(): ...`). Checked whether `esp3d_log_init()`
+(`main.c`'s first line) installs a custom `esp_log_set_vprintf()` hook
+that could be swallowing standard `ESP_LOG` calls project-wide: it does
+not (`components/esp3d_log/esp3d_log.c` — its own independent backend,
+no interaction with the IDF logging vprintf hook). Added a raw
+`printf()` + `fflush(stdout)` immediately before each task's `ESP_LOGE`
+ENTER line, in both `board_ui_nav_task` and `input_sampler_task` — this
+disambiguates "the task itself never reaches this code" (neither line
+would show) from "something specific to the ESP_LOG path swallows it"
+(the printf would show, the ESP_LOGE wouldn't).
+
+Build-verified only — not yet hardware-validated.
+
+**Amendment 2026-09-18 (continued) — decisive result: ESP_LOG itself is
+the problem, worked around with printf**: the raw-printf test settled
+it. Both `board_ui_nav_task` and `input_sampler_task`'s `### RAW
+PRINTF... ###` lines appeared in the log, immediately confirming both
+tasks run — but the `ESP_LOGE` "=== ... ENTER ===" line one statement
+later, in the same function, never appeared. 100% reproducible across
+every test done this session, not intermittent — ruling out an actual
+race condition despite the initial "race condition?" suspicion. Root
+cause not fully identified (`CONFIG_LOG_VERSION=1`, no `LOG_LOCAL_LEVEL`
+override, no `esp_log_set_vprintf()` hook anywhere in the codebase —
+all checked and ruled out), but conclusively isolated to *this specific
+call path* (`ESP_LOG*` from `ui_nav.cpp`/`touch.c`, from these tasks),
+not to touch/eink/anything logic-level.
+
+Rather than keep chasing the root cause blind, worked around it
+pragmatically: both files now `#undef`/`#define` `ESP_LOGE`/`W`/`I` to a
+printf-based equivalent (`"%c (%lld) %s: " fmt`, matching the standard
+IDF format, `fflush(stdout)` after every call), scoped to each
+translation unit only via `#undef` right after including `esp_log.h` —
+every other file in the project keeps using real `ESP_LOG` unaffected.
+Documented inline in both files as a workaround to revisit once the
+real cause is understood; not a permanent fix.
+
+Build-verified only — not yet hardware-validated.
+
+**Amendment 2026-09-18 (continued) — touch coordinate mapping bug
+identified, input-event coalescing added**: with logging finally working
+(previous amendment), the user gathered real hardware data. Two
+findings:
+
+1. **Touch coordinate mismatch**: a tap well below the header logged
+   `x=477 y=11` — nowhere near where the finger actually was.
+   `touch.c`'s `touch_read()` passes raw GT911 pixel coordinates straight
+   through (`pt.x = raw_x; pt.y = raw_y;`) with no rotation, while
+   `FreeInkUICore.h` explicitly provides `touchToLogical()` for exactly
+   this (panel-native normalized touch -> logical coordinates via
+   `device.touchOrientation`) — never called anywhere in this codebase.
+   Also found: `touch.h`'s own header comment documents a *different*
+   calibration (`fb_x = raw_y, fb_y = 479 - raw_x`, swap + invert) than
+   what `touch_read()` actually implements (direct passthrough) — an
+   unresolved contradiction between two calibration notes written at
+   different times, never reconciled. Separately, the GT911 was
+   host-configured with X_MAX=480/Y_MAX=800 (`s_cfg_480x800`), i.e. the
+   *touch controller itself* was told to report in our chosen logical
+   portrait numbers rather than the physical panel's native landscape
+   dimensions (800x480) with rotation handled in software — a plausible
+   root cause for readings that are "roughly right" in some regions and
+   clearly wrong in others. **Decision**: rather than guess another
+   formula, do a deliberate 4-corner + center calibration pass using the
+   already-built touch diagnostic screen (Settings > Controls > Touch
+   diagnostic) before changing any code — a repeat of the same
+   "understand before fixing" approach used earlier for the Home-pad
+   zone (`docs/touch-calibration-notes.md`). Not yet done as of this
+   writing.
+2. **Input-event coalescing**: 3 rapid Right presses produced 3
+   sequential e-ink refreshes, each visibly slow — not a bug (nothing
+   was lost, confirming the earlier input-sampler decoupling works), but
+   a real UX cost. Added a coalescing pass in `board_ui_nav_task`'s main
+   loop: after the first queued event, additional already-queued events
+   are drained and resolved (`draw_current_screen()` +
+   `handle_action()`, correctly advancing focus/screen state, mid-burst
+   screen switches included) but never flushed to the panel — only the
+   *last* event in a burst reaches the real Pass 1/Pass 2/flush sequence
+   that was already there. N queued events now cost one flush instead of
+   N. Capped at 8 per cycle (`kMaxCoalesce`) so a runaway queue can't
+   stall the loop. `apply_input_event()` factored out of the main loop so
+   both the first event and the coalescing loop share the same
+   event-to-`InputSnapshot` translation.
+
+Build-verified only — not yet hardware-validated.
+
+**Amendment 2026-09-18 (continued) — Y-axis touch rescale, from a real
+4-corner+center hardware test**: user tapped 4 corners + center + the
+physical Home/Select key and shared the log (with the button
+capture/processing timestamps added for the Left/Right slowness
+question too — not yet analyzed, needs its own pass). Findings:
+- **Y-axis**: raw top ≈ 20-22 (just below the header), raw bottom ≈
+  640-668 (the visible display's actual bottom edge — the physical
+  Home/Select key's zone, raw_y 660-720, begins right where the display
+  stops). `(top+bottom)/2` predicted the observed center tap's raw_y to
+  within 4px — too precise to be coincidence, confirming a clean linear
+  relationship, just over a narrower raw range than the full logical
+  480x800 canvas assumed. Notably, `touch.c`'s OWN historical 4-corner
+  note (TL=(48,58) TR=(475,80) BR=(476,660) BL=(52,661)) shows the exact
+  same margins — this was visible in the data all along, just never
+  acted on; the file's comment concluded "raw_y = user y" (direct
+  passthrough) instead of rescaling. Fixed: `touch_rescale_y()` (new),
+  linear rescale from `[TOUCH_Y_RAW_TOP=21, TOUCH_Y_RAW_BOTTOM=660]` into
+  `[0, EINK_W-1]` (`EINK_W`==800 here because `DisplayTarget`'s Portrait
+  rotation swaps panel 800x480 into logical 480x800 — deliberately not
+  renamed to avoid drift from the panel-dimension constant it actually
+  is). Applied only to `pt.y`, after the Home-key zone check (which
+  still correctly uses unscaled `raw_y`).
+- **X-axis**: left untouched. The corner taps span raw ~36-476 (close
+  to the full logical 0-480 already), but the center tap's raw_x (349)
+  doesn't match the predicted midpoint (~258) nearly as well as Y did —
+  could be normal human imprecision tapping an unmarked "center", or a
+  real non-linearity; not enough signal yet to change anything. Needs a
+  dedicated, careful re-test (left/right/center only) before touching X.
+- "Bottom-left activates Settings/Back" (user's separate observation)
+  is very likely **not** a coordinate bug: a Home/Select key tap sets
+  `input.confirm`, which activates whichever widget is currently
+  *focused* — independent of tap position entirely. If Settings/Back
+  happened to be focused already, any Home-key tap would trigger it.
+  No code change made for this; flagged as an explanation, not a fix.
+
+Build-verified only — not yet hardware-validated (this Y rescale
+specifically needs a fresh 4-corner retest to confirm it actually
+landed correctly).
+
+**Amendment 2026-09-18 (continued) — Settings button moved below the
+header line**: user reported no touch response at all where the
+Settings button is drawn. Consistent with the confirmed touch-active
+area starting only around raw_y~21 (previous amendment): the button's
+previous position (`Rect{24, 20, 130, 36}`, a prior fix already moved it
+once from `Rect{10,10,...}`) still sits right at the fragile top edge of
+that active area. Rather than nudge the margin again, moved the only
+*interactive* element in the fixed zone below the header's divider line
+entirely: icon/battery % stay at the very top (`icon_y=18`, unaffected —
+they're read-only, no touch needed), the divider line stays at y=64,
+and the Settings button now sits at `Rect{24, 76, 130, 36}`, solidly
+inside the confirmed-active range. `draw_fixed_zone()`'s returned
+content-start offset bumped from 76 to 124 accordingly; every screen's
+own layout is expressed relative to that offset already, so nothing
+else needed to change.
+
+Build-verified only — not yet hardware-validated.
+
+**Amendment 2026-09-18 (continued) — calibration still unresolved,
+raw+logical touch values now shown side by side**: user tested the
+latest firmware (Y-rescale + Settings moved below the header) and
+tapped the visible "Settings" button directly — logged `x=477 y=31`,
+which lands in neither the button's x-range (24-154) nor y-range
+(76-112). Confirms the current transform (X passthrough, Y rescale via
+`touch_rescale_y()`) is still wrong. `x=477` (near the panel's right
+edge) for a tap the user aimed at a left-side button hints at a
+possible X-axis flip (`480 - raw_x`), but that contradicts an earlier
+data point (`raw_x=36` correctly hit the same button's old position
+without any flip) — two contradictory signals, not enough to act on
+either.
+
+Rather than layer a third guessed transform on top of two unconfirmed
+ones, added visibility instead: `touch_point_t` (`touch.h`) now carries
+`raw_x`/`raw_y` (the untouched GT911 register values) alongside the
+existing `x`/`y` (post-calibration, what actually gets hit-tested) —
+threaded through `InputEvent` (`ui_nav.cpp`) and `s_last_touch`. The
+touch diagnostic screen (Settings > Controls > Touch diagnostic) now
+shows both lines: `logical: x=.. y=..` and `raw: x=.. y=..`. The
+existing touch press/release log line also gained `raw=(x,y)`. This
+removes the "which stage did this logged number come from" ambiguity
+that slowed down the last few calibration rounds — every future test
+can read both numbers directly off the same screen instead of the
+current code's transform having to be reverse-engineered from a single
+combined value.
+
+Build-verified only — not yet hardware-validated. Touch coordinate
+calibration itself is still an open problem — the X-axis question in
+particular needs a clean, guided, one-point-at-a-time retest before any
+more code changes there.
+
+**Amendment 2026-09-18 (continued) — X-axis flip applied**: with
+raw+logical values now shown side by side, the user tapped three
+left-side targets (the header's bottom line, and the Settings button
+twice at two different Y positions) and all three logged raw_x~476-477
+— consistently near the panel's *right* edge despite being aimed left.
+The one earlier data point that looked like a counter-example
+(raw_x=36 apparently "triggering" Settings) is better explained by
+confirm-by-focus (a Home-key tap activates whichever widget is
+currently focused, independent of tap position — this ADR's own
+"bottom-left activates Settings/Back" amendment above) than by a real
+positional hit, so it doesn't actually contradict a flip once
+reconsidered. Fixed: `pt.x = (EINK_H - 1) - raw_x`, clamped
+(`EINK_H`==480 here is the logical portrait *width*, the same
+swapped-name situation `touch_rescale_y()` already documents for
+`EINK_W`/height). Not rescaled like Y — the raw span (~36 to ~476) is
+already close to the full 0-480 logical range, so a plain flip should
+land close; a fresh corner retest will confirm or say otherwise.
+
+Build-verified only — not yet hardware-validated.
+
+**Amendment 2026-09-18 (continued) — crosshair calibration targets**:
+the flip landed close but not exact (Settings tap logged x=3-6 vs. the
+button's x:24-154 — undershooting by ~20-30px, consistently across 5
+attempts; a "Sleep now" tap similarly missed its y-range by ~30-70px).
+Both errors are small and directionally consistent, but testing against
+real buttons conflates both axes and human aim at once, same problem as
+every earlier round. Added 5 explicit crosshair targets (`+` markers,
+`draw_crosshair()`) to the touch diagnostic screen — 4 corners + center,
+placed clear of the header/footer — so a calibration tap has a precise,
+unambiguous target and the existing raw/logical readout above answers
+"was this right" immediately, without reconstructing tap-to-log
+correspondence from timing or verbal description afterward.
+
+Build-verified only — not yet hardware-validated.
+
+**Amendment 2026-09-18 (continued) — real breakthrough: the axes are
+swapped, not flipped**: the 5-crosshair test produced the cleanest data
+of the whole calibration effort. Top-left and bottom-left crosshairs
+(same logical x, different logical y) logged nearly identical raw_y
+(~20-30) despite very different raw_x; top-left and top-right (same
+logical y, different logical x) logged nearly identical raw_x (~410)
+despite very different raw_y. Conclusion: **raw_y tracks the display's
+horizontal position, raw_x tracks its vertical position** — the touch
+grid's two axes are swapped relative to the display, not simply
+offset or flipped. This is exactly what `FreeInkUICore.h`'s own
+`touchToLogical()` describes for `LandscapeClockwise` touch orientation
+(`lx = 1-ny; ly = nx`) — matching `DisplayTarget::touchOrientationFor
+(Portrait) == LandscapeClockwise` — a transform this driver should have
+been calling from the very start (ADR-014's original amendment already
+found `touchToLogical()` existed and was unused, but concluded the
+`touch.c`/`touch.h` comments' contradictory *own* calibration notes were
+the more likely culprit; they were part of the story, but the swap was
+the real one).
+
+Replaced the previous "Y rescale (`touch_rescale_y()`) + X flip"
+attempt — which never landed cleanly (a Settings tap and a Sleep tap
+both still missed by 20-70px after that fix) — with `touch_lerp()`, a
+shared two-point linear interpolation applied to BOTH axes, calibrated
+directly from the 5 measured crosshair positions (inset from the
+header/footer, not the raw screen edges):
+- `pt.x` from `raw_y`: `TOUCH_X_RAWY_LO=25` -> logical 20 (left),
+  `TOUCH_X_RAWY_HI=690` -> logical 460 (right).
+- `pt.y` from `raw_x`: `TOUCH_Y_RAWX_LO=412` -> logical 240 (top),
+  `TOUCH_Y_RAWX_HI=101` -> logical 640 (bottom).
+
+The center crosshair (not used to fit either axis) landed within 2px of
+both lines' own midpoint prediction on Y, and ~70px off on X — good
+enough to validate the model without claiming it's perfect (an
+unmarked center is harder to tap precisely than a corner). The
+Home-key zone check (`raw_x<70 && raw_y in [660,720]`) is untouched —
+it's a thresheld on the same raw registers, unaffected by how the main
+touch grid's axes get reinterpreted, and has been reliable throughout.
+
+Build-verified only — not yet hardware-validated. Next: retest the
+same 5 crosshairs (should now read close to their true logical
+positions) and, if that holds, retest real buttons (Settings, Back,
+Sleep now) directly.
+
+**Amendment 2026-09-18 (continued) — retest: corners excellent, center
+needed a second segment for Y**: user retested all 5 crosshairs against
+the axis-swap fix. All 4 corners landed within ~13px of their true
+position — the swap itself is confirmed correct. The center crosshair
+was off by ~25px on X (consistent with plain tap imprecision: the two
+X half-ranges have nearly identical slopes, 0.650 vs 0.668 — genuinely
+linear) but ~100px on Y (the two Y half-ranges have very different
+slopes, -2.564 top-to-center vs -0.870 center-to-bottom — a real,
+repeatable nonlinearity, not noise). Fixed: `touch_lerp_y()` (new) now
+picks between two line segments meeting at the measured center point
+(`raw_x=415→y=240`, `raw_x=334→y=440`, `raw_x=104→y=640`) instead of
+one line end to end; `pt.x` stays a single `touch_lerp()` call, unchanged.
+Confirmed the Home-key zone check and its `input.confirm` handling are
+unaffected by any of this: the zone test reads `raw_x`/`raw_y` directly
+(never the calibrated `pt.x`/`pt.y`), and `FreeInkUICore.h`'s
+`routeAgainst()` activates a confirm purely by the currently *focused*
+widget index (`if (input.confirm && focused_ >= 0) ...`), never
+touching `touchX`/`touchY` — so the Home key's touch-active zone
+extending below the visible display (into extrapolated/clamped
+coordinate territory) can't cause a spurious position-based hit.
+
+Build-verified only — not yet hardware-validated. Retest the 5
+crosshairs again (Y especially) and, if that holds, real buttons next.
+
+**Amendment 2026-09-18 (continued) — hardware-validated: touch
+calibration works for real navigation**: the piecewise-Y retest landed
+all 5 crosshairs within ~10px (center Y within ~8px, down from ~100px
+before that fix; X's own ~20-30px residual is consistent with aim
+imprecision on an unmarked target, as before). More importantly, the
+same log shows three consecutive **direct taps driving real screen
+navigation** correctly: Settings (`x=106,y=92`, inside its
+`Rect{24,76,130,36}`, `action: 2` fired, Home->Settings), "Controls &
+Calibration" (`x=86,y=208`, inside its row rect, `action: 4` fired,
+Settings->SettingsControls), and "Touch diagnostic" (`x=104,y=299`,
+`action: 5` fired, SettingsControls->TouchDiag) — three different
+screens, three correct hits, no misses. Touch coordinate calibration
+(`touch.c`'s axis swap + `touch_lerp()`/`touch_lerp_y()`) is now
+considered hardware-validated for direct-tap navigation. Still open:
+the Back button and Sleep-now button haven't been explicitly retested
+with this fix, and the earlier button-capture-vs-processing timestamp
+question (Left/Right slowness) is still unanalyzed.
+
+**Amendment 2026-09-18 (continued) — Settings header label, doubled
+battery icon/text**: two user requests once the touch fix let them
+actually navigate around. (1) The header's "Settings" button used to
+appear on every screen, including inside the Settings hierarchy itself,
+where tapping it just re-navigated to the current screen (confirmed
+pointless in a hardware log: repeated "action: 2 (screen=Settings) ->
+screen: Settings -> Settings"). Now `draw_fixed_zone()` checks
+`s_screen`: an interactive button on `Home` (unchanged), a plain
+non-interactive label everywhere else -- the `< Back` button each
+sub-screen already draws is what actually navigates out. (2) The header
+has enough thickness to afford a larger battery icon/text: doubled from
+24px/`SmallFont` to 48px/a new `MediumFont.h` (28px, `gen_font.py`,
+`kMediumFontSlot`). Regenerated `battery_icons_gen.h` with `tools/
+gen_icons.py --sizes 24,48` (kept 24px too, unused elsewhere but no
+reason to force a re-run on the next icon change). Icon
+`Rect{width-60,8,48,48}`; text baseline recomputed for MediumFont's own
+metrics (ascent=30, digits/'%' 20px tall) using the same "match the
+icon's visual center" reasoning as the earlier SmallFont fix.
+
+Build-verified only — not yet hardware-validated.
+
+**Amendment 2026-09-18 (continued) — duplicate Settings label bug,
+redundant title removed, text baseline nudged**: the previous edit left
+a leftover unconditional `button(...)` call behind after adding the
+`if (s_screen == Screen::Home) {...} else {...}` branch — an editing
+mistake, not a deliberate fallback — so the header briefly drew
+"Settings" twice on non-Home screens (the new label, plus the old
+button underneath it). Removed the stray duplicate. Separately, the
+Settings screen itself showed "Settings" a third time: its own
+`draw_back_and_title(..., "Settings")` call centers that same word next
+to `< Back`, which was never redundant *before* the header started
+showing a static "Settings" label of its own, but is now. Fixed by
+giving `draw_back_and_title()`'s `title` parameter `nullptr` meaning
+"skip the centered title entirely," and passing that from
+`draw_settings()` only — sub-screens (Controls & Calibration, About,
+Touch diagnostic) keep their own distinct titles, which are NOT
+redundant with the header's generic "Settings". Also nudged the
+battery text's baseline from `icon_y-6` (overshot too high, per this
+round's feedback) to `icon_y-2`, splitting the difference with the
+original formula's `icon_y+4` (too low).
+
+Build-verified only — not yet hardware-validated.
+
+**Amendment 2026-09-18 (continued) — "< Back" moved into the header's
+action slot, Settings label moved up**: further user feedback on the
+same screen. (1) Battery text nudged one more pixel, `icon_y-2` ->
+`icon_y-1`. (2) Structural: since the header's "Settings" text is no
+longer a button once inside the Settings hierarchy, it made sense to
+move it further up into the header proper (alongside the icon/battery
+row, `Rect{24,16,200,40}`) rather than leave it sitting in the
+interactive action slot (`Rect{24,76,130,36}`) it no longer needs.
+That slot is now always the *primary action button* regardless of
+screen: "Settings" on Home, or "< Back" everywhere else -- same
+physical position, whichever one occupies it. New shared constant
+`kHeaderActionY=76`. `draw_back_and_title()`'s `y` parameter dropped
+entirely (all 4 call sites updated) -- it now always draws `< Back`
+and, when non-null, the screen's title, at that fixed slot instead of
+the caller-supplied content offset. `draw_fixed_zone()`'s returned
+content-start offset (124) is unchanged -- the slot's footprint didn't
+move, only what fills it and what sits above it did.
+
+Build-verified only — not yet hardware-validated.
+
+**Amendment 2026-09-18 (continued) — battery text back to the default
+font**: user clarified the doubled battery text should match the rest
+of the screen's font/size, not scale with the icon. Removed
+`kMediumFontSlot`/`MediumFont.h` entirely (deleted the generated
+header, dropped the `setFont()` call and the include) — battery text
+now uses the default font (slot 0, `kNotoSansFont`, ~24px), baseline
+recomputed for its metrics (ascent=26, digits/'%' 19px tall) against
+the same "match the 48px icon's visual center" reasoning as before:
+`rect.y = icon_y+7`, not yet hardware-checked. Only the icon stays at
+2x (24px -> 48px).
+
+---
+
+### ADR-015: `docs/esp-project-boilerplate/` — extracting generic patterns
+across projects
+
+**Context**: several ADRs above (ADR-007 factory/recovery, ADR-008 board
+skeleton, ADR-012's settings-engine amendment) independently note being
+"ported from an earlier reference design" (PiBot,
+`references/Luc-Pibot-cnc-pendant-firmware/`) — each extracted once, for
+MySafeFob specifically. The user observed (2026-09-18) that this
+extraction has now happened enough times, across enough distinct areas,
+that it's worth capturing one level up: not what MySafeFob did with each
+pattern, but what's generically reusable versus PiBot-specific or
+MySafeFob-specific tuning, for whichever ESP32 project comes next.
+
+**Decision**: a new `docs/esp-project-boilerplate/` directory, comparing
+PiBot (complex, multi-board, multi-CNC-target) against MySafeFob (simpler
+scope, but still genuinely multi-hardware/multi-target) across four areas
+identified as already-repeated patterns: settings persistence,
+factory/recovery, hardware bring-up methodology, and build/flash tooling
+— plus the board-agnostic skeleton (ADR-008) that ties them together.
+Each doc states the generic core (safe to copy into a new project) versus
+the project-specific tuning left out (PiBot's multi-board complexity, or
+MySafeFob's simplifications) — documentation only, nothing vendored or
+`#include`d from it.
+
+**Status**: started from scratch 2026-09-18 (a possibly earlier version
+of this document was not found in any accessible memory or repository).
+Lives inside MySafeFob's `docs/` for now; intended to move into its own
+standalone repository once mature enough to stand alone (not yet named/
+created). See `docs/esp-project-boilerplate/README.md` for the current
+pattern index.
 
 ---
 

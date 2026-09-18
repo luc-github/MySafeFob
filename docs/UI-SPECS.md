@@ -1,0 +1,800 @@
+# UI-SPECS.md — MySafeFob (MSF): screen-by-screen UI specification
+
+> **Status**: draft, awaiting review (Phase 6.2 deliverable, written
+> retroactively during task 8.4 rather than Phase 6 — no screen implementation
+> beyond the provisional nav-loop placeholder existed before this document).
+> Reference: `docs/FEATURES.md` (features/use cases), `docs/INTERFACES.md`
+> §4.4 (`ui_mgr` screen enum), `docs/ROADMAP.md` ADR-010/ADR-013 (FreeInkUI,
+> nav loop already validated on hardware).
+
+---
+
+## 1. Conventions
+
+### 1.1 Canvas
+
+- **480×800 portrait**, 1 bpp (black/white only, no gray — no animation,
+  no transparency: FEATURES.md §6 non-goals).
+- Minimum text size ≈ 20-24 px equivalent (FEATURES.md §7 — 8×16 confirmed
+  unreadable on this panel; the existing splash/sleep/ready screens already
+  use a ≥16×32 bitmap font as the floor).
+- Full refresh (`eink_display_fb`, ~2-4 s) only on: screen *type* change
+  (e.g. leaving TOTP_LIST for TOTP_CODE) and every `EINK_FAST_BUDGET`
+  fast draws (ghost purge, already handled inside `eink_display_fb_fast`).
+  Everything else (focus move, a digit typed, a list scroll) uses the fast
+  DU refresh. **Two enforcement layers, both real** (2026-09-18, clarified
+  after a user question — previously this paragraph described intent that
+  wasn't actually wired up at the call site): the ghost-purge budget lives
+  inside `eink_display_fb_fast()` itself (driver level, `eink.c` — falls
+  back to a full refresh automatically when the previous frame is unknown
+  or the budget is exhausted); the screen-type-change trigger lives in
+  `ui_nav.cpp`'s `switch_screen()`, which sets a `s_force_full_refresh`
+  flag consumed at the next flush — before this, only the very first draw
+  of the whole task ever got an explicit full refresh, and every screen
+  switch after that silently rode on the driver's budget fallback instead
+  of the documented rule.
+
+### 1.2 Input model (ADR-013 amended: **both** input styles, user-confirmed
+2026-09-16)
+
+- **Left/Right physical buttons**: move the focus highlight one step
+  within the current screen's focusable set (wraps circularly — same
+  `InteractionBuffer::moveFocus` already validated in `ui_nav.cpp`).
+- **Touch-Home pad** (fixed zone, `touch.c`): confirms/activates whatever
+  currently has focus — works everywhere, independent of screen content.
+  This is the accessible/fallback path and the one already proven on
+  hardware; every screen in this document must remain fully operable with
+  *only* Left/Right + Home (no functionality may require direct tap).
+- **Direct tap** on a list row / button / key: moves focus to it **and**
+  activates it in the same gesture (one tap = select+confirm) — faster for
+  longer lists (TOTP/password entries), not yet validated on hardware
+  outside the Home-pad zone. **First implementation task before any
+  screen beyond the placeholder is built**: extend `ui_nav.cpp`'s
+  `InputSnapshot` to also feed `touchX`/`touchY`/`touchReleased` (today it
+  only ever sets `.confirm` from the Home zone) and confirm on hardware
+  that tap accuracy is usable across the full panel, not just the
+  calibrated Home zone.
+- **Power button**: long-hold thresholds (sleep, factory, ADR-009) are a
+  hard invariant, never touched by a setting. A short press-and-release
+  (currently a no-op) may **optionally** act as an extra confirm pulse,
+  equivalent to touch-Home — gated behind the "Power short press =
+  Select" toggle (§2.12, SETTINGS_CONTROLS, off disables it back to
+  pure-power behavior). Power is **never** repurposed as Back or any
+  screen-specific action, on or off.
+- **Back**: no physical button is free for it (Left/Right = focus, Power =
+  reserved). Every screen except HOME renders a tappable `< Back` label in
+  its *contextual* zone's header (top-left of that zone — see §1.3; not to
+  be confused with the fixed zone's ⚙, also top-left but one zone up) —
+  reachable by Left/Right focus like any other widget, or by direct tap.
+  `FreeInkUICore.h`'s `InputBack` mask is exactly what this maps to.
+
+### 1.3 Chrome — two zones per screen (amended 2026-09-16, user design
+review): a **fixed** status bar (identical content and position on every
+screen) and a **contextual** zone below it (the actual screen content,
+changes per §2). This replaces an earlier draft that mixed Back/sync-badge
+into the contextual header row.
+
+```
+┌──────────────────────────────────────┐
+│  ⚙        12:34  16 Sep        87%   │  <- FIXED zone (status-bar.h):
+│                                       │     gear (Settings, left),
+│                                       │     date/time (center, F-02/RTC),
+════════════════════════════════════════     battery % (right, F-16)
+│ < Back          TOTP Codes           │  <- CONTEXTUAL zone: per-screen
+│ ── (screen content) ─────────────────│     Back (if not HOME) + title +
+│                                       │     content — everything in §2
+│                                       │     below lives here
+│                                       │
+├──────────────────────────────────────┤
+│  L/R focus   tap/Home confirm        │  <- footer hint, same as before
+└──────────────────────────────────────┘
+```
+
+**Fixed zone — always present** (except UNLOCK/SPLASH/SLEEP, which have no
+chrome at all — nothing to configure before authenticating, nothing to
+navigate away from mid-splash/mid-sleep):
+- **⚙ Settings** (top-left): tappable, opens SETTINGS (§2.11) from
+  *anywhere*. Also reachable via Left/Right: it is the first stop before
+  the contextual zone's own first focusable item on every screen (Left
+  from that first item wraps back to ⚙, Right from ⚙ moves to it) — kept
+  in the focus cycle deliberately so Settings never requires a working
+  touch panel (§1.2's "fully usable Left/Right+Home only" invariant would
+  otherwise be broken for this one global action).
+- **Date/time** (center): from the RTC (`time_svc`, already validated at
+  the driver level) — populated from v1.0, no dependency on F-16.
+- **Battery %** (right): ✅ wired 2026-09-18 (ADR-014 addendum) —
+  `battery_read()` (`boards/x4pro/app/battery.c`, copied from the
+  factory's already-validated CW2017 driver) read on every redraw, shown
+  as a **Lucide status icon** (`battery-charging`/`-full`/`-medium`/
+  `-low`/`-warning`, thresholds: charging overrides all, then ≥80/≥50/
+  ≥20/below) plus the `"NN%"` text next to it (`"--"` on an I2C read
+  failure, plain `battery` icon). Icons generated by `tools/gen_icons.py`
+  (adapted from `freeink-sdk`'s own tool — ImageMagick instead of
+  `rsvg-convert`, unavailable without admin rights on this machine) from
+  the Lucide SVGs already vendored under
+  `references/crosspoint-reader/freeink-sdk/`, into
+  `boards/x4pro/app/battery_icons_gen.h` + a vendored `Icon.h`. Superseded
+  the earlier "no icon, no vendored bitmap assets" state from the same
+  day — see `docs/ROADMAP.md` ADR-014's second amendment.
+- The former "time-since-sync alert past 45 days" badge (F-02) moves into
+  the TIME_SYNC screen itself (§2.15) rather than living permanently in
+  the fixed zone — it's actionable information relevant when you'd go
+  looking for it, not a constant-attention item like a phone's clock.
+
+**Contextual zone**: everything screen-specific — title, `< Back` (when
+not HOME), and the screen's own content as detailed per-screen in §2.
+Add/delete of TOTP/password/recovery entries is **never** done inline in
+a list's contextual zone — always via the dedicated utility screens
+(ADD_EDIT_ENTRY, §2.5/§2.8), reached through each list's `+ Add` row.
+
+#### 1.3.1 Settings navigation (single "return-to" slot, not a screen stack)
+
+Settings is reachable from every screen via ⚙, and its Back must return
+to *that* originating screen (user decision) rather than unconditionally
+to HOME. This needs exactly **one** remembered screen id — set when ⚙ is
+tapped, consumed and cleared when SETTINGS's top-level Back fires — not a
+general navigation history stack. This stays compatible with
+`INTERFACES.md` §5 invariant #4 ("the UI never keeps two live screens
+simultaneously"): only one screen is ever *live*; the return-to slot is
+just an id, not a second screen instance. `INTERFACES.md` §4.4's `ui_mgr`
+contract gains one field for this (`ui_mgr` open point, not yet in that
+document — flagged in §3 below). Back presses *inside* Settings' own
+sub-screens (TIME_SYNC, SETTINGS_BACKUP, SETTINGS_ABOUT, §2.15/2.16/2.20)
+still just pop one level back to the SETTINGS menu itself, same as any
+other flow.
+
+### 1.4 Screen inventory (matches `INTERFACES.md` §4.4's `screen_t` enum)
+
+| Screen | Feature | Reachable from |
+|---|---|---|
+| SPLASH | boot | — (already implemented, `splash.cpp`) |
+| UNLOCK | F-03 | boot / wake / auto-lock timeout |
+| HOME | F-07 | UNLOCK success |
+| TOTP_LIST | F-01 | HOME |
+| TOTP_CODE | F-01 | TOTP_LIST |
+| ADD_EDIT_ENTRY (TOTP variant) | F-01 | TOTP_LIST |
+| PWD_LIST | F-05 | HOME |
+| PWD_VIEW | F-05 | PWD_LIST |
+| ADD_EDIT_ENTRY (password variant) | F-05 | PWD_LIST |
+| RCV_LIST | F-05b | HOME |
+| RCV_CODE | F-05b | RCV_LIST |
+| SETTINGS | — | **anywhere** (⚙ in the fixed zone, §1.3) |
+| SETTINGS_CONTROLS | — (2026-09-17) | SETTINGS |
+| SETTINGS_SECURITY | F-03/ADR-012 | SETTINGS |
+| SETTINGS_DISPLAY | F-16 | SETTINGS |
+| TIME_SYNC | F-02 | SETTINGS |
+| SETTINGS_BACKUP | F-06b | SETTINGS |
+| SETTINGS_OWNER_INFO | F-19 | SETTINGS |
+| SETTINGS_ABOUT | F-20 (status) | SETTINGS |
+| SLEEP | F-19 | anywhere (Power long-press / idle timeout / "Sleep now") — already implemented, `splash.cpp` |
+
+`UPDATE_SD` from `INTERFACES.md`'s draft enum is **dropped**: F-06/ADR-011
+already settled that firmware updates happen only through the factory,
+never the running app — there is no app-side screen for it. `STATUS` is
+folded into `SETTINGS_ABOUT` below rather than kept as a separate top-level
+screen.
+
+---
+
+## 2. Screens
+
+### 2.1 UNLOCK (F-03)
+
+```
+┌──────────────────────────────────────┐
+│              MySafeFob               │
+│ ──────────────────────────────────── │
+│                                       │
+│              ● ● ● ○ ○ ○              │  <- 6 dots, filled as digits are
+│                                       │     entered, never the digits
+│                                       │     themselves (F-03 anti-trace)
+│   ┌───┐ ┌───┐ ┌───┐                   │
+│   │ 5 │ │ 1 │ │ 8 │   <- NON-sequential
+│   └───┘ └───┘ └───┘      layout, re-shuffled
+│   ┌───┐ ┌───┐ ┌───┐      **every unlock attempt**
+│   │ 2 │ │ 9 │ │ 0 │      (F-03: counters fingerprint-
+│   └───┘ └───┘ └───┘      smudge analysis of the screen)
+│   ┌───┐ ┌───┐ ┌───┐
+│   │ 7 │ │ 4 │ │ 6 │
+│   └───┘ └───┘ └───┘
+│           ┌──────┐
+│           │ DEL  │
+│           └──────┘
+├──────────────────────────────────────┤
+│ Attempt 1/N · back-off after failures │
+└──────────────────────────────────────┘
+```
+
+- No chrome header (nothing to go "Back" to before unlocking).
+- Digit grid built on FreeInkUI's `key-grid.h`; re-randomized on every
+  screen entry (new unlock attempt, or after a wrong PIN) — reads
+  `esp_random()`, never a fixed layout.
+- Left/Right cycles focus through the 3×3 grid + DEL, row-major; Home/tap
+  presses the focused key. No explicit "confirm PIN" key: the 6th digit
+  auto-submits (matches F-03 "fixed length 6").
+- On success → HOME. On failure → dots clear, grid re-shuffles, attempt
+  counter increments, exponential back-off delay shown/enforced
+  (`INTERFACES.md` §1.3) before the next attempt is accepted.
+- Wake-from-sleep and the idle-timeout auto-lock (F-03 "automatic lock
+  after inactivity") both land here directly — no splash re-shown (matches
+  ADR-009's existing "direct jump to UNLOCK" wake behavior).
+
+### 2.2 HOME (F-07)
+
+```
+┌──────────────────────────────────────┐
+│              MySafeFob          [i]  │
+│ ──────────────────────────────────── │
+│                                       │
+│   ▸ TOTP Codes                       │
+│                                       │
+│   ▸ Passwords                        │
+│                                       │
+│   ▸ Recovery Codes                   │
+│                                       │
+│   ▸ Settings                         │
+│                                       │
+│   ▸ Sleep now                        │
+│                                       │
+├──────────────────────────────────────┤
+│  L/R focus   tap/Home confirm        │
+└──────────────────────────────────────┘
+```
+
+- No `< Back` (top of the navigation tree — matches F-07 "boots directly
+  into the unlock screen" then here, no further "up").
+- Direct, permanent replacement for the current placeholder's "About"/
+  "Sleep now" (`ui_nav.cpp`) — "Sleep now" is kept as a HOME item (same
+  trampoline via `power_mgr_claim_terminal_action()`), "About" moves into
+  SETTINGS_ABOUT.
+- 5 top-level entries — comfortably within `InteractionBuffer<8>`'s
+  current capacity, no widening needed yet.
+
+### 2.3 TOTP_LIST (F-01)
+
+```
+┌──────────────────────────────────────┐
+│ < Back         TOTP Codes            │
+│ ──────────────────────────────────── │
+│  GitHub                          ›   │
+│  Google                          ›   │
+│  AWS                             ›   │
+│  ...                                 │
+│                                       │
+│                          [+ Add]     │
+├──────────────────────────────────────┤
+│  L/R focus   tap/Home confirm        │
+└──────────────────────────────────────┘
+```
+
+- `list.h` component, one row per account (label only — the secret itself
+  never renders here). Rows are directly tappable (jump+confirm) or
+  reachable via Left/Right.
+- Selecting a row → TOTP_CODE for that account. `+ Add` (its own focusable
+  row, end of the list) → ADD_EDIT_ENTRY (TOTP, empty).
+- Empty state (no accounts yet): single centered line, "No accounts yet —
+  tap + Add", `+ Add` still reachable.
+- F-11 (search/filter, should-have) and F-12 (categories/tags,
+  should-have) are explicitly deferred — this screen is a flat list for
+  v1.0, per FEATURES.md §4.
+
+### 2.4 TOTP_CODE (F-01)
+
+```
+┌──────────────────────────────────────┐
+│ < Back          GitHub          Edit │
+│ ──────────────────────────────────── │
+│                                       │
+│                                       │
+│            1 2 3   4 5 6             │  <- large digits, ≥ the
+│                                       │     32px-equivalent floor
+│                                       │
+│         ████████████░░░░░░░          │  <- validity countdown bar
+│                                       │     (30/60s period, F-01)
+│                                       │
+├──────────────────────────────────────┤
+│  L/R: prev/next account   tap: back  │
+└──────────────────────────────────────┘
+```
+
+- Read-then-type screen (F-01): no copy-paste exists on this device by
+  design (air-gapped, FEATURES.md §6).
+- **After the countdown reaches zero**: the code is NOT regenerated
+  automatically (ADR-009: "TOTP codes computed on demand at wake-up — no
+  background task, no tick" still holds while awake too, to avoid a
+  redraw loop). Instead the digits gray out/get an overline marker and a
+  "Refresh" affordance appears — matches F-01 "the code stays displayed
+  after expiry ... until the next display".
+- Left/Right on THIS screen is repurposed to move to the prev/next account
+  in the list (skip back to TOTP_LIST just to switch accounts would be
+  slower) — a deliberate, documented exception to "Left/Right = generic
+  focus move" for this one high-frequency screen. Home/tap still means
+  "back to TOTP_LIST" here since there's nothing else on-screen to focus.
+- `Edit` (header, right) → ADD_EDIT_ENTRY (TOTP, prefilled) for this
+  account.
+
+### 2.5 ADD_EDIT_ENTRY — TOTP variant (F-01)
+
+```
+┌──────────────────────────────────────┐
+│ < Back        Add TOTP account       │
+│ ──────────────────────────────────── │
+│  Label                               │
+│  [ GitHub________________ ]          │
+│                                       │
+│  Secret (Base32)                     │
+│  [ JBSWY3DPEHPK3PXP_______ ]         │
+│                                       │
+│  Digits: [6] 8      Period: [30]s 60s│
+│                                       │
+│           ┌────────┐ ┌────────┐      │
+│           │ Delete │ │  Save  │      │
+│           └────────┘ └────────┘      │
+├──────────────────────────────────────┤
+│  L/R focus   tap/Home confirm        │
+└──────────────────────────────────────┘
+```
+
+- Tapping `Label` or `Secret` opens a full-screen text-entry keyboard
+  (§2.19, `qwerty-keyboard.h`) — this screen itself has no inline typing.
+- `Digits`/`Period` are 2-way toggles (`toggle.h`/`radio-group.h`), not
+  free text — only the values TOTP actually supports (6/8 digits, 30/60 s
+  period, per F-01's stated fields).
+- `Delete` only shown when editing an existing entry (not on "Add"),
+  and always behind a confirmation (§2.18 pattern) — irreversible.
+- No QR/camera import (FEATURES.md §6 explicit non-goal) — Base32 is
+  always typed manually.
+- `Save` validates the Base32 string decodes cleanly (reuses
+  `totp_engine`'s existing decode path) before writing to `secret_store`;
+  a decode failure keeps the screen open with an inline error, no popup.
+
+### 2.6 PWD_LIST (F-05)
+
+Same layout/interaction as TOTP_LIST (§2.3): flat list of labels, `+ Add`
+row, tap or Left/Right+confirm to open PWD_VIEW. No secret content ever
+appears in this list — only labels.
+
+### 2.7 PWD_VIEW (F-05)
+
+```
+┌──────────────────────────────────────┐
+│ < Back           GitHub         Edit │
+│ ──────────────────────────────────── │
+│  Username                            │
+│  octocat                             │
+│                                       │
+│  Password                            │
+│  ●●●●●●●●●●●●        [ Reveal ]      │
+│                                       │
+│  Notes                                │
+│  (empty)                             │
+│                                       │
+├──────────────────────────────────────┤
+│  auto-clears to HOME after 30s idle  │
+└──────────────────────────────────────┘
+```
+
+- Password is masked (`●`) by default; `Reveal` (tap/Home-confirm) shows
+  it in clear, character-spaced for easy manual typing (F-05: "readable
+  font, ability to reveal character by character").
+- **F-05 auto-clear**: an idle timer *specific to this screen* (distinct
+  from, and shorter than, the ADR-012 45s device-sleep timer) returns to
+  HOME and re-masks the password if no input occurs — default 30 s,
+  because e-ink retains the image at zero power: a revealed password left
+  on an unattended, sleeping device would otherwise stay physically
+  visible indefinitely. This timer is reset by ANY input on this screen,
+  same signal source as `board_activity_notify()` but screen-scoped.
+- No copy button (air-gapped, F-05/§6).
+
+### 2.8 ADD_EDIT_ENTRY — password variant (F-05)
+
+Same shape as the TOTP variant (§2.5): `Label`/`Username`/`Password`/
+`Notes` text fields (full-screen keyboard on tap), `Delete` (edit only,
+confirmed), `Save`. `F-08` (password generator, should-have) would add a
+`Generate` button next to the `Password` field — not required for v1.0.
+
+### 2.9 RCV_LIST (F-05b)
+
+Same list pattern as §2.3/2.6, one row per **service** that has recovery
+codes on file (not one row per code — codes are inside RCV_CODE).
+
+### 2.10 RCV_CODE (F-05b)
+
+```
+┌──────────────────────────────────────┐
+│ < Back           GitHub              │
+│ ──────────────────────────────────── │
+│  1. A1B2-C3D4-E5F6         [unused]  │
+│  2. G7H8-I9J0-K1L2      ▬▬▬ used ▬▬▬ │  <- struck-through, kept visible
+│  3. M3N4-O5P6-Q7R8         [unused]  │     (F-05b: "traceability")
+│  ...                                 │
+├──────────────────────────────────────┤
+│  L/R focus   tap/Home: mark as used  │
+└──────────────────────────────────────┘
+```
+
+- Confirming a code marks it used immediately (no separate confirm step —
+  low risk, easily distinguishable from a destructive action, and the
+  whole point is "I am using this code right now").
+- No `+ Add`/`Edit`/`Delete` here: recovery codes are provisioned once
+  (at 2FA activation on the actual service) and entered as a batch — that
+  entry flow belongs to ADD_EDIT_ENTRY's scope conceptually but is
+  deliberately **not detailed in this v1.0 pass** (F-05b's UI needs, per
+  FEATURES.md, only "display one code at a time, mark it used" — batch
+  entry is an open point, flagged in §3 below).
+
+### 2.11 SETTINGS (menu)
+
+```
+┌──────────────────────────────────────┐
+│ < Back          Settings             │
+│ ──────────────────────────────────── │
+│   ▸ Controls & Calibration           │
+│   ▸ Security (PIN, auto-lock)        │
+│   ▸ Display                          │
+│   ▸ Time & Sync                      │
+│   ▸ Backup (SD)                      │
+│   ▸ Owner info (sleep screen)        │
+│   ▸ About                            │
+├──────────────────────────────────────┤
+│  L/R focus   tap/Home confirm        │
+└──────────────────────────────────────┘
+```
+
+Reached from **⚙ in the fixed zone, on any screen** (§1.3/§1.3.1) — its
+own `< Back` returns to whichever screen ⚙ was tapped from, not
+unconditionally to HOME (the one deliberate exception to "Back always
+goes up one level in the current flow", per the user's 2026-09-16 design
+review). All 7 rows below fold in every settings-shaped item mentioned
+across FEATURES.md, so nothing is left dangling as an unplaced "open
+point" the way the previous draft of this section left idle-lock delay
+and frontlight.
+
+### 2.12 SETTINGS_CONTROLS (added 2026-09-17, see
+`docs/touch-calibration-notes.md`)
+
+```
+┌──────────────────────────────────────┐
+│ < Back     Controls & Calibration    │
+│ ──────────────────────────────────── │
+│  Power short press = Select  [ On ]  │
+│                                       │
+│   ▸ Touch calibration / diagnostic   │
+├──────────────────────────────────────┤
+│  L/R focus   tap/Home confirm        │
+└──────────────────────────────────────┘
+```
+
+- **Power short press = Select** (default **On**): a quick press-and-
+  release of Power (under `MSF_POWER_LONG_MS`, 1.5 s — today this range
+  does *nothing* in `power_button_task`, `main.c`, so this is a genuinely
+  free gesture, not a repurposing of an existing one) acts as a second,
+  always-available "confirm" input, equivalent to touch-Home. Power's
+  long-press thresholds (sleep at 1.5 s, factory at 10 s, ADR-009) are
+  **unchanged** — this only fills in the previously-unused "pressed and
+  released quickly" case. Precedented on this exact hardware:
+  `references/crosspoint-reader` uses a short Power click as its Confirm
+  action on the X4 Pro (with a double-click guard window reserved for a
+  frontlight toggle, which MySafeFob doesn't have yet — no such guard
+  needed here).
+  - **Intended lifecycle of this toggle** (user design intent,
+    2026-09-17): ships **On** by default, since it gives a reliable
+    confirm path independent of the touch panel while touch calibration
+    is still uncertain (`touch-calibration-notes.md`). Once a user has
+    verified their unit's touch works reliably (via the calibration
+    screen below, or just in daily use), they can switch this **Off** to
+    make Power a pure power control again with no UI role at all — purely
+    a preference once touch is trusted, not a fallback-only feature.
+  - Implementation note (not yet built): needs a bridge from
+    `power_button_task` (`main.c`, owns GPIO3 exclusively) to
+    `board_ui_nav_task`'s `InteractionBuffer` (`ui_nav.cpp`) — e.g. a new
+    `board_ui_nav_power_confirm()` called on a qualifying short release,
+    analogous to how `board_activity_notify()` already bridges the other
+    direction. Power still never becomes a *screen-level* actor: this is
+    a single confirm pulse, not enrolling GPIO3 into the nav loop itself.
+- **Touch calibration / diagnostic** — revised 2026-09-17 after hands-on
+  testing of `references/crosspoint-reader` on this same unit found a
+  rotation-like error in *its* fixed touch profile (`touch-calibration-
+  notes.md` §7: horizontal tap position on a menu row there selects the
+  wrong row vertically). That result argues against trusting any fixed
+  swap/flip constant (ours or a borrowed SDK profile) and *for* an
+  interactive, on-device grid test — this screen is upgraded from a
+  passive raw-coordinate readout to an active check:
+
+  ```
+  ┌──────────────────────────────────────┐
+  │ < Back      Touch calibration        │
+  │ ──────────────────────────────────── │
+  │  Tap each target as it appears       │
+  │  Target 4 of 9                       │
+  │                                       │
+  │   ·        ·        ·                │
+  │                                       │
+  │   ·        ✛        ·   <- current   │
+  │                                       │        target
+  │   ·        ·        ·                │
+  │                                       │
+  │  raw: x=612 y=201  (last tap)        │
+  ├──────────────────────────────────────┤
+  │  tap the target — no L/R/Home here   │
+  └──────────────────────────────────────┘
+  ```
+
+  - **3×3 grid** (9 targets, corners + edge-midpoints + center) rather
+    than the 4-corner-only test `hardware-specs.md` already ran once —
+    specifically to catch a non-linear/rotational error *between* the
+    corners, the exact class of bug just observed in crosspoint-reader's
+    own fixed profile on this hardware.
+  - Each tap logs raw `(x,y)` next to the known expected screen position;
+    at the end, a pass/fail summary flags any target whose raw reading is
+    wildly inconsistent with a simple linear (even if unknown-orientation)
+    mapping from its neighbors — the same "does a horizontal tap change
+    the vertical result" pattern that flagged crosspoint-reader's bug.
+  - Deliberately **does not** attempt to fix/reprogram the GT911's config
+    from here — `touch-calibration-notes.md` §2's config-blob theory means
+    a real fix (if one is even needed after this test) belongs at the
+    `touch.c` driver level, not the UI. This screen's job is diagnosis:
+    confirm whether our *existing* empirical mapping (already validated
+    once via the 4-corner test, `hardware-specs.md`) holds up across the
+    full area, before "direct tap anywhere" (§1.2) ships as a supported
+    input mode.
+  - Separately, the physical Home-pad zone
+    (`raw_x<70 && raw_y in [660,720]`, `touch.c`) gets its own **simpler**
+    re-tap-to-recenter control on this same screen (tap the physical Home
+    pad 3× when prompted, average the raw readings, store as the new
+    zone) — unlike the grid above, this one open point stays about
+    OTP/config-dependent Home-key reliability (`touch-calibration-
+    notes.md` §2/§3), not axis orientation.
+
+### 2.13 SETTINGS_SECURITY (F-03, ADR-012)
+
+```
+┌──────────────────────────────────────┐
+│ < Back           Security            │
+│ ──────────────────────────────────── │
+│   ▸ Change PIN                       │
+│                                       │
+│  Auto-lock (PIN) after      [ 45 ]s  │
+│  Auto-sleep after inactivity [45 ]s  │
+├──────────────────────────────────────┤
+│  L/R focus   tap/Home confirm        │
+└──────────────────────────────────────┘
+```
+
+- **Change PIN**: current PIN (full UNLOCK-style pad, §2.1) → new PIN
+  entered twice (mismatch = inline error, re-enter) → re-encrypts the
+  keystore under the new key (`secret_store`'s existing
+  Argon2id-derive-then-re-seal path, no new crypto primitive needed).
+- **Two separate delay fields** — resolves this doc's previous open
+  point: F-03's PIN re-lock and ADR-012's device-sleep are **kept as two
+  independent timers**, both defaulting to 45 s today, both adjustable
+  here independently (a numeric stepper, `slider-row.h`/`capsule-slider.h`).
+  Changing "Auto-sleep after inactivity" writes straight into the value
+  `ui_nav.cpp`'s `IDLE_TIMEOUT_MS` currently hardcodes — this setting is
+  the reason that constant needs to become a runtime value read from
+  `secret_store`/NVS instead, whenever this screen is implemented.
+  "Auto-lock (PIN)" has no backing implementation yet at all (F-03's
+  re-lock-to-UNLOCK-while-still-awake behavior was never built) — this
+  screen is also the spec for that missing piece.
+
+### 2.14 SETTINGS_DISPLAY (F-16, should-have)
+
+```
+┌──────────────────────────────────────┐
+│ < Back           Display             │
+│ ──────────────────────────────────── │
+│  Frontlight                  [ Off ] │
+│  Color              ( Warm | Cool )  │
+│  Intensity          ░░░░████░░░░░░   │
+│  Auto-off after            [ 30 ]s   │
+├──────────────────────────────────────┤
+│  L/R focus   tap/Home confirm        │
+└──────────────────────────────────────┘
+```
+
+Whole screen is F-16 (should-have) — grayed out/hidden entirely until the
+frontlight driver is wired into the UI layer (the GPIO8/GPIO9 warm/cool
+PWM driver itself is already validated at the hardware level per
+`hardware-specs.md`; only the UI binding is missing). Matches
+FEATURES.md's stated defaults: off by default, 30 s auto-off.
+
+### 2.15 TIME_SYNC (F-02, ADR-001/ADR-006)
+
+```
+┌──────────────────────────────────────┐
+│ < Back         Time & Sync           │
+│ ──────────────────────────────────── │
+│  Last sync: 12 days ago              │
+│  Drift estimate: ±20 ppm             │
+│                                       │
+│   ▸ Sync via Serial (USB)            │
+│   ▸ Sync via Bluetooth (CTS)         │
+│   ▸ Sync via Wi-Fi                   │
+│   ▸ Enter time manually              │
+├──────────────────────────────────────┤
+│  L/R focus   tap/Home confirm        │
+└──────────────────────────────────────┘
+```
+
+- Health line always visible; turns into a visible alert style (inverted
+  block, matching the sleep/ready screens' "ASLEEP"/"READY" convention)
+  once age > 45 days (F-02's stated threshold).
+- **Serial/BLE** (ADR-006, "trusted terminal"): a single "syncing..."
+  screen with a spinner-free progress indicator (static text updates, no
+  animation) — success returns here with an updated "Last sync" line;
+  failure shows an inline error, no popup.
+- **Wi-Fi**: leads to an SSID/password entry (2 text fields, same
+  full-screen keyboard as §2.5/2.8) then the same "syncing..." screen.
+  Per ADR-001/ADR-006: credentials are used once and never persisted —
+  this screen's fields are never pre-filled from a previous sync, by
+  design.
+- **Manual entry**: date + HH:MM fields with the "minute-boundary" trick
+  (FEATURES.md F-02): the user sets HH:MM, then confirms exactly when
+  their reference clock reaches :00 — the UI's role here is just to make
+  that confirm tap unambiguous (a single large "Confirm at :00" button,
+  nothing else focusable in that moment to avoid a mis-tap).
+
+### 2.16 SETTINGS_BACKUP (F-06b)
+
+```
+┌──────────────────────────────────────┐
+│ < Back          Backup (SD)          │
+│ ──────────────────────────────────── │
+│   ▸ Export to SD                     │
+│   ▸ Import from SD                   │
+├──────────────────────────────────────┤
+│  L/R focus   tap/Home confirm        │
+└──────────────────────────────────────┘
+```
+
+- **Export**: prompts for the dedicated export passphrase (or "use device
+  PIN" toggle, ADR-005) via the full-screen keyboard, then a progress
+  screen (SD mount → write `x4pro-export-vN.bin` → unmount), then a
+  success/failure summary (filename shown).
+- **Import**: file picker is unnecessary (F-06b's format is a single,
+  fixed, dated filename convention) — shows the most recent
+  `x4pro-export-*.bin` found on the card with its timestamp, asks for the
+  export passphrase, then an explicit **destructive-action confirmation**
+  (§2.18 pattern: current keystore will be overwritten) before writing.
+
+### 2.17 SETTINGS_OWNER_INFO (F-19)
+
+```
+┌──────────────────────────────────────┐
+│ < Back         Owner info            │
+│ ──────────────────────────────────── │
+│  Show contact info on sleep screen   │
+│                             [ Off ]  │
+│                                       │
+│  Phone / email                       │
+│  [ ____________________________ ]   │
+├──────────────────────────────────────┤
+│  L/R focus   tap/Home confirm        │
+└──────────────────────────────────────┘
+```
+
+Directly implements F-19's "optional owner contact info ... configurable
+in Settings, disabled by default". The text field is only reachable/
+editable when the toggle above is On — this info is shown on the sleep
+screen (F-19), which is visible to anyone who finds a lost/stolen device,
+so it must stay opt-in rather than defaulting to "on" with a blank field.
+Feeds `board_sleep_screen_show()` (`splash.cpp`) — currently a hardcoded
+absence of this line; this screen is the missing UI for it.
+
+### 2.18 Destructive-action confirmation (shared pattern, not a top-level
+screen)
+
+```
+┌──────────────────────────────────────┐
+│              Delete entry?           │
+│                                       │
+│         "GitHub" will be removed.    │
+│              This cannot be undone.  │
+│                                       │
+│        ┌────────┐  ┌────────┐        │
+│        │ Cancel │  │ Delete │        │
+│        └────────┘  └────────┘        │
+└──────────────────────────────────────┘
+```
+
+Reused for: TOTP/password delete (§2.5/2.8), keystore-import overwrite
+(§2.16). `option-dialog.h` (already vendored in FreeInkUI) is the natural
+fit. Default focus on `Cancel` — a destructive action must never be the
+path of least resistance through Left/Right+Home alone.
+
+### 2.19 Full-screen text entry (shared pattern, not a top-level screen)
+
+```
+┌──────────────────────────────────────┐
+│ < Cancel                      Done   │
+│ ──────────────────────────────────── │
+│  [ GitHub_______________________ ]   │
+│                                       │
+│  ┌─┬─┬─┬─┬─┬─┬─┬─┬─┬─┐               │
+│  │Q│W│E│R│T│Y│U│I│O│P│               │
+│  ├─┴┬┴┬┴┬┴┬┴┬┴┬┴┬┴┬┴┬┴┐              │
+│  │A │S│D│F│G│H│J│K│L│⌫│              │
+│  ├──┴┬┴┬┴┬┴┬┴┬┴┬┴┬┴┬─┴──┐            │
+│  │ Z │X│C│V│B│N│M│  space │            │
+│  └───┴─┴─┴─┴─┴─┴─┴────────┘            │
+├──────────────────────────────────────┤
+│  L/R focus   tap/Home: press key     │
+└──────────────────────────────────────┘
+```
+
+- `qwerty-keyboard.h` (vendored, unused so far). Used by every text field
+  in this document (TOTP label/secret, password fields, Wi-Fi SSID/pass,
+  export passphrase). One shared implementation, not one per screen.
+- Left/Right cycling a full QWERTY key-by-key is slow but must remain
+  fully usable per §1.2's invariant — direct tap is expected to be the
+  primary path here in practice.
+- `Done` commits the field's value and returns to the calling screen;
+  `Cancel` discards the edit for that field only (not the whole parent
+  screen's other fields, if any).
+
+### 2.20 SETTINGS_ABOUT (F-20, folds in the old placeholder's "About")
+
+```
+┌──────────────────────────────────────┐
+│ < Back            About              │
+│ ──────────────────────────────────── │
+│  MySafeFob (MSF)                     │
+│  Board: x4pro     IDF: v5.5.5        │
+│  Firmware: <git rev>                 │
+│                                       │
+│  Battery: --  (F-16, not wired yet)  │
+├──────────────────────────────────────┤
+│  L/R focus   tap/Home confirm        │
+└──────────────────────────────────────┘
+```
+
+Static info screen, same content as the current REPL `about` command
+(F-20 — the REPL stays permanent and independent; this is just the
+on-screen equivalent for when USB isn't connected).
+
+---
+
+## 3. Open points (flagged, not blocking this document's review)
+
+- [ ] **Direct-tap hardware validation** (§1.2): confirm GT911 tap
+      accuracy across the full 480×800 area, not just the calibrated Home
+      zone, before relying on it in any screen above. See
+      `docs/touch-calibration-notes.md` (2026-09-17) for a first
+      comparison against `references/crosspoint-reader`'s working touch
+      on the same hardware — likely explanation is a foreign/generic
+      GT911 config blob rather than a coordinate-math bug, still
+      unconfirmed.
+- [ ] **Power-short-press confirm bridge** (§1.2/§2.12): needs a new
+      function (e.g. `board_ui_nav_power_confirm()`) so
+      `power_button_task` (`main.c`, owns GPIO3) can inject a confirm
+      pulse into `ui_nav.cpp`'s `InteractionBuffer` on a qualifying short
+      release — not built yet, SETTINGS_CONTROLS' toggle is currently
+      spec-only.
+- [ ] **Recovery-code batch entry** (§2.10): FEATURES.md only specifies
+      *display*/*mark-used*; how a service's initial batch of codes gets
+      typed in during 2FA activation isn't designed yet.
+- [x] ~~PIN re-lock delay vs. ADR-012's 45s device-sleep timer~~ —
+      **resolved** by the 2026-09-16 chrome/Settings review: kept as two
+      independent timers, both surfaced and adjustable in
+      SETTINGS_SECURITY (§2.13). Still needs the actual runtime-value
+      plumbing (`ui_nav.cpp`'s `IDLE_TIMEOUT_MS` is a compile-time
+      constant today) and the PIN re-lock behavior itself (never
+      implemented at all yet) before that screen is real.
+- [ ] **`ui_mgr`'s "return-to" slot** (§1.3.1): `INTERFACES.md` §4.4 needs
+      a small addition — one remembered screen id, set when ⚙ is tapped
+      and consumed by SETTINGS's top-level Back — not yet in that
+      document's `ui_show(screen_t)` contract.
+- [ ] **Frontlight** (F-16, should-have): driver-level GPIO8/9 PWM already
+      validated (`hardware-specs.md`); SETTINGS_DISPLAY (§2.14) specs the
+      UI side, still needs the actual binding wired.
+- [x] ~~Battery indicator~~ — **done 2026-09-18**: text-only `NN%` in the
+      fixed zone (§1.3), `boards/x4pro/app/battery.c`. No icon (no
+      vendored bitmap assets, see §1.3's note) and unread on the `--`
+      failure path is not yet distinguished from "not implemented" in the
+      UI — acceptable for now, not hardware-validated yet.
+
+---
+
+*Document to be reviewed like FEATURES.md/INTERFACES.md before
+implementation starts on any screen beyond the existing placeholder
+(`ui_nav.cpp`) and the already-implemented SPLASH/SLEEP screens.*

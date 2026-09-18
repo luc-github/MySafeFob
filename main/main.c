@@ -49,6 +49,7 @@
 #include "secret_store.h"
 #include "power_mgr.h"
 #include "ui_nav.h"
+#include "settings_store.h"
 
 static bool s_wake_from_sleep = false;
 
@@ -118,10 +119,14 @@ static int cmd_totpselftest(int argc, char **argv)
 }
 
 /* -----------------------------------------------------------------------
- * Power button (ADR-009 amended 2026-09-16) — skeleton version, replaced
- * by the LVGL indev in 8.4. GPIO3 (Power, active-LOW), single duration
- * measurement (no more Right combo — dropped, see power_mgr.h):
- *   - released < MSF_POWER_LONG_MS   : nothing (short press ignored here)
+ * Power button (ADR-009 amended 2026-09-16). GPIO3 (Power, active-LOW),
+ * single duration measurement (no more Right combo — dropped, see
+ * power_mgr.h):
+ *   - released < MSF_POWER_LONG_MS : "Power short press = Select"
+ *     (UI-SPECS.md §2.12, settings_store.h) — if that setting is on,
+ *     injects one confirm pulse into ui_nav.cpp's InteractionBuffer via
+ *     board_ui_nav_power_confirm(); a genuinely free gesture otherwise
+ *     (this range did nothing before that setting existed).
  *   - held >= MSF_POWER_LONG_MS and < MSF_POWER_FACTORY_MS : sleep
  *   - held >= MSF_POWER_FACTORY_MS : switch to factory (esp_ota, software)
  * ----------------------------------------------------------------------- */
@@ -197,6 +202,9 @@ static void power_button_task(void *arg)
                 } else {
                     esp3d_log_d("Power long press: transition already in progress (REPL sleep?), ignored");
                 }
+            } else if (!factory_triggered && settings_store_get_power_short_confirm()) {
+                esp3d_log_d("Power short press: confirm (settings_store)");
+                board_ui_nav_power_confirm();
             }
             held = false;
         }
@@ -232,13 +240,11 @@ void app_main(void)
          * blocking, before the REPL — so we always know where we are. */
         board_splash_show();
     }
-    /* Interactive menu (task 8.4, ui_nav.cpp) right after the splash: its
-     * first draw (full refresh) replaces the old static "READY" screen,
-     * and it keeps redrawing/responding for the whole session — also owns
-     * the ADR-012 idle-activity timeout. Runs in its own task since it
-     * blocks polling touch/buttons forever. */
-    xTaskCreate(board_ui_nav_task, "ui_nav", 8192, NULL, 4, NULL);
-
+    /* NVS before board_ui_nav_task starts: that task (Settings screens,
+     * task 8.4) reads settings_store.h's persisted preferences from the
+     * moment it starts polling — moved ahead of xTaskCreate below
+     * (previously ran after it, which could race a setting read against
+     * an NVS partition that wasn't open yet). */
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
         ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -246,6 +252,14 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+    ESP_ERROR_CHECK(settings_store_init());
+
+    /* Interactive menu (task 8.4, ui_nav.cpp) right after the splash: its
+     * first draw (full refresh) replaces the old static "READY" screen,
+     * and it keeps redrawing/responding for the whole session — also owns
+     * the ADR-012 idle-activity timeout. Runs in its own task since it
+     * blocks polling touch/buttons forever. */
+    xTaskCreate(board_ui_nav_task, "ui_nav", 8192, NULL, 4, NULL);
 
     /* REPL console (debug/dev — the e-ink UI arrives in 8.4).
      * Backend depends on CONFIG_ESP_CONSOLE_*: the X4 Pro uses the

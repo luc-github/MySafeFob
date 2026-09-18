@@ -44,8 +44,15 @@ typedef struct {
     bool pressed;       /* true if a finger is down */
     bool home;          /* true if the point is within the Home pad zone
                          * (validated measurement 01:34: raw rx<70, ry 380-580) */
-    int16_t x;          /* landscape 800x480 framebuffer coords */
-    int16_t y;
+    int16_t x;          /* logical coords, after any calibration transform
+                         * (currently: raw passthrough -- unresolved,
+                         * docs/touch-calibration-notes.md) */
+    int16_t y;          /* logical coords, after touch_rescale_y() */
+    int16_t raw_x;      /* GT911 register value, no transform at all --
+                         * exposed so the touch diagnostic screen can show
+                         * both and calibration doesn't have to guess
+                         * which stage a logged number came from */
+    int16_t raw_y;
 } touch_point_t;
 
 /**

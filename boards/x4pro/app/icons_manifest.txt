@@ -1,0 +1,8 @@
+# MySafeFob App — battery status icons (UI-SPECS.md §1.3, ADR-014).
+# One line per icon: alias = lucide-name. See tools/gen_icons.py.
+battery          = battery
+battery_charging = battery-charging
+battery_full     = battery-full
+battery_medium   = battery-medium
+battery_low      = battery-low
+battery_warning  = battery-warning

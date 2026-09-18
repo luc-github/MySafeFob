@@ -37,14 +37,101 @@
 #include "hw_config.h"
 #include "i2c_bus.h"
 
+#include <stdio.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "esp_rom_sys.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 
-static const char *TAG = "touch";
+/* WORKAROUND (2026-09-18): standard ESP_LOG* calls from this file never
+ * reach the serial monitor, in every test so far, 100% reproducible --
+ * not a race. A raw printf() from the exact same call site (verified in
+ * ui_nav.cpp's board_ui_nav_task/input_sampler_task, see ROADMAP.md
+ * ADR-014's amendment) works every time. Root cause not yet understood;
+ * redefined ESP_LOG* to a printf-based equivalent, scoped to this
+ * translation unit only, so touch diagnostics are actually visible in
+ * the meantime. Revert this override once the real cause is found. */
+#undef ESP_LOGE
+#undef ESP_LOGW
+#undef ESP_LOGI
+#define ESP_LOGE(tag, fmt, ...) do { \
+        printf("E (%lld) %s: " fmt "\r\n", (long long)(esp_timer_get_time() / 1000), tag, ##__VA_ARGS__); \
+        fflush(stdout); \
+    } while (0)
+#define ESP_LOGW(tag, fmt, ...) do { \
+        printf("W (%lld) %s: " fmt "\r\n", (long long)(esp_timer_get_time() / 1000), tag, ##__VA_ARGS__); \
+        fflush(stdout); \
+    } while (0)
+#define ESP_LOGI(tag, fmt, ...) do { \
+        printf("I (%lld) %s: " fmt "\r\n", (long long)(esp_timer_get_time() / 1000), tag, ##__VA_ARGS__); \
+        fflush(stdout); \
+    } while (0)
+
+/* Distinctive tag (2026-09-18, was "touch"): makes every GT911 register
+ * read stand out in a busy serial log while diagnosing "touch does
+ * nothing" reports, instead of blending into other TAG="touch"-adjacent
+ * lines. */
+static const char *TAG = "GT911";
+
+/* Axis-swap calibration (2026-09-18, 5-point crosshair hardware test,
+ * see the touch_read() comment where these are used for the full
+ * derivation): the touch grid's raw_x/raw_y are NOT the display's
+ * logical x/y at all -- raw_y tracks the display's horizontal position
+ * and raw_x tracks its vertical position (matching FreeInkUICore.h's
+ * own touchToLogical() LandscapeClockwise case, which this driver had
+ * never actually called). Two calibration points per axis, both
+ * measured directly against on-screen crosshair targets (not screen
+ * edges -- the crosshairs sit inset from the header/footer). */
+#define TOUCH_X_RAWY_LO      25    /* raw_y at the LEFT crosshairs (logical x=20) */
+#define TOUCH_X_LOGICAL_LO   20
+#define TOUCH_X_RAWY_HI      690   /* raw_y at the RIGHT crosshairs (logical x=460) */
+#define TOUCH_X_LOGICAL_HI   460
+
+/* Y is NOT a single line end to end (2026-09-18, follow-up retest): a
+ * 3rd calibration point at the center crosshair landed ~100px off the
+ * straight-line prediction between top and bottom, while X's own center
+ * point was within ~25px (consistent with plain tap imprecision, not a
+ * real curve -- the two X half-ranges have almost identical slopes:
+ * 0.650 vs 0.668). Y's two halves don't: -2.564 (top-to-mid) vs -0.870
+ * (mid-to-bottom) -- a real, repeatable nonlinearity, not noise. Y is
+ * therefore fit as two line segments meeting at the measured center
+ * point instead of one; X stays a single line. */
+#define TOUCH_Y_RAWX_TOP     415   /* raw_x at the TOP crosshairs (logical y=240) */
+#define TOUCH_Y_LOGICAL_TOP  240
+#define TOUCH_Y_RAWX_MID     334   /* raw_x at the CENTER crosshair (logical y=440) */
+#define TOUCH_Y_LOGICAL_MID  440
+#define TOUCH_Y_RAWX_BOTTOM  104   /* raw_x at the BOTTOM crosshairs (logical y=640) */
+#define TOUCH_Y_LOGICAL_BOTTOM 640
+
+/* Linear interpolation/extrapolation between two calibration points,
+ * clamped to [0, logical_max]. Shared by both axes above -- same math,
+ * different points and a different logical_max (EINK_H-1 for X, since
+ * DisplayTarget's Portrait rotation makes EINK_H==480 the logical
+ * *width* here; EINK_W-1 for Y, same swapped-name situation). */
+static int16_t touch_lerp(int16_t raw, int16_t raw_lo, int16_t logical_lo,
+                          int16_t raw_hi, int16_t logical_hi, int16_t logical_max)
+{
+    int32_t v = logical_lo + (int32_t)(raw - raw_lo) * (logical_hi - logical_lo) /
+                (raw_hi - raw_lo);
+    if (v < 0) v = 0;
+    if (v > logical_max) v = logical_max;
+    return (int16_t)v;
+}
+
+/* Y-axis: picks which of the two segments (see the constants above)
+ * raw_x falls into, then interpolates within that segment only. */
+static int16_t touch_lerp_y(int16_t raw_x)
+{
+    if (raw_x >= TOUCH_Y_RAWX_MID) {
+        return touch_lerp(raw_x, TOUCH_Y_RAWX_TOP, TOUCH_Y_LOGICAL_TOP,
+                           TOUCH_Y_RAWX_MID, TOUCH_Y_LOGICAL_MID, EINK_W - 1);
+    }
+    return touch_lerp(raw_x, TOUCH_Y_RAWX_MID, TOUCH_Y_LOGICAL_MID,
+                       TOUCH_Y_RAWX_BOTTOM, TOUCH_Y_LOGICAL_BOTTOM, EINK_W - 1);
+}
 
 /* GT911 registers */
 #define GT_REG_CFG_VER   0x8047
@@ -301,17 +388,65 @@ bool touch_init(void)
     return true;
 }
 
+/* Rate-limited heartbeat (2026-09-18): a full I2C failure on the status
+ * read, or a chip that simply never sets bit7, previously produced ZERO
+ * log output at all -- indistinguishable from "this function is never
+ * even being called". Logging once a second either way (not on every
+ * ~20ms poll) makes that distinction visible on the next hardware run:
+ * silence here would mean touch_read() itself isn't running/reachable;
+ * "I2C read FAILED" repeating would point at the bus/address, not the
+ * touch logic; "status 0x00" repeating while actually pressing the
+ * screen would mean the chip itself isn't reporting the contact. */
+static int64_t s_last_heartbeat_us = 0;
+
 touch_point_t touch_read(void)
 {
     touch_point_t pt = { .pressed = false, .x = -1, .y = -1 };
-    if (!s_bus || !s_addr) return pt;
+
+    int64_t now = esp_timer_get_time();
+    bool heartbeat = (now - s_last_heartbeat_us) >= 1000000;   /* 1 s */
+
+    if (!s_bus || !s_addr) {
+        if (heartbeat) {
+            ESP_LOGW(TAG, "touch_read() called but NOT INITIALIZED (bus=%p addr=0x%02X)",
+                     (void *)s_bus, s_addr);
+            s_last_heartbeat_us = now;
+        }
+        return pt;
+    }
 
     uint8_t st[2] = {0};
-    if (reg_read(GT_REG_STATUS, st, 2) != ESP_OK) return pt;
-    if (!(st[0] & 0x80)) return pt;   /* no data */
+    esp_err_t err = reg_read(GT_REG_STATUS, st, 2);
+    if (err != ESP_OK) {
+        if (heartbeat) {
+            ESP_LOGW(TAG, "status I2C read FAILED (err=%d)", err);
+            s_last_heartbeat_us = now;
+        }
+        return pt;
+    }
+    if (!(st[0] & 0x80)) {   /* no new buffer since the last clear */
+        if (heartbeat) {
+            //ESP_LOGI(TAG, "status 0x%02X (idle, no new buffer)", st[0]);
+            s_last_heartbeat_us = now;
+        }
+        return pt;
+    }
+
+    /* bits[3:0] of 0x814E = number of active touch points. 2026-09-18
+     * finding: this used to be ignored, so a release event (buffer ready,
+     * 0 points, per the GT911 status-register convention) was still
+     * parsed as a touch and reported pressed=true with stale/garbage
+     * point data -- release edges were only ever detected later, on
+     * whatever poll happened to see "no new buffer" instead. Logged
+     * unconditionally here (bounded rate: only fires on real chip
+     * activity, i.e. while a finger is actually down) so a hardware run
+     * can show exactly what the chip reports on every sample, including
+     * ones the caller's own edge detection never turns into an action. */
+    const uint8_t touch_count = st[0] & 0x0F;
+    //ESP_LOGI(TAG, "status 0x%02X count=%d", st[0], touch_count);
 
     uint8_t pts[8] = {0};
-    if (reg_read(GT_REG_POINTS, pts, 8) == ESP_OK) {
+    if (touch_count > 0 && reg_read(GT_REG_POINTS, pts, 8) == ESP_OK) {
         int16_t raw_x = (int16_t)(pts[0] | (pts[1] << 8));
         int16_t raw_y = (int16_t)(pts[2] | (pts[3] << 8));
         /* Home = software zone OR the real GT911 capacitive key (bit
@@ -326,11 +461,39 @@ touch_point_t touch_read(void)
          * matches anything with the currently uploaded config -> replaced. */
         pt.home = (raw_x < 70 && raw_y >= 660 && raw_y <= 720) ||
                   (st[0] & 0x10) != 0;
-        /* Raw values already PORTRAIT (4-corner test 00:55: TL=(48,58) TR=(475,80)
-         * BR=(476,660) BL=(52,661) -> raw_x = user x, raw_y = user y).
-         * The UI is in portrait 480x800 coords since the gfx fix (transpose). */
-        pt.x = raw_x;
-        pt.y = raw_y;
+        /* AXES SWAPPED (2026-09-18, 5-point crosshair hardware test --
+         * superseded the previous "Y rescale + X flip" attempt, which
+         * treated the two axes independently and never quite landed:
+         * both a Settings-button tap and a Sleep-button tap missed by
+         * 20-70px after that fix). Five crosshairs drawn on the touch
+         * diagnostic screen (4 corners + center, all inset from the
+         * header/footer) showed unambiguously that raw_y tracks the
+         * display's HORIZONTAL position and raw_x tracks its VERTICAL
+         * position -- e.g. the top-left and bottom-left crosshairs
+         * (same logical x, different logical y) produced nearly
+         * identical raw_y (~20-30) despite very different raw_x; the
+         * top-left and top-right crosshairs (same logical y, different
+         * logical x) produced nearly identical raw_x (~410) despite very
+         * different raw_y. This matches FreeInkUICore.h's own
+         * touchToLogical() for LandscapeClockwise touch orientation
+         * (`lx = 1-ny; ly = nx`) -- the transform this driver should
+         * have been calling from the start, per DisplayTarget's own
+         * touchOrientationFor(Portrait) == LandscapeClockwise. Applied
+         * here as a direct linear fit per axis instead (touch_lerp()/
+         * touch_lerp_y(), same idea, calibrated straight from measured
+         * crosshair positions rather than derived through the
+         * library's normalized-coordinate math). A first pass fit each
+         * axis as one line end to end; a retest against all 5 crosshairs
+         * showed the 4 corners landing within ~13px but the center
+         * missing by up to ~100px on Y -- see touch_lerp_y()'s own
+         * comment above for why Y is now two line segments instead of
+         * one (X stayed a single line; its own center-point error was
+         * small enough to be plain tap imprecision, not a real curve). */
+        pt.x = touch_lerp(raw_y, TOUCH_X_RAWY_LO, TOUCH_X_LOGICAL_LO,
+                           TOUCH_X_RAWY_HI, TOUCH_X_LOGICAL_HI, EINK_H - 1);
+        pt.y = touch_lerp_y(raw_x);
+        pt.raw_x = raw_x;
+        pt.raw_y = raw_y;
         pt.pressed = true;
     }
 

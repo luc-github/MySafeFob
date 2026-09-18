@@ -21,9 +21,9 @@
  * @brief MySafeFob App — X4 Pro hardware pin definitions.
  *
  * Source of truth: docs/hardware-specs.md (bring-up validated 2026-09-13).
- * Subset of factory/main/hw_config.h: rails + e-ink + touch + nav buttons
- * (task 8.4, minimal interactive slice). SD/RTC/gauge pins still DO NOT
- * belong here — not needed by the app yet.
+ * Subset of factory/main/hw_config.h: rails + e-ink + touch + nav buttons +
+ * the CW2017 gauge (fixed-zone battery %, ADR-014). SD/RTC pins still DO
+ * NOT belong here — not needed by the app yet.
  */
 #pragma once
 
@@ -76,3 +76,7 @@
 #define BTN_RIGHT_PIN       GPIO_NUM_7   /* role: focus next */
 #define BTN_POWER_PIN       GPIO_NUM_3   /* reserved for power_mgr — never
                                              read from the nav loop (ADR-009) */
+
+/* ---- Battery gauge CW2017 (0x63), same shared I2C bus #0 ---- */
+#define GAUGE_I2C_ADDR      0x63
+#define CHARGE_PIN          GPIO_NUM_21   /* active-HIGH = charging/USB */

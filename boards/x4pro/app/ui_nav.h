@@ -50,6 +50,17 @@ void board_ui_nav_task(void *arg);
  */
 void board_activity_notify(void);
 
+/**
+ * @brief Injects one confirm pulse into the nav loop's InteractionBuffer,
+ *        equivalent to a touch-Home tap. Called by main.c's
+ *        power_button_task on a Power release shorter than
+ *        MSF_POWER_LONG_MS — gated there behind the "Power short press =
+ *        Select" setting (settings_store.h). Power still never becomes a
+ *        screen-level actor: this is a single pulse consumed by the next
+ *        loop iteration, not GPIO3 joining this loop's own input reads.
+ */
+void board_ui_nav_power_confirm(void);
+
 #ifdef __cplusplus
 }
 #endif
