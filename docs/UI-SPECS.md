@@ -34,105 +34,158 @@
   switch after that silently rode on the driver's budget fallback instead
   of the documented rule.
 
-### 1.2 Input model (ADR-013 amended: **both** input styles, user-confirmed
-2026-09-16)
+### 1.2 Input model (ADR-013 amended: **both** input styles, hardware-
+validated 2026-09-19)
 
 - **Left/Right physical buttons**: move the focus highlight one step
   within the current screen's focusable set (wraps circularly — same
   `InteractionBuffer::moveFocus` already validated in `ui_nav.cpp`).
+  **Default focus on screen entry is widget 0** (`switch_screen()`,
+  2026-09-19 fix) — every screen's own `draw_*()` registers its primary
+  action (the header's Settings/Back slot, §1.3) as the first
+  interaction each frame, so index 0 is never a disabled row or
+  something further down. Earlier builds reset focus to "none" on every
+  screen change, which meant the first Left/Right press just "woke up"
+  the focus instead of doing anything visible.
 - **Touch-Home pad** (fixed zone, `touch.c`): confirms/activates whatever
-  currently has focus — works everywhere, independent of screen content.
-  This is the accessible/fallback path and the one already proven on
-  hardware; every screen in this document must remain fully operable with
-  *only* Left/Right + Home (no functionality may require direct tap).
+  currently has focus — works everywhere, independent of screen content,
+  by focus index, never by tap position (so its touch-active zone
+  extending past the visible display, into the bezel-mounted physical
+  key's own area, is harmless — see `docs/touch-calibration-notes.md`
+  §10). This is the accessible/fallback path and the one already proven
+  on hardware; every screen in this document must remain fully operable
+  with *only* Left/Right + Home (no functionality may require direct
+  tap).
 - **Direct tap** on a list row / button / key: moves focus to it **and**
-  activates it in the same gesture (one tap = select+confirm) — faster for
-  longer lists (TOTP/password entries), not yet validated on hardware
-  outside the Home-pad zone. **First implementation task before any
-  screen beyond the placeholder is built**: extend `ui_nav.cpp`'s
-  `InputSnapshot` to also feed `touchX`/`touchY`/`touchReleased` (today it
-  only ever sets `.confirm` from the Home zone) and confirm on hardware
-  that tap accuracy is usable across the full panel, not just the
-  calibrated Home zone.
+  activates it in the same gesture (one tap = select+confirm) — faster
+  for longer lists (TOTP/password entries). **Hardware-validated
+  2026-09-19**: after `docs/touch-calibration-notes.md` §10's axis-swap
+  fix, direct taps correctly drove three consecutive real screen
+  transitions (Settings, Controls & Calibration, Touch diagnostic), each
+  landing inside its target widget and firing the right action. `touch.c`
+  exposes both the calibrated logical coordinate (`pt.x`/`pt.y`, what
+  actually gets hit-tested) and the raw GT911 register value
+  (`pt.raw_x`/`pt.raw_y`, calibration-only, never used for hit-testing)
+  on every `touch_point_t` — the touch diagnostic screen (§2.12) shows
+  both side by side.
+- **Confirm-press flash — every activation, regardless of input method**
+  (2026-09-18/19 fix): whatever fires an action (a tap release, a
+  Left/Right+Home confirm, or a Power short-press confirm) first redraws
+  the activated widget inverted (`StateActive`) on the *current* screen,
+  flushes that frame, and holds for ~500ms — only then does the action
+  actually run (`board_ui_nav_task`'s main loop, `s_flash_action`/
+  `flash_state()`). A touch tap naturally showed this while the finger
+  stayed down; a confirm-driven activation used to fire and act in the
+  same instant with no equivalent feedback, which made navigation feel
+  inconsistent depending on how a button was pressed. Scoped to only the
+  final action in a coalesced input burst (`ui_nav.cpp`'s queue
+  draining) — intermediate actions in a fast burst still skip the flash
+  and the flush entirely, on purpose, to keep rapid Left/Right presses
+  from each costing a full e-ink refresh.
 - **Power button**: long-hold thresholds (sleep, factory, ADR-009) are a
   hard invariant, never touched by a setting. A short press-and-release
-  (currently a no-op) may **optionally** act as an extra confirm pulse,
-  equivalent to touch-Home — gated behind the "Power short press =
-  Select" toggle (§2.12, SETTINGS_CONTROLS, off disables it back to
-  pure-power behavior). Power is **never** repurposed as Back or any
-  screen-specific action, on or off.
+  may **optionally** act as an extra confirm pulse, equivalent to
+  touch-Home — gated behind the "Power short press = Select" toggle
+  (§2.12, SETTINGS_CONTROLS, off disables it back to pure-power
+  behavior; wired and hardware-validated). Power is **never** repurposed
+  as Back or any screen-specific action, on or off.
 - **Back**: no physical button is free for it (Left/Right = focus, Power =
-  reserved). Every screen except HOME renders a tappable `< Back` label in
-  its *contextual* zone's header (top-left of that zone — see §1.3; not to
-  be confused with the fixed zone's ⚙, also top-left but one zone up) —
+  reserved). Every screen except HOME renders a tappable `< Back` button
+  in the **fixed zone's primary action slot** (§1.3 — not a separate
+  contextual-zone header row; that changed 2026-09-19, see below) —
   reachable by Left/Right focus like any other widget, or by direct tap.
   `FreeInkUICore.h`'s `InputBack` mask is exactly what this maps to.
 
-### 1.3 Chrome — two zones per screen (amended 2026-09-16, user design
-review): a **fixed** status bar (identical content and position on every
-screen) and a **contextual** zone below it (the actual screen content,
-changes per §2). This replaces an earlier draft that mixed Back/sync-badge
-into the contextual header row.
+### 1.3 Chrome — two zones per screen (amended 2026-09-19, hardware-
+validated layout): a **fixed header** (identical structure, but not
+identical *content*, on every screen) and a **contextual** zone below it
+(the actual screen content, changes per §2).
 
 ```
 ┌──────────────────────────────────────┐
-│  ⚙        12:34  16 Sep        87%   │  <- FIXED zone (status-bar.h):
-│                                       │     gear (Settings, left),
-│                                       │     date/time (center, F-02/RTC),
-════════════════════════════════════════     battery % (right, F-16)
-│ < Back          TOTP Codes           │  <- CONTEXTUAL zone: per-screen
-│ ── (screen content) ─────────────────│     Back (if not HOME) + title +
-│                                       │     content — everything in §2
-│                                       │     below lives here
-│                                       │
+│  Controls                      [ico] │  <- FIXED header, row 1:
+│                                  87%  │     screen title (left) +
+│                                       │     battery icon/% (right)
+════════════════════════════════════════     (divider line)
+│ [    < Back    ]                     │  <- FIXED header, row 2:
+│                                       │     PRIMARY ACTION SLOT --
+│ ── (screen content) ─────────────────│     "Settings" button on HOME,
+│                                       │     "< Back" everywhere else,
+│                                       │     always the same Rect
 ├──────────────────────────────────────┤
-│  L/R focus   tap/Home confirm        │  <- footer hint, same as before
-└──────────────────────────────────────┘
+│  vX.Y  Sep 19 2026 14:03             │  <- FOOTER: version + build
+└──────────────────────────────────────┘     timestamp (esp_app_desc_t)
 ```
 
-**Fixed zone — always present** (except UNLOCK/SPLASH/SLEEP, which have no
-chrome at all — nothing to configure before authenticating, nothing to
-navigate away from mid-splash/mid-sleep):
-- **⚙ Settings** (top-left): tappable, opens SETTINGS (§2.11) from
-  *anywhere*. Also reachable via Left/Right: it is the first stop before
-  the contextual zone's own first focusable item on every screen (Left
-  from that first item wraps back to ⚙, Right from ⚙ moves to it) — kept
-  in the focus cycle deliberately so Settings never requires a working
-  touch panel (§1.2's "fully usable Left/Right+Home only" invariant would
-  otherwise be broken for this one global action).
-- **Date/time** (center): from the RTC (`time_svc`, already validated at
-  the driver level) — populated from v1.0, no dependency on F-16.
-- **Battery %** (right): ✅ wired 2026-09-18 (ADR-014 addendum) —
-  `battery_read()` (`boards/x4pro/app/battery.c`, copied from the
-  factory's already-validated CW2017 driver) read on every redraw, shown
-  as a **Lucide status icon** (`battery-charging`/`-full`/`-medium`/
-  `-low`/`-warning`, thresholds: charging overrides all, then ≥80/≥50/
-  ≥20/below) plus the `"NN%"` text next to it (`"--"` on an I2C read
-  failure, plain `battery` icon). Icons generated by `tools/gen_icons.py`
-  (adapted from `freeink-sdk`'s own tool — ImageMagick instead of
-  `rsvg-convert`, unavailable without admin rights on this machine) from
-  the Lucide SVGs already vendored under
-  `references/crosspoint-reader/freeink-sdk/`, into
-  `boards/x4pro/app/battery_icons_gen.h` + a vendored `Icon.h`. Superseded
-  the earlier "no icon, no vendored bitmap assets" state from the same
-  day — see `docs/ROADMAP.md` ADR-014's second amendment.
-- The former "time-since-sync alert past 45 days" badge (F-02) moves into
-  the TIME_SYNC screen itself (§2.15) rather than living permanently in
-  the fixed zone — it's actionable information relevant when you'd go
-  looking for it, not a constant-attention item like a phone's clock.
+**Fixed header — always present** (except UNLOCK/SPLASH/SLEEP, which have
+no chrome at all — nothing to configure before authenticating, nothing to
+navigate away from mid-splash/mid-sleep). Two rows, both hardware-
+validated 2026-09-19:
 
-**Contextual zone**: everything screen-specific — title, `< Back` (when
-not HOME), and the screen's own content as detailed per-screen in §2.
-Add/delete of TOTP/password/recovery entries is **never** done inline in
-a list's contextual zone — always via the dedicated utility screens
-(ADD_EDIT_ENTRY, §2.5/§2.8), reached through each list's `+ Add` row.
+- **Row 1 — title + battery** (top of the panel, `draw_fixed_zone()`):
+  - **Screen title** (left, non-interactive text): "Settings" on HOME
+    (there is no dedicated title text there — the primary action slot
+    below *is* the Settings button) and on SETTINGS itself; each
+    sub-screen shows its own name instead — "Controls", "About", "Touch
+    diagnostic" (`header_title_for(Screen)`). Never repeated anywhere
+    else on screen (see the primary action slot below).
+  - **Battery icon + `"NN%"`** (right): `battery_read()`
+    (`boards/x4pro/app/battery.c`, the factory's validated CW2017
+    driver) read on every redraw. A **Lucide status icon**
+    (`battery-charging`/`-full`/`-medium`/`-low`/`-warning`, thresholds:
+    charging overrides all, then ≥80/≥50/≥20/below), 48×48
+    (`tools/gen_icons.py --sizes 24,48`), plus `"NN%"` text (`"--"` on
+    an I2C read failure) in the **default font/size** — matching the
+    rest of the screen's text, not scaled up with the icon. Date/time
+    is not shown here yet — no RTC-backed wall clock wired into the UI
+    layer (`time_svc`); that slot stays reserved.
+  - A horizontal divider line separates row 1 from row 2.
+- **Row 2 — the primary action slot**, a single fixed `Rect` (currently
+  `{24,76,130,36}`) that is *always* either:
+  - a **"Settings" button** (HOME only) — tappable, opens SETTINGS
+    (§2.11); also the first stop in the Left/Right focus cycle (default
+    focus on entry, §1.2), so Settings never requires a working touch
+    panel; or
+  - a **"< Back" button** (every other screen) — same `Rect`, drawn by
+    `draw_back_and_title()` (name kept for now; it no longer draws a
+    title — see below). Whichever one occupies the slot, it's the
+    default-focused widget on screen entry.
+  - This slot is the *only* thing that changed position during
+    development: earlier drafts placed Back inside the contextual zone
+    (its own header row, next to a per-screen title); Back now lives in
+    the fixed header instead, in exactly the spot Settings occupied one
+    screen up — one consistent primary-action position instead of it
+    jumping around depending on which screen you're on. A title text
+    used to sit centered next to Back there too; removed entirely
+    (2026-09-19) since it duplicated row 1's title and Back's
+    focused/active highlight could visually run into it.
+- The former "time-since-sync alert past 45 days" badge (F-02) is
+  planned to move into the TIME_SYNC screen itself (§2.15) rather than
+  living permanently in the fixed header — it's actionable information
+  relevant when you'd go looking for it, not a constant-attention item
+  like a phone's clock. Not built yet (TIME_SYNC doesn't exist).
+
+**Footer** (`draw_footer()`, 2026-09-18): a divider line plus the running
+firmware's version and build date/time (`esp_app_get_description()` —
+`version` falls back to `git describe --always --dirty` since no
+`PROJECT_VER` is set), fixed at the bottom of every screen with the same
+chrome. Exists to make "which build is actually running" obvious at a
+glance during hardware testing.
+
+**Contextual zone**: everything screen-specific below the fixed header —
+just the screen's own content now (title and Back moved into the fixed
+header, above). Detailed per-screen in §2. Add/delete of TOTP/password/
+recovery entries is **never** done inline in a list's contextual zone —
+always via the dedicated utility screens (ADD_EDIT_ENTRY, §2.5/§2.8),
+reached through each list's `+ Add` row.
 
 #### 1.3.1 Settings navigation (single "return-to" slot, not a screen stack)
 
-Settings is reachable from every screen via ⚙, and its Back must return
-to *that* originating screen (user decision) rather than unconditionally
-to HOME. This needs exactly **one** remembered screen id — set when ⚙ is
-tapped, consumed and cleared when SETTINGS's top-level Back fires — not a
+Settings is reachable from HOME via the fixed header's "Settings" button
+(§1.3), and its Back must return to *that* originating screen (user
+decision) rather than unconditionally to HOME. This needs exactly **one**
+remembered screen id — set when the Settings button is tapped, consumed
+and cleared when SETTINGS's top-level Back fires — not a
 general navigation history stack. This stays compatible with
 `INTERFACES.md` §5 invariant #4 ("the UI never keeps two live screens
 simultaneously"): only one screen is ever *live*; the return-to slot is
@@ -158,7 +211,7 @@ other flow.
 | ADD_EDIT_ENTRY (password variant) | F-05 | PWD_LIST |
 | RCV_LIST | F-05b | HOME |
 | RCV_CODE | F-05b | RCV_LIST |
-| SETTINGS | — | **anywhere** (⚙ in the fixed zone, §1.3) |
+| SETTINGS | — | **anywhere** (the fixed header's Settings button, §1.3) |
 | SETTINGS_CONTROLS | — (2026-09-17) | SETTINGS |
 | SETTINGS_SECURITY | F-03/ADR-012 | SETTINGS |
 | SETTINGS_DISPLAY | F-16 | SETTINGS |
@@ -441,8 +494,8 @@ codes on file (not one row per code — codes are inside RCV_CODE).
 └──────────────────────────────────────┘
 ```
 
-Reached from **⚙ in the fixed zone, on any screen** (§1.3/§1.3.1) — its
-own `< Back` returns to whichever screen ⚙ was tapped from, not
+Reached from **the fixed header's Settings button, on HOME** (§1.3/§1.3.1) — its
+own `< Back` returns to whichever screen Settings was tapped from, not
 unconditionally to HOME (the one deliberate exception to "Back always
 goes up one level in the current flow", per the user's 2026-09-16 design
 review). All 7 rows below fold in every settings-shaped item mentioned
@@ -452,6 +505,13 @@ and frontlight.
 
 ### 2.12 SETTINGS_CONTROLS (added 2026-09-17, see
 `docs/touch-calibration-notes.md`)
+
+> **Status (2026-09-19)**: built and hardware-validated, but simpler
+> than this section originally speced — see the callouts below each
+> mockup for what actually shipped vs. what's still just a design idea.
+> The header title ("Controls") lives in the fixed header now, not next
+> to `< Back` — see §1.3's 2026-09-19 chrome update; the mockups below
+> predate that and still show the old layout.
 
 ```
 ┌──────────────────────────────────────┐
@@ -485,13 +545,14 @@ and frontlight.
     screen below, or just in daily use), they can switch this **Off** to
     make Power a pure power control again with no UI role at all — purely
     a preference once touch is trusted, not a fallback-only feature.
-  - Implementation note (not yet built): needs a bridge from
-    `power_button_task` (`main.c`, owns GPIO3 exclusively) to
-    `board_ui_nav_task`'s `InteractionBuffer` (`ui_nav.cpp`) — e.g. a new
-    `board_ui_nav_power_confirm()` called on a qualifying short release,
-    analogous to how `board_activity_notify()` already bridges the other
-    direction. Power still never becomes a *screen-level* actor: this is
-    a single confirm pulse, not enrolling GPIO3 into the nav loop itself.
+  - **Built 2026-09-17, hardware-validated**: `board_ui_nav_power_confirm()`
+    (`ui_nav.h`/`.cpp`) is exactly the bridge described above —
+    `power_button_task` (`main.c`) calls it on a qualifying short
+    release, gated by `settings_store_get_power_short_confirm()`. Power
+    still never becomes a *screen-level* actor: it's a single confirm
+    pulse, not GPIO3 joining the nav loop's own input reads. The toggle
+    itself persists across reboots (`settings_store.c`, table-driven NVS
+    engine, ADR-012's settings-refactor amendment).
 - **Touch calibration / diagnostic** — revised 2026-09-17 after hands-on
   testing of `references/crosspoint-reader` on this same unit found a
   rotation-like error in *its* fixed touch profile (`touch-calibration-
@@ -520,6 +581,18 @@ and frontlight.
   └──────────────────────────────────────┘
   ```
 
+  > **What actually shipped (2026-09-18/19) — simpler than this
+  > mockup**: 5 crosshairs (4 corners + center, `draw_crosshair()`), not
+  > a guided 9-target sequence with pass/fail automation. No automatic
+  > pass/fail summary — the screen shows the **last tap's raw AND
+  > logical coordinates side by side** (`s_last_touch.raw_x/raw_y` vs.
+  > `.x/.y`) and a human reads them off directly. This turned out to be
+  > enough: it's exactly what found the axis-swap bug and validated its
+  > fix (`docs/touch-calibration-notes.md` §10) through several rounds
+  > of real hardware testing. The guided-sequence/auto-pass-fail version
+  > below remains a real enhancement idea, not something ruled out —
+  > just not needed to get calibration working.
+
   - **3×3 grid** (9 targets, corners + edge-midpoints + center) rather
     than the 4-corner-only test `hardware-specs.md` already ran once —
     specifically to catch a non-linear/rotational error *between* the
@@ -539,12 +612,12 @@ and frontlight.
     full area, before "direct tap anywhere" (§1.2) ships as a supported
     input mode.
   - Separately, the physical Home-pad zone
-    (`raw_x<70 && raw_y in [660,720]`, `touch.c`) gets its own **simpler**
-    re-tap-to-recenter control on this same screen (tap the physical Home
-    pad 3× when prompted, average the raw readings, store as the new
-    zone) — unlike the grid above, this one open point stays about
-    OTP/config-dependent Home-key reliability (`touch-calibration-
-    notes.md` §2/§3), not axis orientation.
+    (`raw_x<70 && raw_y in [660,720]`, `touch.c`) was speced to get its
+    own re-tap-to-recenter control on this same screen (tap the physical
+    Home pad 3× when prompted, average the raw readings, store as the
+    new zone) — **not built**; the zone is still a hardcoded constant.
+    Still a valid open point (`touch-calibration-notes.md` §2/§3), just
+    not the one that turned out to matter for the axis-swap bug.
 
 ### 2.13 SETTINGS_SECURITY (F-03, ADR-012)
 
@@ -781,7 +854,7 @@ on-screen equivalent for when USB isn't connected).
       constant today) and the PIN re-lock behavior itself (never
       implemented at all yet) before that screen is real.
 - [ ] **`ui_mgr`'s "return-to" slot** (§1.3.1): `INTERFACES.md` §4.4 needs
-      a small addition — one remembered screen id, set when ⚙ is tapped
+      a small addition — one remembered screen id, set when Settings is tapped
       and consumed by SETTINGS's top-level Back — not yet in that
       document's `ui_show(screen_t)` contract.
 - [ ] **Frontlight** (F-16, should-have): driver-level GPIO8/9 PWM already

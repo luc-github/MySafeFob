@@ -1674,7 +1674,146 @@ now uses the default font (slot 0, `kNotoSansFont`, ~24px), baseline
 recomputed for its metrics (ascent=26, digits/'%' 19px tall) against
 the same "match the 48px icon's visual center" reasoning as before:
 `rect.y = icon_y+7`, not yet hardware-checked. Only the icon stays at
-2x (24px -> 48px).
+2x (24px -> 48px). (Two more empirical nudges followed on later
+hardware checks: `icon_y+7` -> `icon_y-1` -> `icon_y+2`, same
+"picked empirically, not re-derived" pattern as every other
+font-alignment fix in this function.)
+
+**Amendment 2026-09-18 (continued) — two navigation consistency
+issues**: user feedback once actually navigating around for a while.
+1. **No default focus**: `switch_screen()` reset focus to `-1` on every
+   screen change, so the first Left/Right press on a new screen just
+   "woke up" the focus onto widget 0 instead of doing anything visible
+   — looked like the first press (sometimes two) did nothing. Fixed:
+   default to `0` instead of `-1`. Safe because every screen's own
+   `draw_*()` registers its primary action (the header's Settings/Back
+   slot) as the very first interaction each frame — index 0 is never a
+   disabled row or something further down.
+2. **No press feedback for confirm-driven actions**: a touch tap
+   naturally shows `StateActive` (inverted) for however long the finger
+   stays down before release fires the action, but a Left/Right+Select
+   or Power-short-press confirm fires and acts in the same instant —
+   no equivalent pressed feedback, making navigation feel inconsistent
+   depending on how a button was activated. Fixed with a mechanism the
+   vendored library already exposes but nothing in this codebase used
+   yet: every widget prop struct (`ButtonProps`, `SettingRowProps`,
+   `ToggleRowProps.row`) has a `.state` field used as the *base* state
+   `stateFor()` ORs `StateFocused`/`StateActive` onto
+   (`components/controls/button.h`) — setting it to `StateActive`
+   directly forces that look regardless of the real `active_`/touch
+   state. New `s_flash_action` + `flash_state(action)` helper; every
+   action-bearing widget's construction now sets
+   `.state = flash_state(<its action>)`. In `board_ui_nav_task`'s main
+   loop, right after Pass 1 resolves a non-empty `ActionEvent` and
+   *before* `handle_action()` runs (which may switch screens, making
+   the pressed widget disappear): set `s_flash_action`, redraw the
+   *current* screen with an empty input (nothing new to resolve, only
+   the flash state changed), flush it (`eink_display_fb_fast`), hold
+   for 500ms, then clear `s_flash_action` and proceed as before. Scoped
+   to only the final action in a coalesced burst (docs above, same
+   file) — the throwaway intermediate resolves inside that loop still
+   skip flushing entirely, on purpose: adding a flash+500ms to *every*
+   coalesced action would undo the exact "N events, 1 flush" win that
+   fixed the earlier Left/Right slowness complaint.
+
+Build-verified only — not yet hardware-validated.
+
+**Amendment 2026-09-19 — per-screen header titles, no title next to
+Back anywhere**: generalized the Settings-screen-only fix from
+2026-09-18. New `header_title_for(Screen)` (distinct from
+`screen_name()`, which stays a debug/log identifier): "Settings" on
+`Home`/`Settings`, "Controls" on `SettingsControls`, "About" on
+`SettingsAbout`, "Touch diagnostic" on `TouchDiag`. `draw_fixed_zone()`'s
+non-Home label now shows this instead of a hardcoded "Settings" — the
+header always names whatever screen is actually on it. `draw_back_and_title()`
+simplified to `draw_back_and_title(AppFrame &frame)` — dropped `title`,
+`target`, and `screen` params entirely (all now unused: no title text
+drawn here at all any more), updated across all 4 call sites. One title
+per screen, always in the header, never duplicated next to `< Back` —
+also fixes a visual issue the user flagged: Back's focused/active
+highlight could run into that adjacent centered title text.
+
+**Amendment 2026-09-19 (continued) — version line on SETTINGS_ABOUT**:
+the on-screen About page named the app and board but not the running
+firmware version. Added a `"Version: %s"` line (from
+`esp_app_get_description()`, the same source `draw_footer()` already
+uses) between the app name and the board/IDF lines.
+
+**Closing status (2026-09-19)** — ADR-014's amendment log above is long
+and chronological (every incremental fix from a multi-day hardware
+testing session); this is the consolidated summary for anyone starting
+the next phase. Full detail lives in `docs/UI-SPECS.md` (§1.2/§1.3,
+updated 2026-09-19 to match what actually shipped) and
+`docs/touch-calibration-notes.md` §10 (touch calibration specifically).
+
+**Done and hardware-validated**:
+- Multi-screen navigation (Home, Settings, Controls, About, Touch
+  diagnostic), Left/Right + Home/Select + direct tap, all three input
+  methods cross-checked against each other.
+- Touch calibration: axis swap identified and fixed
+  (`touch_lerp()`/`touch_lerp_y()`, `touch.c`) — corners within ~13px,
+  center Y within ~8px; direct-tap navigation confirmed working
+  end-to-end on real screens, not just the calibration crosshairs.
+- Input architecture: decoupled sampling task (touch/buttons never
+  blocked by the e-ink flush), event coalescing (a burst of queued
+  presses costs one flush, not N), default focus on screen entry,
+  confirm-press flash (~500ms) before any action fires regardless of
+  input method.
+- Chrome: fixed header (per-screen title + battery icon/%, doubled to
+  48px/default-font-size) + a single primary-action slot (Settings on
+  Home / Back elsewhere, always the same position) + a version/
+  build-timestamp footer.
+- Settings persistence: table-driven NVS engine (`settings_store.c`),
+  idle-timeout (0=disabled dev default) and Power-short-press=Select
+  both persisted and working.
+
+**Known open items / technical debt carried into the next phase**:
+- **`MSF_DEBUG_NO_SLEEP=1`** (`ui_nav.cpp`) is still set — real sleep on
+  the Sleep button/idle timeout is disabled for touch-testing
+  convenience. **Must be reverted to `0` before shipping** or even
+  before idle-timeout behavior can be trusted again.
+- **`ESP_LOG*` workaround** in `ui_nav.cpp`/`touch.c` (`#undef`/
+  `#define` to a printf-based equivalent): root cause of why real
+  `ESP_LOG` never reached the serial monitor from these two files was
+  never found. Works, but is a patch over an unexplained problem —
+  revisit if it resurfaces elsewhere.
+- **Touch calibration X-axis**: validated only as a single line end to
+  end, with one imprecise center-point measurement (attributed to tap
+  imprecision, not re-verified). Y needed two segments; X might too,
+  just not caught yet.
+- **Touch dead-zone width**: never formally measured (the 24px button
+  margin is a practical mitigation, not a characterized boundary).
+- **Left/Right button slowness investigation**: capture-vs-processing
+  timestamps were added (`input_sampler_task`'s "captured" vs.
+  `apply_input_event()`'s "processed" logs) but never actually analyzed
+  — the coalescing fix likely made the original complaint moot, so this
+  was dropped, not concluded.
+- **Disabled SETTINGS rows** (Security, Display, Time & Sync, Backup,
+  Owner info): still placeholders — each needs its own backend
+  (`secret_store`/PIN, `time_svc`, frontlight) before it can be enabled,
+  none of which exist yet (see "Next roadmap step" below).
+- **UI-SPECS.md's guided 3×3 touch-calibration grid + Home re-tap
+  control** (§2.12): speced but not built — the simpler 5-crosshair
+  screen that shipped instead turned out to be enough to find and fix
+  the axis-swap bug. Real enhancement idea, not ruled out, just not
+  needed yet.
+
+**Next roadmap step**: task 8.2 — implement `secret_store` for real
+(`components/secret_store/`, currently a frozen contract with a stub
+implementation, `ESP_ERR_NOT_SUPPORTED` everywhere). Its own header
+comment already names the first move: *"First implementation: task 8.2,
+after Argon2id calibration on S3"* — calibrate the KDF (Argon2id,
+m=8 MiB, t=4, p=1) for acceptable unlock latency on this hardware
+before implementing the AES-256-GCM envelope and the create/unlock/
+lock/add/remove flow. `totp_engine` (task 8.1, RFC 6238) is already
+done and self-tested. Only once `secret_store` is real can the actual
+product screens (UNLOCK, TOTP_LIST/CODE, PWD_LIST/VIEW, RCV_LIST/CODE —
+none of which exist yet) be built against real data instead of
+placeholders.
+
+Build-verified only — not yet hardware-validated (the version-line
+addition specifically; everything else above this closing summary was
+already hardware-validated per its own amendment).
 
 ---
 

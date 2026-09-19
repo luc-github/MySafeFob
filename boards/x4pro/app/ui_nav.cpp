@@ -136,6 +136,29 @@ static const char *screen_name(Screen s)
     return "?";
 }
 
+/* Header title shown for every non-Home screen (2026-09-18, user
+ * request): the header used to always say "Settings", even on
+ * sub-screens with their own distinct title ("Controls", "Touch
+ * diagnostic", ...) drawn separately next to "< Back" -- redundant on
+ * the Settings screen itself, and on every OTHER screen it meant the
+ * header's label was simply wrong (said "Settings" while looking at
+ * Controls). The header now always shows the CURRENT screen's own
+ * title, and draw_back_and_title() no longer draws a title at all --
+ * one title per screen, always in the header, never duplicated next to
+ * Back. Distinct from screen_name() (debug/log identifiers) since this
+ * one is user-facing wording. */
+static const char *header_title_for(Screen s)
+{
+    switch (s) {
+    case Screen::Home:             return "Settings";   /* unused: Home shows the button, not this label */
+    case Screen::Settings:         return "Settings";
+    case Screen::SettingsControls: return "Controls";
+    case Screen::SettingsAbout:    return "About";
+    case Screen::TouchDiag:        return "Touch diagnostic";
+    }
+    return "?";
+}
+
 /* UI-SPECS.md §1.1: "Full refresh only on: screen type change ... Everything
  * else uses fast DU refresh." Starts true so the very first draw of the
  * whole task is full too (no previous frame to diff against anyway — the
@@ -149,9 +172,15 @@ static void switch_screen(Screen s)
     s_screen = s;
     s_force_full_refresh = true;
     /* Focus from the previous screen's widgets doesn't correspond to
-     * anything on the new one — start with nothing focused rather than a
-     * stale/out-of-range index. */
-    s_interactions.setFocusedIndex(-1);
+     * anything on the new one -- but leaving it at -1 (2026-09-18, user
+     * report) meant the very first Left/Right press on every new screen
+     * just "woke up" the focus onto widget 0 instead of doing anything
+     * visible, so it looked like the first press or two did nothing.
+     * Defaulting to widget 0 instead means the first press always acts
+     * on a real, already-focused widget. Every screen's own draw_*()
+     * registers its primary action (Settings/Back) first, so index 0 is
+     * always that -- never a disabled row or something further down. */
+    s_interactions.setFocusedIndex(0);
 }
 
 /* ADR-012: idle timeout (no button/touch/serial input) before auto-sleep.
@@ -186,6 +215,24 @@ enum : ActionId {
     ACTION_OPEN_ABOUT = 6,
     ACTION_TOGGLE_POWER_CONFIRM = 7,
 };
+
+/* Confirm-press flash (2026-09-18, user request): a widget activated via
+ * touch naturally shows StateActive for however long the finger stays
+ * down before release fires the action -- but a Left/Right+Select or
+ * Power-short-press confirm fires and acts in the very same instant,
+ * with no equivalent pressed feedback at all. Set to the just-fired
+ * action for a fixed ~500ms window (board_ui_nav_task, right after
+ * Pass 1 resolves an ActionEvent and before handle_action() runs) so
+ * every draw_*() call site below can force that one widget to render
+ * StateActive regardless of how the confirm actually arrived --
+ * consistent feedback across touch, buttons, and Power, instead of
+ * touch alone happening to look right by accident of timing. */
+static ActionId s_flash_action = NO_ACTION;
+
+static State flash_state(ActionId action)
+{
+    return (s_flash_action != NO_ACTION && action == s_flash_action) ? StateActive : StateNormal;
+}
 
 /* -----------------------------------------------------------------------
  * Input sampling task (2026-09-18, decoupling from the render/flush loop).
@@ -441,15 +488,21 @@ static int16_t draw_fixed_zone(DisplayTarget &target, AppFrame &frame, int16_t s
         ButtonProps settings_btn;
         settings_btn.label = "Settings";
         settings_btn.action = ACTION_OPEN_SETTINGS;
+        settings_btn.state = flash_state(ACTION_OPEN_SETTINGS);
         button(frame, Rect{24, kHeaderActionY, 130, 36}, settings_btn);
     } else {
         /* Non-interactive now that it's not a button (2026-09-18, user
          * request) -- moved up into the header proper, alongside the
          * icon/battery row, instead of squatting in the action slot
-         * that "< Back" now needs. */
+         * that "< Back" now needs. Shows the CURRENT screen's own title
+         * (header_title_for()), not a static "Settings" -- generalized
+         * (2026-09-19, user request) after the Settings-screen-specific
+         * fix: every sub-screen gets its own header title now, and none
+         * of them repeat it next to "< Back" any more (see
+         * draw_back_and_title()). */
         TextStyle settings_label;
         settings_label.bold = true;
-        target.text(Rect{24, 16, 200, 40}, "Settings", settings_label);
+        target.text(Rect{24, 16, 200, 40}, header_title_for(s_screen), settings_label);
     }
 
     return 124;   /* Y offset where each screen's contextual content starts. */
@@ -478,34 +531,28 @@ static void draw_footer(DisplayTarget &target, const Rect &screen)
     target.text(Rect{0, static_cast<int16_t>(line_y + 8), screen.width, 24}, buf, footer_style);
 }
 
-static void draw_back_and_title(DisplayTarget &target, AppFrame &frame, const Rect &screen,
-                                const char *title)
+static void draw_back_and_title(AppFrame &frame)
 {
     /* Fixed at the same slot draw_fixed_zone() uses for the Settings
      * button on Home (2026-09-18, user request): "< Back" replaces it,
      * same place, rather than sitting lower at the old per-screen
      * content offset -- one consistent primary-action position across
      * every screen instead of it jumping around depending on which
-     * screen you're on. */
+     * screen you're on.
+     *
+     * No title drawn here at all (2026-09-19, generalized from an
+     * earlier Settings-screen-only fix): the header now always shows
+     * the current screen's own title (header_title_for(), in
+     * draw_fixed_zone()) -- repeating it here, centered next to Back,
+     * was always redundant once the header started doing that, and on
+     * every sub-screen the focused/active highlight around Back could
+     * visually run into that adjacent text. One title per screen,
+     * always in the header. */
     ButtonProps back;
     back.label = "< Back";
     back.action = ACTION_BACK;
+    back.state = flash_state(ACTION_BACK);
     button(frame, Rect{24, kHeaderActionY, 130, 36}, back);
-
-    /* title == nullptr skips the centered title entirely (2026-09-18):
-     * the top-level Settings screen used to pass "Settings" here, right
-     * below a header that -- once it started showing "Settings" as a
-     * label for every screen under it, not just a button on Home -- made
-     * the exact same word appear three times on screen at once. Kept
-     * for sub-screens (Controls & Calibration, About, Touch diagnostic),
-     * whose titles are NOT redundant with the header's generic
-     * "Settings" label. */
-    if (title != nullptr) {
-        TextStyle title_style;
-        title_style.align = TextAlign::Center;
-        title_style.bold = true;
-        target.text(Rect{0, kHeaderActionY, screen.width, 36}, title, title_style);
-    }
 }
 
 /* -----------------------------------------------------------------------
@@ -521,6 +568,7 @@ static void draw_home(DisplayTarget &target, AppFrame &frame, const Rect &screen
     ButtonProps sleep_now;
     sleep_now.label = "Sleep now";
     sleep_now.action = ACTION_SLEEP_NOW;
+    sleep_now.state = flash_state(ACTION_SLEEP_NOW);
     button(frame, Rect{40, 300, static_cast<int16_t>(screen.width - 80), 70}, sleep_now);
 
     TextStyle footer;
@@ -555,7 +603,7 @@ static const SettingsMenuItem kSettingsMenu[] = {
 
 static void draw_settings(DisplayTarget &target, AppFrame &frame, const Rect &screen, int16_t y)
 {
-    draw_back_and_title(target, frame, screen, nullptr);   /* header already says "Settings" */
+    draw_back_and_title(frame);
 
     int16_t row_y = static_cast<int16_t>(y + 48);
     const int16_t row_h = 60;
@@ -567,6 +615,7 @@ static void draw_settings(DisplayTarget &target, AppFrame &frame, const Rect &sc
         row.action = item.action;
         row.enabled = item.enabled;
         row.drawChevron = item.enabled;
+        row.state = flash_state(item.action);
         settingRow(frame, Rect{20, row_y, static_cast<int16_t>(screen.width - 40), row_h}, row);
         row_y = static_cast<int16_t>(row_y + row_h + row_gap);
     }
@@ -579,7 +628,7 @@ static void draw_settings(DisplayTarget &target, AppFrame &frame, const Rect &sc
  * ----------------------------------------------------------------------- */
 static void draw_settings_controls(DisplayTarget &target, AppFrame &frame, const Rect &screen, int16_t y)
 {
-    draw_back_and_title(target, frame, screen, "Controls");
+    draw_back_and_title(frame);
 
     int16_t row_y = static_cast<int16_t>(y + 56);
 
@@ -588,6 +637,7 @@ static void draw_settings_controls(DisplayTarget &target, AppFrame &frame, const
     toggle_row.row.subtitle = "= Select (confirm)";
     toggle_row.checked = settings_store_get_power_short_confirm();
     toggle_row.toggleAction = ACTION_TOGGLE_POWER_CONFIRM;
+    toggle_row.row.state = flash_state(ACTION_TOGGLE_POWER_CONFIRM);
     toggleRow(frame, Rect{20, row_y, static_cast<int16_t>(screen.width - 40), 64}, toggle_row);
     row_y = static_cast<int16_t>(row_y + 64 + 10);
 
@@ -596,6 +646,7 @@ static void draw_settings_controls(DisplayTarget &target, AppFrame &frame, const
     diag_row.subtitle = "Live raw coordinates";
     diag_row.action = ACTION_OPEN_TOUCH_DIAG;
     diag_row.drawChevron = true;
+    diag_row.state = flash_state(ACTION_OPEN_TOUCH_DIAG);
     settingRow(frame, Rect{20, row_y, static_cast<int16_t>(screen.width - 40), 60}, diag_row);
 }
 
@@ -605,14 +656,19 @@ static void draw_settings_controls(DisplayTarget &target, AppFrame &frame, const
  * ----------------------------------------------------------------------- */
 static void draw_settings_about(DisplayTarget &target, AppFrame &frame, const Rect &screen, int16_t y)
 {
-    draw_back_and_title(target, frame, screen, "About");
+    draw_back_and_title(frame);
 
     TextStyle body;
+    const esp_app_desc_t *app_desc = esp_app_get_description();
+    char version_line[48];
+    snprintf(version_line, sizeof(version_line), "Version: %s", app_desc->version);
     char idf_line[48];
     snprintf(idf_line, sizeof(idf_line), "IDF: %s", esp_get_idf_version());
 
     int16_t line_y = static_cast<int16_t>(y + 60);
     target.text(Rect{20, line_y, static_cast<int16_t>(screen.width - 40), 28}, "MySafeFob (MSF)", body);
+    line_y = static_cast<int16_t>(line_y + 34);
+    target.text(Rect{20, line_y, static_cast<int16_t>(screen.width - 40), 28}, version_line, body);
     line_y = static_cast<int16_t>(line_y + 34);
     target.text(Rect{20, line_y, static_cast<int16_t>(screen.width - 40), 28}, "Board: x4pro", body);
     line_y = static_cast<int16_t>(line_y + 34);
@@ -643,7 +699,7 @@ static void draw_crosshair(DisplayTarget &target, int16_t x, int16_t y)
 
 static void draw_touch_diag(DisplayTarget &target, AppFrame &frame, const Rect &screen, int16_t y)
 {
-    draw_back_and_title(target, frame, screen, "Touch diagnostic");
+    draw_back_and_title(frame);
 
     TextStyle body;
     body.align = TextAlign::Center;
@@ -871,6 +927,22 @@ void board_ui_nav_task(void *arg)
         ActionEvent ev = frame.finish();
 
         if (ev) {
+            /* Confirm-press flash (2026-09-18, user request): show the
+             * fired widget inverted for ~500ms on the CURRENT screen
+             * before acting -- handle_action() below may switch screens,
+             * at which point the widget that was pressed may no longer
+             * even exist, so this has to happen first, as its own
+             * flush, not folded into Pass 2. Uses draw_current_screen()
+             * with an empty input (nothing new to resolve, s_screen
+             * hasn't changed yet) -- flash_state() picks up s_flash_action
+             * from here. */
+            s_flash_action = ev.action;
+            AppFrame flash_frame(target, device, InputSnapshot{}, s_interactions);
+            draw_current_screen(target, flash_frame);
+            eink_display_fb_fast(s_fb);
+            vTaskDelay(pdMS_TO_TICKS(500));
+            s_flash_action = NO_ACTION;
+
             handle_action(ev.action);
         }
 

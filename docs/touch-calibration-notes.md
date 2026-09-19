@@ -1,11 +1,13 @@
 # Touch calibration — comparison notes (MySafeFob vs. `crosspoint-reader`)
 
-> **Status**: investigation only, no fix applied yet (per user request
-> 2026-09-17: "pas forcément les fixer mais comprendre pour voir s'il faut
-> changer quelque chose"). Written after building
-> `references/crosspoint-reader` (a mature, production firmware for the
-> same X4 Pro hardware, part of the vendored `freeink-sdk`) and finding its
-> touch feels correctly calibrated while ours doesn't.
+> **Status (2026-09-19)**: **RESOLVED and hardware-validated** — see §10
+> for the final, working calibration. Sections 1-9 below are the
+> investigation history (several superseded hypotheses along the way,
+> including a mid-investigation "no fix, understand first" phase per
+> user request 2026-09-17) — kept for context on *why* the final model
+> looks the way it does, not as still-open questions. Read §10 first if
+> you just need the current, correct behavior; read 1-9 if you need to
+> understand how we got there or are debugging a regression.
 
 ## 1. Summary
 
@@ -269,3 +271,110 @@ boolean was ever set) for real. Result:
   (UI-SPECS.md §2.12, already shipped as a live raw-coordinate readout)
   gets used for exactly this — tap progressively closer to each edge and
   note where the raw reading stops updating/registering.
+
+## 10. RESOLVED (2026-09-18/19) — the axes are swapped, not just miscalibrated
+
+Everything above (§1-9) was investigated under the assumption that
+`raw_x` tracks the display's horizontal position and `raw_y` tracks its
+vertical position — the same assumption `touch.c`'s original
+`pt.x = raw_x; pt.y = raw_y;` passthrough made. That assumption was
+**wrong**. A guided crosshair test (5 fixed on-screen targets — 4
+corners + center, drawn via `draw_crosshair()` on the touch diagnostic
+screen, `ui_nav.cpp`) gave the first unambiguous evidence:
+
+- **Top-left and bottom-left** crosshairs (same logical X, different
+  logical Y) produced nearly identical `raw_y` (~20-30) despite very
+  different `raw_x`.
+- **Top-left and top-right** crosshairs (same logical Y, different
+  logical X) produced nearly identical `raw_x` (~410) despite very
+  different `raw_y`.
+
+I.e. **`raw_y` tracks the display's horizontal position, and `raw_x`
+tracks its vertical position** — a genuine axis swap, not a scale or
+offset error on the axis each was assumed to represent. This matches
+`FreeInkUICore.h`'s own `touchToLogical()` for `LandscapeClockwise`
+touch orientation (`lx = 1-ny; ly = nx`) — the transform
+`DisplayTarget::touchOrientationFor(Portrait)` already names as correct
+for this exact render orientation, which nothing in this codebase had
+ever actually called. §4 above ("axis swap... baked into config") was
+on the right track conceptually but concluded the wrong thing (that our
+unit's raw output needed *no* software swap) from a corner test that
+happened to only vary one axis's extremes convincingly enough by
+coincidence, not a real disproof.
+
+### Final formulas (`boards/x4pro/app/touch.c`)
+
+Two-point linear fits, calibrated directly against measured crosshair
+positions (not derived from `touchToLogical()`'s normalized-coordinate
+math, though they implement the same underlying transform):
+
+```c
+/* X from raw_y: (raw_y=25 -> x=20) .. (raw_y=690 -> x=460) */
+pt.x = touch_lerp(raw_y, TOUCH_X_RAWY_LO, TOUCH_X_LOGICAL_LO,
+                   TOUCH_X_RAWY_HI, TOUCH_X_LOGICAL_HI, EINK_H - 1);
+
+/* Y from raw_x: NOT a single line -- see touch_lerp_y() below */
+pt.y = touch_lerp_y(raw_x);
+```
+
+- **X is linear end to end** — a single `touch_lerp()` call. A center
+  crosshair's ~20-30px residual is consistent with plain tap
+  imprecision (an unmarked center is harder to hit than a corner): the
+  two X half-ranges have nearly identical slopes (0.650 vs 0.668).
+- **Y is NOT linear end to end** — the two Y half-ranges have very
+  different slopes (-2.564 top-to-center vs -0.870 center-to-bottom), a
+  real, repeatable nonlinearity confirmed across two separate test
+  rounds. `touch_lerp_y()` therefore picks between two line segments
+  meeting at the measured center point
+  (`raw_x=415→y=240`, `raw_x=334→y=440`, `raw_x=104→y=640`) instead of
+  one line for the whole range.
+- `EINK_H`/`EINK_W` are reused for their *logical* meaning here, not
+  their panel-dimension one — `DisplayTarget`'s Portrait rotation
+  swaps panel 800×480 into logical 480×800, so `EINK_H` (480, panel
+  width) is the logical *width*, and `EINK_W` (800, panel height) is
+  the logical *height*. Deliberately not renamed, to avoid drift from
+  the panel-dimension constants they actually are.
+- The Home-key zone check (`raw_x<70 && raw_y in [660,720]`, §8 above)
+  is **unaffected** by any of this — it thresholds the same raw
+  registers directly, independent of how the main touch grid's axes
+  get reinterpreted for `pt.x`/`pt.y`, and has been reliable throughout
+  the whole investigation.
+
+### Hardware validation (2026-09-19)
+
+- **Crosshairs**: all 4 corners landed within ~13px of their true
+  position on the first retest after the axis swap; a follow-up retest
+  (after `touch_lerp_y()`'s two-segment fix) brought the center's Y
+  error down from ~100px to ~8px. X's own center residual (~20-30px)
+  never fully resolved and is attributed to tap imprecision, not a
+  remaining model error (see the slope comparison above).
+- **Real navigation**: a hardware log showed three consecutive direct
+  taps correctly driving real screen transitions — Settings
+  (`Home -> Settings`), "Controls & Calibration"
+  (`Settings -> SettingsControls`), and "Touch diagnostic"
+  (`SettingsControls -> TouchDiag`) — each landing inside its target
+  widget's `Rect` and firing the right `ActionId`. This is the
+  strongest evidence so far: not just crosshairs, but the actual
+  product experience (tap-to-navigate) working correctly.
+
+### Still open / not done
+
+- **Dead-zone width** (§9): still not formally characterized — the
+  24px button margin fix was a practical mitigation, not a measurement.
+- **X-axis linearity**: validated only at the two extremes plus one
+  imprecise center tap; never re-verified with a second, more careful
+  center-only retest (the user chose to move forward once corners and Y
+  were solid, per the "good enough, ship it" judgment call — not
+  revisited since).
+- **A related but separate debugging obstacle**: while chasing this,
+  standard `ESP_LOG*` calls from `ui_nav.cpp`/`touch.c` were found to
+  never reach the serial monitor (100% reproducible, not a race —
+  confirmed via a raw `printf()` at the exact same call site, which
+  always worked). Root cause never found (`CONFIG_LOG_VERSION=1`, no
+  `LOG_LOCAL_LEVEL` override, no `esp_log_set_vprintf()` hook anywhere
+  in the codebase — all checked and ruled out). Worked around, not
+  fixed: both files now `#undef`/`#define` `ESP_LOGE`/`W`/`I` to a
+  printf-based equivalent, scoped to those two translation units only
+  (`docs/ROADMAP.md`, ADR-014's amendments). Revisit if it turns out to
+  affect other files/tasks later — nothing else in the project has
+  reported the same symptom so far.
