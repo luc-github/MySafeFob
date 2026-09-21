@@ -153,3 +153,34 @@ void settings_store_set_idle_timeout_s(uint32_t seconds)
 {
     settings_set_u32(SETTINGS_ID_IdleTimeoutS, seconds);
 }
+
+bool settings_store_get_frontlight_on(void)
+{
+    return settings_get_u32(SETTINGS_ID_FrontlightOn) != 0;
+}
+
+void settings_store_set_frontlight_on(bool on)
+{
+    settings_set_u32(SETTINGS_ID_FrontlightOn, on ? 1 : 0);
+}
+
+uint32_t settings_store_get_frontlight_color(void)
+{
+    return settings_get_u32(SETTINGS_ID_FrontlightColor);
+}
+
+void settings_store_set_frontlight_color(uint32_t color)
+{
+    settings_set_u32(SETTINGS_ID_FrontlightColor, color);
+}
+
+uint32_t settings_store_get_frontlight_intensity(void)
+{
+    return settings_get_u32(SETTINGS_ID_FrontlightIntensity);
+}
+
+void settings_store_set_frontlight_intensity(uint32_t percent)
+{
+    settings_set_u32(SETTINGS_ID_FrontlightIntensity, percent);
+}
+

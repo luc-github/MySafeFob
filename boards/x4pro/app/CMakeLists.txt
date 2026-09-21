@@ -7,7 +7,7 @@
 # component's first NVS-backed persistence (UI preferences only).
 idf_component_register(
     SRCS "splash.cpp" "eink.c" "touch.c" "buttons.c" "i2c_bus.c" "ui_nav.cpp"
-         "settings_store.c" "battery.c"
+         "settings_store.c" "battery.c" "frontlight.c"
     INCLUDE_DIRS "."
     REQUIRES driver esp_timer freeinkui power_mgr nvs_flash esp_app_format
 )

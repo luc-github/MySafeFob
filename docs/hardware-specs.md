@@ -271,7 +271,7 @@ directories visible (XTCACHE/XTDATA), MBR signature 55AA read** — see `cmd_sd`
 | `button_driver` | 3 buttons + Home | GPIO/GT911 | P1 | `cmd_btn` probe |
 | `sd_driver` | 1-bit SDMMC | SDMMC | P1 (update/backup) | `cmd_sd` probe |
 | `battery_driver` | CW2017 + charge | I2C + GPIO21 | P2 | `cmd_gauge`/`cmd_charge` |
-| `backlight_driver` | warm/cool LED | LEDC 25k | P2 | `cmd_light` probe |
+| `backlight_driver` | warm/cool LED | LEDC 25k | P2 | ✅ done — `boards/x4pro/app/frontlight.c` (ADR-016, 2026-09-19) |
 
 ## ✅ Validation completed (state as of 2026-09-13)
 

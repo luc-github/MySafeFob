@@ -640,15 +640,23 @@ and frontlight.
   Argon2id-derive-then-re-seal path, no new crypto primitive needed).
 - **Two separate delay fields** — resolves this doc's previous open
   point: F-03's PIN re-lock and ADR-012's device-sleep are **kept as two
-  independent timers**, both defaulting to 45 s today, both adjustable
-  here independently (a numeric stepper, `slider-row.h`/`capsule-slider.h`).
-  Changing "Auto-sleep after inactivity" writes straight into the value
-  `ui_nav.cpp`'s `IDLE_TIMEOUT_MS` currently hardcodes — this setting is
-  the reason that constant needs to become a runtime value read from
-  `secret_store`/NVS instead, whenever this screen is implemented.
-  "Auto-lock (PIN)" has no backing implementation yet at all (F-03's
-  re-lock-to-UNLOCK-while-still-awake behavior was never built) — this
-  screen is also the spec for that missing piece.
+  independent timers**. "Auto-lock (PIN)" has no backing implementation
+  yet at all (F-03's re-lock-to-UNLOCK-while-still-awake behavior was
+  never built, needs `secret_store`) — this screen is still the spec for
+  that missing piece, and the whole SETTINGS_SECURITY screen stays
+  unbuilt until then.
+
+> **Amendment (2026-09-19, ADR-016)**: "Auto-sleep after inactivity" was
+> **built ahead of the rest of this screen**, in `SETTINGS_CONTROLS`
+> instead of here — it has no dependency on `secret_store`/PIN (unlike
+> every other row above), and finishing it now avoided leaving the
+> already-working ADR-012 timeout REPL-only. Uses `stepper-row.h`
+> (`StepperRowProps`), not the slider-row/capsule-slider pair originally
+> guessed above — a plain -/+ stepper matches the "[ 45 ]s" bracket
+> mockup exactly, no draggable bar needed. Step ±15s, range
+> `[0,300]`, "Off" shown at 0. Will move into this screen once
+> `secret_store` exists and "Change PIN"/"Auto-lock (PIN)" are real,
+> so the screen ships as a whole rather than partially disabled.
 
 ### 2.14 SETTINGS_DISPLAY (F-16, should-have)
 
@@ -670,6 +678,65 @@ frontlight driver is wired into the UI layer (the GPIO8/GPIO9 warm/cool
 PWM driver itself is already validated at the hardware level per
 `hardware-specs.md`; only the UI binding is missing). Matches
 FEATURES.md's stated defaults: off by default, 30 s auto-off.
+
+> **Amendment (2026-09-19, ADR-016) — built**: `frontlight.c`/`.h`
+> (native LEDC driver, 2 channels) + this screen, live in
+> `boards/x4pro/app/`. Intensity uses `slider-row.h` (buttons-only,
+> `sliderAction` left unset — the capsule is a visual bar, not
+> draggable, keeping this a 0-code-added-per-drag-math feature).
+> Auto-off after Xs only cuts the physical output; it does not clear the
+> persisted "Frontlight" on/off preference (`ui_nav.cpp`'s
+> `s_frontlight_lit` tracks the runtime state separately) — the next
+> explicit toggle relights it.
+>
+> **Amendment (2026-09-20, ADR-016) — first hardware round, 3 changes**:
+> **Color reversed from the discrete Warm/Cool choice above to a
+> continuous 0-100 warm↔cool mix** (`frontlight_apply()` drives both LEDC
+> channels at once, linear crossfade) — a plain toggle felt wrong for
+> what reads as a color-temperature control once tested by hand. Surfaced
+> as 3 stops (Warm/Neutral/Cool, `stepper-row.h`) rather than a full
+> slider — an in-between position has no meaningful numeric target
+> without a color-temperature readout this device doesn't have.
+> **Auto-off changed from a linear ±5s stepper (min 5s, couldn't reach 0)
+> to 4 discrete presets**: Off/30s/1min/2min — the fine steps had no real
+> meaning below ~30s. **Color and Intensity are now greyed
+> (`.enabled` tied to the Frontlight toggle)** while the light is off.
+> Intensity's control also enlarged (taller bar, bigger +/- targets)
+> after user comparison against `crosspoint-reader`'s equivalent.
+> Frontlight on/off/color/intensity/auto-off end-to-end and the
+> greyed-while-off state are hardware-validated as of this round; the
+> continuous color blend, discrete auto-off presets, and enlarged
+> Intensity control are new since and not yet retested.
+>
+> **Amendment (2026-09-20, continued) — Intensity switched from a slider
+> to a stepper**: the capsule bar was never wired to drag/tap
+> (`sliderAction` left unset from the start — see this file's first
+> ADR-016 amendment) — an undraggable slider misrepresented itself as
+> interactive when only its +/- buttons ever did anything, and the "NN%"
+> value text already communicates the level without a bar. Now a
+> `StepperRowProps` like the other three controls on this screen. All
+> four (Color, Intensity, Auto-off here; the idle-timeout stepper on
+> Controls & Calibration) share one `apply_big_stepper_style()` helper:
+> a visibly bordered button box (`sliderRowStepStyles()`, previously only
+> applied automatically inside `slider-row.h`) and a bigger, thicker
+> hand-drawn +/- glyph — `stepperRow`'s own default had neither, reading
+> as smaller/less clearly tappable than Intensity's old slider buttons.
+> Known cosmetic gap carried over from the color-step fix: the vendored
+> `StepperRowProps` doesn't propagate `.row.enabled` to its own buttons,
+> so Intensity's +/- also stay visually "live" while Frontlight is off —
+> guarded in `handle_action()` instead (frozen vendored copy, ADR-010
+> pt.3). Not yet hardware-validated.
+>
+> **Amendment (2026-09-20, continued) — "Auto-off after" removed, merged
+> into the device's own idle-sleep timeout**: user request — a
+> light-only inactivity timer alongside `SETTINGS_CONTROLS`' own
+> "Auto-sleep after inactivity" was two settings for one job, since going
+> to sleep already turns the frontlight off (`frontlight_off()`,
+> `splash.cpp`). `FrontlightAutoOffS` and its whole UI row/action/runtime
+> check removed; the idle-sleep timeout is now the single inactivity
+> timer governing both the device sleeping and the light going out (as a
+> side effect of that same sleep). SETTINGS_DISPLAY is now Frontlight +
+> Color + Intensity only.
 
 ### 2.15 TIME_SYNC (F-02, ADR-001/ADR-006)
 

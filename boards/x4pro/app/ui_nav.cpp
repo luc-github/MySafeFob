@@ -42,6 +42,7 @@ extern "C" {
 #include "buttons.h"
 #include "touch.h"
 #include "battery.h"
+#include "frontlight.h"
 #include "power_mgr.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -113,7 +114,7 @@ extern "C" void board_sleep_screen_show(void);
  * and a simplified touch diagnostic (raw coordinate readout — the full
  * guided 3x3 grid from UI-SPECS §2.12 is deferred).
  * ----------------------------------------------------------------------- */
-enum class Screen { Home, Settings, SettingsControls, SettingsAbout, TouchDiag };
+enum class Screen { Home, Settings, SettingsControls, SettingsAbout, SettingsDisplay, TouchDiag };
 
 static Screen s_screen = Screen::Home;
 /* UI-SPECS.md §1.3.1: one remembered screen id, not a navigation stack —
@@ -131,6 +132,7 @@ static const char *screen_name(Screen s)
     case Screen::Settings:         return "Settings";
     case Screen::SettingsControls: return "SettingsControls";
     case Screen::SettingsAbout:    return "SettingsAbout";
+    case Screen::SettingsDisplay:  return "SettingsDisplay";
     case Screen::TouchDiag:        return "TouchDiag";
     }
     return "?";
@@ -154,7 +156,8 @@ static const char *header_title_for(Screen s)
     case Screen::Settings:         return "Settings";
     case Screen::SettingsControls: return "Controls";
     case Screen::SettingsAbout:    return "About";
-    case Screen::TouchDiag:        return "Touch diagnostic";
+    case Screen::SettingsDisplay:  return "Display";
+    case Screen::TouchDiag:        return "Touch calibration";
     }
     return "?";
 }
@@ -214,6 +217,11 @@ enum : ActionId {
     ACTION_OPEN_TOUCH_DIAG = 5,
     ACTION_OPEN_ABOUT = 6,
     ACTION_TOGGLE_POWER_CONFIRM = 7,
+    ACTION_IDLE_TIMEOUT_STEP = 8,
+    ACTION_OPEN_DISPLAY = 9,
+    ACTION_TOGGLE_FRONTLIGHT = 10,
+    ACTION_FRONTLIGHT_COLOR_STEP = 11,
+    ACTION_FRONTLIGHT_INTENSITY_STEP = 12,
 };
 
 /* Confirm-press flash (2026-09-18, user request): a widget activated via
@@ -232,6 +240,87 @@ static ActionId s_flash_action = NO_ACTION;
 static State flash_state(ActionId action)
 {
     return (s_flash_action != NO_ACTION && action == s_flash_action) ? StateActive : StateNormal;
+}
+
+/* Bigger, clearly-bordered +/- controls (2026-09-20, user feedback):
+ * StepperRowProps' own default falls back to defaultButtonStyles(), which
+ * has no border -- next to Intensity's already-bordered slider buttons
+ * (sliderRowStepStyles(), slider-row.h's own default) the stepper glyphs
+ * had no visible button box and read as smaller/less tappable than they
+ * actually were. Reused by every StepperRowProps row in this file (idle-
+ * timeout, Color, Auto-off) so all four +/- controls on this screen and
+ * Controls & Calibration look and feel consistent with each other. */
+static void apply_big_stepper_style(StepperRowProps &props)
+{
+    props.buttonWidth = 56;
+    props.buttonHeight = 56;
+    /* Not sliderRowStepStyles() as-is (2026-09-20, user report: buttons
+     * went solid black on press, +/- invisible): the +/- glyph itself is
+     * hand-drawn with a FIXED black controlPaint (stepper-row.h), unlike
+     * a text glyph it never follows the resolved style's foreground --
+     * sliderRowStepStyles()'s own active variant inverts the background
+     * to solid black, which then hides that fixed-black glyph entirely.
+     * A light-gray press state keeps the border/black-on-white look but
+     * still reads as "something happened", with the glyph staying
+     * visible throughout. */
+    StyleSet styles = sliderRowStepStyles(18);
+    styles.active = styles.normal;
+    styles.active.background = Paint::dither(Color::LightGray);
+    props.buttonStyles = styles;
+    props.controlSize = 24;
+    props.controlStroke = 4;
+}
+
+/* No visual reaction to a press at all while held (2026-09-20, user
+ * feedback on the two ToggleRowProps in this file): unlike a stepper's
+ * label, a toggle row's WHOLE area is a real hit target (toggle-row.h's
+ * own default), so the row genuinely goes StateActive from the
+ * framework's real touch-hold tracking while a finger is down --
+ * independent of, and unaffected by, removing the .row.state =
+ * flash_state(...) assignment (that only ever covered the separate
+ * post-release flash, already skipped for touch). A first attempt set
+ * `active` to the milder `focused` (light-gray dither) instead of a full
+ * invert, but that was still "an effect" on the label text the user
+ * didn't want -- `active` now equals `normal` outright, fully decoupling
+ * the label from the press state: the row never changes appearance while
+ * held, relying entirely on the switch's own flip once the action
+ * actually applies. `focused` (Left/Right keyboard-nav highlight,
+ * unrelated to touch) is untouched. */
+static StyleSet toggle_row_no_press_invert()
+{
+    StyleSet styles = defaultListRowStyles();
+    styles.active = styles.normal;
+    return styles;
+}
+
+/* Manual switch drawing, bypassing components/controls/toggle.h entirely.
+ *
+ * History (2026-09-20): first replaced toggle.h's track+knob with a
+ * hand-drawn equivalent, then a solid-black/outlined-white rectangle
+ * (see git history for both) -- confirmed working (state genuinely
+ * flips), but the plain full-rect flip looked out of place next to the
+ * bordered +/- stepper buttons already on this screen. Now a checkbox:
+ * same bordered-white-box look as apply_big_stepper_style()'s buttons
+ * (white background, black border) at every state, with a smaller filled
+ * black square inside when ON and nothing inside when OFF -- one
+ * consistent "control" visual language across every interactive element
+ * on Display/Controls instead of a differently-styled switch. */
+static void draw_switch(DisplayTarget &target, Rect sw, bool checked)
+{
+    /* Radius 18 (2026-09-20, user feedback): same rounding as the +/-
+     * stepper buttons (apply_big_stepper_style()'s sliderRowStepStyles(18)
+     * radius) -- rounded corners on the outer box, and a smaller radius on
+     * the inner fill so it doesn't read as sharp-cornered inside a rounded
+     * frame. */
+    target.fill(sw, Paint::solid(Color::White), 18);
+    target.stroke(sw, Paint::solid(Color::Black), 2, 18);
+
+    if (checked) {
+        constexpr int16_t kInset = 10;
+        const Rect inner{static_cast<int16_t>(sw.x + kInset), static_cast<int16_t>(sw.y + kInset),
+                         static_cast<int16_t>(sw.width - kInset * 2), static_cast<int16_t>(sw.height - kInset * 2)};
+        target.fill(inner, Paint::solid(Color::Black), 10);
+    }
 }
 
 /* -----------------------------------------------------------------------
@@ -302,10 +391,23 @@ static void input_sampler_task(void *arg)
      * fires, rather than silently masking a real bug. */
     const int64_t touch_settle_until_us = esp_timer_get_time() + 300000;   /* 300 ms */
 
-    bool touch_was_pressed = false;
+    bool touch_was_pressed = false;      /* debounced state, what edges are computed from */
+    bool touch_raw_state = false;        /* last raw touch_read() reading, pre-debounce */
+    int64_t touch_raw_since_us = 0;      /* when touch_raw_state last changed */
     int16_t touch_down_x = 0, touch_down_y = 0;
     int16_t touch_down_raw_x = 0, touch_down_raw_y = 0;
     bool touch_down_home = false;
+
+    /* Software debounce (2026-09-19, user report): a single physical tap
+     * was occasionally producing TWO full press/release cycles -- e.g. a
+     * "Color" tap cycling Warm->Cool->Warm instead of landing on Cool.
+     * Physical buttons already debounce in hardware/buttons.c; touch
+     * never had an equivalent, so a brief electrical bounce right at
+     * press or release (common on capacitive panels) was read as a
+     * genuine second tap. Requires the raw reading to stay stable for
+     * kTouchDebounceUs before a transition is trusted -- same technique
+     * as a mechanical switch debounce, just in software here. */
+    constexpr int64_t kTouchDebounceUs = 30000;   /* 30 ms */
 
     while (1) {
         /* Left/Right only — Power (BTN_3) stays exclusively owned by
@@ -335,8 +437,19 @@ static void input_sampler_task(void *arg)
 
         if (s_touch_ok) {
             touch_point_t tp = touch_read();
-            const bool press_edge = tp.pressed && !touch_was_pressed;
-            const bool release_edge = !tp.pressed && touch_was_pressed;
+
+            if (tp.pressed != touch_raw_state) {
+                touch_raw_state = tp.pressed;
+                touch_raw_since_us = esp_timer_get_time();
+            }
+            bool debounced = touch_was_pressed;
+            if (touch_raw_state != touch_was_pressed &&
+                (esp_timer_get_time() - touch_raw_since_us) >= kTouchDebounceUs) {
+                debounced = touch_raw_state;
+            }
+            const bool press_edge = debounced && !touch_was_pressed;
+            const bool release_edge = !debounced && touch_was_pressed;
+            touch_was_pressed = debounced;
 
             if (press_edge || release_edge) {
                 ESP_LOGI(TAG, "touch %s: x=%d y=%d home=%d raw=(%d,%d)%s",
@@ -361,18 +474,18 @@ static void input_sampler_task(void *arg)
                     xQueueSend(s_input_queue, &ev, 0);
                 }
             }
-            touch_was_pressed = tp.pressed;
         }
     }
 }
 
-/* TESTING ONLY (2026-09-18) — deep sleep drops the USB-serial-JTAG
- * connection, which was making it impossible to tell whether a touch
- * test actually triggered Sleep or something else: the log line proving
- * it either never got flushed before the disconnect, or the terminal
- * missed it across the reconnect. Set to 0 to restore real sleep once
- * touch behavior is understood — do not ship with this at 1. */
-#define MSF_DEBUG_NO_SLEEP 1
+/* Re-enabled 2026-09-19: was set to 1 (2026-09-18) because deep sleep
+ * drops the USB-serial-JTAG connection, which made it impossible to tell
+ * whether a touch test actually triggered Sleep or something else. Now
+ * that the idle timeout is user-configurable (SETTINGS_CONTROLS) instead
+ * of only reachable via REPL, real sleep needs to actually work again for
+ * that setting to mean anything -- flip back to 1 only for a specific
+ * touch-debugging session, never leave it at 1 otherwise. */
+#define MSF_DEBUG_NO_SLEEP 0
 
 static void enter_sleep_from_idle_or_menu(const char *reason)
 {
@@ -555,6 +668,43 @@ static void draw_back_and_title(AppFrame &frame)
     button(frame, Rect{24, kHeaderActionY, 130, 36}, back);
 }
 
+/* Small discrete preset lists used by more than one Settings row below --
+ * find the closest stored value's index, then the caller steps by +/-1
+ * (wrap_index(), near handle_action()) -- stateless, no need to track
+ * "current index" separately from the persisted setting. */
+static int nearest_preset_index(const uint32_t *presets, int count, uint32_t value)
+{
+    int best = 0;
+    uint32_t best_diff = UINT32_MAX;
+    for (int i = 0; i < count; i++) {
+        uint32_t diff = value > presets[i] ? value - presets[i] : presets[i] - value;
+        if (diff < best_diff) {
+            best_diff = diff;
+            best = i;
+        }
+    }
+    return best;
+}
+
+/* Auto-sleep presets (2026-09-20, corrected same-day regression): when
+ * the frontlight's separate auto-off timer was merged into this one
+ * idle-sleep timeout, the merge accidentally kept THIS setting's
+ * pre-existing linear ±15s/[0,300] range instead of adopting the
+ * Off/30s/1min/2min preset scale that had specifically been designed
+ * for (and requested for) the auto-off setting it absorbed. */
+static constexpr uint32_t kAutoSleepPresets[] = {0, 30, 60, 120};
+static const char *const kAutoSleepLabels[] = {"Off", "30s", "1min", "2min"};
+static constexpr int kAutoSleepPresetCount = 4;
+
+/* Color presets (2026-09-20, amended from an earlier discrete Warm-XOR-Cool
+ * design): a continuous 0-100 warm<->cool mix (frontlight.h), surfaced as 3
+ * stops -- Warm/Neutral/Cool -- rather than a full slider, since "somewhere
+ * between" isn't a meaningful target for the user to aim for without a
+ * numeric readout of what a color temperature even means here. */
+static constexpr uint32_t kColorMixPresets[] = {0, 50, 100};
+static const char *const kColorMixLabels[] = {"Warm", "Neutral", "Cool"};
+static constexpr int kColorMixPresetCount = 3;
+
 /* -----------------------------------------------------------------------
  * HOME (placeholder — "About" moved to SETTINGS_ABOUT, "Sleep now" stays).
  * ----------------------------------------------------------------------- */
@@ -578,26 +728,31 @@ static void draw_home(DisplayTarget &target, AppFrame &frame, const Rect &screen
 }
 
 /* -----------------------------------------------------------------------
- * SETTINGS (menu, UI-SPECS.md §2.11). Only "Controls & Calibration" and
- * "About" are enabled this pass — the rest need components that don't
- * exist yet (secret_store/PIN, frontlight UI binding, time_svc, SD backup)
- * and are rendered disabled so the menu's shape doesn't need to change
- * later, only each row's enabled flag.
+ * SETTINGS (menu, UI-SPECS.md §2.11). "Controls & Calibration", "Display"
+ * and "About" are enabled — the rest still need components that don't
+ * exist yet (secret_store/PIN, time_svc, SD backup) and are rendered
+ * disabled so the menu's shape doesn't need to change later, only each
+ * row's enabled flag.
  * ----------------------------------------------------------------------- */
 struct SettingsMenuItem {
     const char *label;
-    const char *subtitle;
+    /* Right-aligned single-line badge (row.value), not a wrapped second
+     * line (row.subtitle) -- "NA" for not-yet-available rows (2026-09-20,
+     * user request: the old full-sentence subtitles doubled every
+     * disabled row's height for no real gain, "not available yet" says
+     * nothing a greyed-out, non-chevron row doesn't already say). */
+    const char *badge;
     bool enabled;
     ActionId action;
 };
 
 static const SettingsMenuItem kSettingsMenu[] = {
     {"Controls & Calibration", nullptr, true, ACTION_OPEN_CONTROLS},
-    {"Security", "PIN, auto-lock - not available yet", false, NO_ACTION},
-    {"Display", "Frontlight - not available yet", false, NO_ACTION},
-    {"Time & Sync", "Not available yet", false, NO_ACTION},
-    {"Backup (SD)", "Not available yet", false, NO_ACTION},
-    {"Owner info", "Sleep screen - not available yet", false, NO_ACTION},
+    {"Security", "NA", false, NO_ACTION},
+    {"Display", nullptr, true, ACTION_OPEN_DISPLAY},
+    {"Time & Sync", "NA", false, NO_ACTION},
+    {"Backup (SD)", "NA", false, NO_ACTION},
+    {"Owner info", "NA", false, NO_ACTION},
     {"About", nullptr, true, ACTION_OPEN_ABOUT},
 };
 
@@ -611,7 +766,7 @@ static void draw_settings(DisplayTarget &target, AppFrame &frame, const Rect &sc
     for (const SettingsMenuItem &item : kSettingsMenu) {
         SettingRowProps row;
         row.label = item.label;
-        row.subtitle = item.subtitle;
+        row.value = item.badge;
         row.action = item.action;
         row.enabled = item.enabled;
         row.drawChevron = item.enabled;
@@ -632,22 +787,148 @@ static void draw_settings_controls(DisplayTarget &target, AppFrame &frame, const
 
     int16_t row_y = static_cast<int16_t>(y + 56);
 
-    ToggleRowProps toggle_row;
-    toggle_row.row.label = "Power short press";
-    toggle_row.row.subtitle = "= Select (confirm)";
-    toggle_row.checked = settings_store_get_power_short_confirm();
-    toggle_row.toggleAction = ACTION_TOGGLE_POWER_CONFIRM;
-    toggle_row.row.state = flash_state(ACTION_TOGGLE_POWER_CONFIRM);
-    toggleRow(frame, Rect{20, row_y, static_cast<int16_t>(screen.width - 40), 64}, toggle_row);
+    /* Manual switch (2026-09-20): see draw_switch()'s own comment --
+     * toggleRow()/toggle() never visibly reflected the checked state on
+     * hardware. Renamed from "Power short press" / "= Select (confirm)"
+     * (user proposal): one line says the same thing the label+subtitle
+     * pair did. */
+    const Rect power_row_rect{20, row_y, static_cast<int16_t>(screen.width - 40), 64};
+    SettingRowProps power_row;
+    power_row.label = "Power for Set";
+    power_row.action = ACTION_TOGGLE_POWER_CONFIRM;
+    /* No .state flash (2026-09-20, user feedback): same reasoning as the
+     * Frontlight toggle -- the switch itself already shows the change. */
+    power_row.styles = toggle_row_no_press_invert();
+    settingRow(frame, power_row_rect, power_row);
+    /* Square, same 56px as apply_big_stepper_style()'s +/- buttons
+     * (2026-09-20, user feedback: match that format for consistency). */
+    constexpr int16_t kSwitchSize = 56;
+    const Rect power_switch_rect{static_cast<int16_t>(power_row_rect.right() - 8 - kSwitchSize),
+                                 static_cast<int16_t>(power_row_rect.y + (power_row_rect.height - kSwitchSize) / 2),
+                                 kSwitchSize, kSwitchSize};
+    draw_switch(target, power_switch_rect, settings_store_get_power_short_confirm());
     row_y = static_cast<int16_t>(row_y + 64 + 10);
 
+    /* Renamed from "Touch diagnostic" / "Live raw coordinates" (2026-09-20,
+     * user request): the screen itself now doubles as a calibration aid
+     * (the "Set button" arrow, draw_touch_diag()), not just a readout. */
     SettingRowProps diag_row;
-    diag_row.label = "Touch diagnostic";
-    diag_row.subtitle = "Live raw coordinates";
+    diag_row.label = "Touch calibration";
     diag_row.action = ACTION_OPEN_TOUCH_DIAG;
     diag_row.drawChevron = true;
     diag_row.state = flash_state(ACTION_OPEN_TOUCH_DIAG);
     settingRow(frame, Rect{20, row_y, static_cast<int16_t>(screen.width - 40), 60}, diag_row);
+    row_y = static_cast<int16_t>(row_y + 60 + 10);
+
+    /* ADR-012's idle-activity timeout, now user-configurable (2026-09-19)
+     * instead of REPL-only, and now also the single timer for the
+     * frontlight's own auto-off (merged 2026-09-20, ACTION_FRONTLIGHT_
+     * AUTOOFF_STEP's removal) -- kept out of SETTINGS_SECURITY (its
+     * spec'd home, UI-SPECS.md §2.13) since that screen still needs
+     * secret_store for "Change PIN"/"Auto-lock (PIN)", not built yet;
+     * this setting has no such dependency. Off/30s/1min/2min presets
+     * (2026-09-20, corrected same-day regression): the merge had
+     * accidentally kept this row's own pre-existing linear ±15s/[0,300]
+     * range instead of adopting the preset scale designed for the
+     * auto-off setting it absorbed. */
+    const int idle_idx = nearest_preset_index(kAutoSleepPresets, kAutoSleepPresetCount,
+                                               settings_store_get_idle_timeout_s());
+    StepperRowProps idle_row;
+    idle_row.row.label = "Auto-sleep after inactivity";
+    idle_row.value = kAutoSleepLabels[idle_idx];
+    idle_row.widestValue = "2min";
+    idle_row.decrement = ACTION_IDLE_TIMEOUT_STEP;
+    idle_row.increment = ACTION_IDLE_TIMEOUT_STEP;
+    idle_row.decrementValue = -1;
+    idle_row.incrementValue = 1;
+    apply_big_stepper_style(idle_row);
+    /* No .row.state flash (2026-09-20, user feedback): the label area
+     * has no action of its own (only the +/- buttons do), so this only
+     * ever flashed from our own explicit assignment, never from a real
+     * touch/hold -- and it duplicated the buttons' own natural press
+     * feedback without adding information. Removed here and on every
+     * other stepper in this file. */
+    stepperRow(frame, Rect{20, row_y, static_cast<int16_t>(screen.width - 40), 60}, idle_row);
+}
+
+/* -----------------------------------------------------------------------
+ * SETTINGS_DISPLAY (UI-SPECS.md §2.14, F-16) — frontlight on/off, a
+ * warm<->cool color mix (3 stops), intensity, and an auto-off timeout.
+ * Every change here applies immediately via frontlight_apply(), not just
+ * on next screen entry, mirroring ACTION_TOGGLE_POWER_CONFIRM's
+ * read-then-write pattern (no UI-side cached copy of the setting).
+ * ----------------------------------------------------------------------- */
+static void draw_settings_display(DisplayTarget &target, AppFrame &frame, const Rect &screen, int16_t y)
+{
+    draw_back_and_title(frame);
+
+    int16_t row_y = static_cast<int16_t>(y + 56);
+
+    const bool frontlight_on = settings_store_get_frontlight_on();
+
+    /* Manual switch (2026-09-20): see draw_switch()'s own comment --
+     * toggle-row.h's toggleRow()/toggle() never visibly reflected the
+     * (confirmed-correct) checked state on hardware. settingRow() still
+     * owns the label + the row's hit target (row.action); only the
+     * switch's pixels are now hand-drawn. */
+    const Rect on_row_rect{20, row_y, static_cast<int16_t>(screen.width - 40), 64};
+    SettingRowProps on_row;
+    on_row.label = "Frontlight";
+    on_row.action = ACTION_TOGGLE_FRONTLIGHT;
+    /* No .state flash (2026-09-20, user feedback): the switch itself
+     * already shows the change, a whole-row invert on top was redundant. */
+    on_row.styles = toggle_row_no_press_invert();
+    settingRow(frame, on_row_rect, on_row);
+    /* Square, same 56px as apply_big_stepper_style()'s +/- buttons
+     * (2026-09-20, user feedback: match that format for consistency). */
+    constexpr int16_t kSwitchSize = 56;
+    const Rect on_switch_rect{static_cast<int16_t>(on_row_rect.right() - 8 - kSwitchSize),
+                              static_cast<int16_t>(on_row_rect.y + (on_row_rect.height - kSwitchSize) / 2),
+                              kSwitchSize, kSwitchSize};
+    draw_switch(target, on_switch_rect, frontlight_on);
+    row_y = static_cast<int16_t>(row_y + 64 + 10);
+
+    /* Color + Intensity only mean something while the light is actually
+     * on (2026-09-19, user feedback) -- greyed out via .enabled=false
+     * rather than hidden, so the screen's row layout/heights stay fixed
+     * whether Frontlight is on or off (same "disabled, not removed"
+     * convention as kSettingsMenu's not-yet-available rows). .enabled
+     * also disables the hit area, so a tap can't change either while off. */
+    const int color_idx = nearest_preset_index(kColorMixPresets, kColorMixPresetCount,
+                                                settings_store_get_frontlight_color());
+    StepperRowProps color_row;
+    color_row.row.label = "Color";
+    color_row.value = kColorMixLabels[color_idx];
+    color_row.widestValue = "Neutral";
+    color_row.decrement = ACTION_FRONTLIGHT_COLOR_STEP;
+    color_row.increment = ACTION_FRONTLIGHT_COLOR_STEP;
+    color_row.decrementValue = -1;
+    color_row.incrementValue = 1;
+    color_row.row.enabled = frontlight_on;
+    apply_big_stepper_style(color_row);
+    stepperRow(frame, Rect{20, row_y, static_cast<int16_t>(screen.width - 40), 60}, color_row);
+    row_y = static_cast<int16_t>(row_y + 60 + 10);
+
+    /* Switched from SliderRowProps to a StepperRowProps (2026-09-20, user
+     * feedback): the capsule bar was never wired to drag/tap (sliderAction
+     * left unset, see frontlight_apply()'s history) -- an undraggable
+     * slider is just a bar that lies about being interactive, and the
+     * "NN%" value text already shows the level without one. Same
+     * bordered/bigger +/- treatment as the other three controls now. */
+    uint32_t intensity = settings_store_get_frontlight_intensity();
+    char intensity_value[8];
+    snprintf(intensity_value, sizeof(intensity_value), "%u%%", (unsigned)intensity);
+    StepperRowProps intensity_row;
+    intensity_row.row.label = "Intensity";
+    intensity_row.value = intensity_value;
+    intensity_row.widestValue = "100%";
+    intensity_row.decrement = ACTION_FRONTLIGHT_INTENSITY_STEP;
+    intensity_row.increment = ACTION_FRONTLIGHT_INTENSITY_STEP;
+    intensity_row.decrementValue = -10;
+    intensity_row.incrementValue = 10;
+    intensity_row.row.enabled = frontlight_on;
+    apply_big_stepper_style(intensity_row);
+    stepperRow(frame, Rect{20, row_y, static_cast<int16_t>(screen.width - 40), 60}, intensity_row);
 }
 
 /* -----------------------------------------------------------------------
@@ -740,6 +1021,34 @@ static void draw_touch_diag(DisplayTarget &target, AppFrame &frame, const Rect &
     draw_crosshair(target, cx, mid);
     draw_crosshair(target, left, bottom);
     draw_crosshair(target, right, bottom);
+
+    /* "Set button" pointer (2026-09-20, user request): this screen now
+     * also doubles as a calibration aid for the physical Home/Select pad,
+     * not just the on-screen crosshairs -- occupies the band the footer
+     * used to (removed for this screen only, draw_current_screen()).
+     * Placement is an ESTIMATE, not a measurement: touch.c's Home-zone
+     * check (raw_x<70, raw_y 660-720) is on RAW registers, bypassing the
+     * touch_lerp() calibration entirely, so it has no direct logical
+     * coordinate -- this arrow's target was back-derived by running
+     * touch-calibration-notes.md §8's captured raw Home-pad reading
+     * (raw≈(5,695)) through the same touch_lerp()/touch_lerp_y() formulas
+     * `touch.c` uses for ordinary taps: x from raw_y≈695 lands past
+     * TOUCH_X_RAWY_HI (690→460), y from raw_x≈5 extrapolates well past
+     * the lowest calibrated segment (104→640) -- both clamp to roughly
+     * the bottom-right corner of the logical canvas, consistent with the
+     * Home pad's own documented position "beginning right where the
+     * display stops". Needs hardware confirmation/adjustment once this
+     * screen is actually used to calibrate against the real pad. */
+    TextStyle set_label;
+    set_label.align = TextAlign::Right;
+    target.text(Rect{0, 690, static_cast<int16_t>(screen.width - 20), 32}, "Set button", set_label);
+    const Point arrow_from{static_cast<int16_t>(screen.width - 140), 700};
+    const Point arrow_to{static_cast<int16_t>(screen.width - 20), 795};
+    target.line(arrow_from, arrow_to, 2, Paint::solid(Color::Black));
+    target.line(arrow_to, Point{static_cast<int16_t>(arrow_to.x - 30), static_cast<int16_t>(arrow_to.y - 20)},
+                2, Paint::solid(Color::Black));
+    target.line(arrow_to, Point{static_cast<int16_t>(arrow_to.x - 22), static_cast<int16_t>(arrow_to.y - 3)},
+                2, Paint::solid(Color::Black));
 }
 
 /* -----------------------------------------------------------------------
@@ -756,15 +1065,48 @@ static void draw_current_screen(DisplayTarget &target, AppFrame &frame)
     case Screen::Settings:         draw_settings(target, frame, screen, content_y); break;
     case Screen::SettingsControls: draw_settings_controls(target, frame, screen, content_y); break;
     case Screen::SettingsAbout:    draw_settings_about(target, frame, screen, content_y); break;
+    case Screen::SettingsDisplay:  draw_settings_display(target, frame, screen, content_y); break;
     case Screen::TouchDiag:        draw_touch_diag(target, frame, screen, content_y); break;
     }
 
-    draw_footer(target, screen);
+    /* TouchDiag skips the footer (2026-09-20, user request): repurposed as
+     * a touch-calibration aid, its own "Set button" arrow now occupies
+     * that same bottom band (draw_touch_diag()) -- the version/timestamp
+     * line would collide with it. */
+    if (s_screen != Screen::TouchDiag) {
+        draw_footer(target, screen);
+    }
 }
 
-static void handle_action(ActionId action)
+/* Clamps helper for the +/-N stepper actions below -- every one of them
+ * reads the current settings value, applies the button's signed step
+ * (ActionEvent::value, carried from StepperRowProps/SliderRowProps'
+ * decrementValue/incrementValue), and clamps to a valid range before
+ * persisting. */
+static int32_t clamp_i32(int32_t v, int32_t lo, int32_t hi)
 {
-    ESP_LOGI(TAG, "action: %d (screen=%s)", (int)action, screen_name(s_screen));
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+
+/* Wraps a preset index around, for the two frontlight presets that are
+ * genuinely cyclic (Color's Warm/Neutral/Cool, Auto-off's Off/30s/1min/
+ * 2min) rather than a linear range like Intensity (0-100%) or the idle
+ * timeout (0-300s) -- wrapping THOSE would jump from max to min with no
+ * intuitive relationship between the two ends, but a short preset list
+ * has no "end" to speak of, and wrapping halves the worst-case number of
+ * presses needed to reach any state (2026-09-20, user suggestion). */
+static int wrap_index(int idx, int count)
+{
+    if (idx < 0) return count - 1;
+    if (idx >= count) return 0;
+    return idx;
+}
+
+static void handle_action(ActionId action, int16_t value)
+{
+    ESP_LOGI(TAG, "action: %d value: %d (screen=%s)", (int)action, (int)value, screen_name(s_screen));
     switch (action) {
     case ACTION_SLEEP_NOW:
         enter_sleep_from_idle_or_menu("Sleep now menu item");
@@ -780,6 +1122,7 @@ static void handle_action(ActionId action)
         case Screen::Settings:         switch_screen(s_settings_return_to); break;
         case Screen::SettingsControls: switch_screen(Screen::Settings); break;
         case Screen::SettingsAbout:    switch_screen(Screen::Settings); break;
+        case Screen::SettingsDisplay:  switch_screen(Screen::Settings); break;
         case Screen::TouchDiag:        switch_screen(Screen::SettingsControls); break;
         default: break;
         }
@@ -790,12 +1133,74 @@ static void handle_action(ActionId action)
     case ACTION_OPEN_ABOUT:
         switch_screen(Screen::SettingsAbout);
         break;
+    case ACTION_OPEN_DISPLAY:
+        switch_screen(Screen::SettingsDisplay);
+        break;
     case ACTION_OPEN_TOUCH_DIAG:
         switch_screen(Screen::TouchDiag);
         break;
     case ACTION_TOGGLE_POWER_CONFIRM:
         settings_store_set_power_short_confirm(!settings_store_get_power_short_confirm());
+        /* Force a full (GC) refresh (2026-09-20, user report on the twin
+         * Frontlight toggle: "no visible difference between checked/
+         * unchecked"). A toggle switch flips a fairly large area between
+         * solid black and solid white -- toggling stays on the same
+         * screen, so switch_screen() never sets this, and the resulting
+         * fast/DU refresh (eink_display_fb_fast(), Pass 2) doesn't
+         * reliably clear/set a large solid fill on this panel (the same
+         * class of DU limitation documented for ADR-010's e-ink work).
+         * A toggle is pressed rarely enough that the slower full refresh
+         * is a non-issue. */
+        s_force_full_refresh = true;
         break;
+    case ACTION_IDLE_TIMEOUT_STEP: {
+        int idx = nearest_preset_index(kAutoSleepPresets, kAutoSleepPresetCount,
+                                        settings_store_get_idle_timeout_s());
+        idx = wrap_index(idx + (value > 0 ? 1 : -1), kAutoSleepPresetCount);
+        settings_store_set_idle_timeout_s(kAutoSleepPresets[idx]);
+        break;
+    }
+    case ACTION_TOGGLE_FRONTLIGHT: {
+        bool on = !settings_store_get_frontlight_on();
+        settings_store_set_frontlight_on(on);
+        /* Diagnostic (2026-09-20, user report: toggle graphic looks
+         * unchanged -- unclear yet whether the state itself never flips
+         * or the state flips but the drawing doesn't follow). Confirms
+         * on-the-wire what settings_store persisted; the very next
+         * draw_settings_display() reads this back into on_row.checked. */
+        ESP_LOGI(TAG, "frontlight toggled -> %s (persisted: %d)", on ? "ON" : "OFF",
+                 (int)settings_store_get_frontlight_on());
+        frontlight_apply(on, (uint8_t)settings_store_get_frontlight_color(),
+                          (uint8_t)settings_store_get_frontlight_intensity());
+        s_force_full_refresh = true;   /* see ACTION_TOGGLE_POWER_CONFIRM's comment */
+        break;
+    }
+    case ACTION_FRONTLIGHT_COLOR_STEP: {
+        /* Defensive no-op while off (2026-09-20): unlike SliderRowProps,
+         * the vendored StepperRowProps doesn't propagate .row.enabled to
+         * its own +/- buttons (see draw_settings_display's comment) --
+         * they stay visually "live" even while this row is greyed, so
+         * the actual guard has to live here instead of relying on the
+         * widget to refuse the tap. */
+        if (!settings_store_get_frontlight_on()) break;
+        int idx = nearest_preset_index(kColorMixPresets, kColorMixPresetCount,
+                                        settings_store_get_frontlight_color());
+        idx = wrap_index(idx + (value > 0 ? 1 : -1), kColorMixPresetCount);
+        uint32_t color = kColorMixPresets[idx];
+        settings_store_set_frontlight_color(color);
+        frontlight_apply(true, (uint8_t)color, (uint8_t)settings_store_get_frontlight_intensity());
+        break;
+    }
+    case ACTION_FRONTLIGHT_INTENSITY_STEP: {
+        /* Same defensive no-op as ACTION_FRONTLIGHT_COLOR_STEP above --
+         * StepperRowProps' buttons don't respect .row.enabled either. */
+        if (!settings_store_get_frontlight_on()) break;
+        int32_t pct = clamp_i32((int32_t)settings_store_get_frontlight_intensity() + value, 0, 100);
+        settings_store_set_frontlight_intensity((uint32_t)pct);
+        frontlight_apply(settings_store_get_frontlight_on(),
+                          (uint8_t)settings_store_get_frontlight_color(), (uint8_t)pct);
+        break;
+    }
     default:
         break;
     }
@@ -847,6 +1252,14 @@ void board_ui_nav_task(void *arg)
     s_touch_ok = touch_init();
     ESP_LOGI(TAG, "touch: %s", s_touch_ok ? "OK" : "ABSENT");
 
+    /* Restore the persisted frontlight state -- deep sleep is a full
+     * reboot, so this init path runs every time and doubles as "relight
+     * on wake" for whatever the user last left it at. */
+    frontlight_init();
+    frontlight_apply(settings_store_get_frontlight_on(),
+                      (uint8_t)settings_store_get_frontlight_color(),
+                      (uint8_t)settings_store_get_frontlight_intensity());
+
     s_input_queue = xQueueCreate(kInputQueueLen, sizeof(InputEvent));
     xTaskCreate(input_sampler_task, "ui_input", 4096, NULL, 4, NULL);
 
@@ -887,7 +1300,7 @@ void board_ui_nav_task(void *arg)
                 AppFrame throwaway(target, device, input, s_interactions);
                 draw_current_screen(target, throwaway);
                 ActionEvent throwaway_ev = throwaway.finish();
-                if (throwaway_ev) handle_action(throwaway_ev.action);
+                if (throwaway_ev) handle_action(throwaway_ev.action, throwaway_ev.value);
 
                 input = InputSnapshot{};
                 apply_input_event(next, input);
@@ -906,6 +1319,11 @@ void board_ui_nav_task(void *arg)
         const bool changed = s_force_full_refresh || input.focusPrev || input.focusNext ||
                              input.confirm || input.touchPressed || input.touchReleased;
         if (!changed) {
+            /* No separate frontlight auto-off any more (2026-09-20, user
+             * request: two inactivity timers for one job didn't make
+             * sense) -- the idle-sleep timeout below is now the single
+             * timer for both; going to sleep already turns the light off
+             * (frontlight_off(), splash.cpp's board_sleep_screen_show()). */
             uint32_t idle_timeout_s = settings_store_get_idle_timeout_s();
             if (idle_timeout_s > 0) {
                 int64_t idle_ms = (esp_timer_get_time() - s_last_activity_us.load(std::memory_order_relaxed)) / 1000;
@@ -935,15 +1353,27 @@ void board_ui_nav_task(void *arg)
              * flush, not folded into Pass 2. Uses draw_current_screen()
              * with an empty input (nothing new to resolve, s_screen
              * hasn't changed yet) -- flash_state() picks up s_flash_action
-             * from here. */
-            s_flash_action = ev.action;
-            AppFrame flash_frame(target, device, InputSnapshot{}, s_interactions);
-            draw_current_screen(target, flash_frame);
-            eink_display_fb_fast(s_fb);
-            vTaskDelay(pdMS_TO_TICKS(500));
-            s_flash_action = NO_ACTION;
+             * from here.
+             *
+             * Skipped for a direct touch tap-then-release (2026-09-20,
+             * user report of ~1-2s felt lag on repeated presses, e.g.
+             * dialing in Intensity): a touch release already followed a
+             * natural press-and-hold visual on the SAME widget while the
+             * finger was down, so this flash + its extra ~0.5-1s e-ink
+             * flush was pure redundant latency there. Left/Right+Select
+             * and Power-short-press confirms (input.confirm, not
+             * input.touchReleased) still have no such natural feedback --
+             * they keep the flash. */
+            if (!input.touchReleased) {
+                s_flash_action = ev.action;
+                AppFrame flash_frame(target, device, InputSnapshot{}, s_interactions);
+                draw_current_screen(target, flash_frame);
+                eink_display_fb_fast(s_fb);
+                vTaskDelay(pdMS_TO_TICKS(500));
+                s_flash_action = NO_ACTION;
+            }
 
-            handle_action(ev.action);
+            handle_action(ev.action, ev.value);
         }
 
         /* Pass 2: real draw with the now-current focus/active state (and

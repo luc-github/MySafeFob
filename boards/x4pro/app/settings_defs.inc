@@ -46,3 +46,6 @@
 
 SETTINGS_DEF(PowerShortConfirm, "pwr_shortcfm", BOOL, 1)
 SETTINGS_DEF(IdleTimeoutS,      "idle_to_s",    U32,  0)
+SETTINGS_DEF(FrontlightOn,        "fl_on",      BOOL, 0)
+SETTINGS_DEF(FrontlightColor,     "fl_color",   U32,  0)   /* 0-100 warm<->cool mix, 0=warm */
+SETTINGS_DEF(FrontlightIntensity, "fl_intens",  U32,  60)

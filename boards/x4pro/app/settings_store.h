@@ -74,6 +74,28 @@ void settings_store_set_power_short_confirm(bool on);
 uint32_t settings_store_get_idle_timeout_s(void);
 void settings_store_set_idle_timeout_s(uint32_t seconds);
 
+/**
+ * @brief Frontlight preferences (UI-SPECS.md §2.14, SETTINGS_DISPLAY).
+ *        Color is a 0-100 warm<->cool mix percentage (0=warm, 100=cool,
+ *        50=neutral — see frontlight_apply()), amended 2026-09-20 from an
+ *        earlier discrete warm-XOR-cool design. Intensity is a 0-100
+ *        overall-brightness percentage. No separate frontlight auto-off
+ *        (removed 2026-09-20, user request: a light-only timer alongside
+ *        the device's own idle-sleep timeout was two settings for one
+ *        job — the light already turns off when the device sleeps,
+ *        frontlight_off() in splash.cpp) — settings_store_get/
+ *        set_idle_timeout_s() above is now the single inactivity timer
+ *        for both.
+ */
+bool settings_store_get_frontlight_on(void);
+void settings_store_set_frontlight_on(bool on);
+
+uint32_t settings_store_get_frontlight_color(void);
+void settings_store_set_frontlight_color(uint32_t color);
+
+uint32_t settings_store_get_frontlight_intensity(void);
+void settings_store_set_frontlight_intensity(uint32_t percent);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1850,6 +1850,320 @@ pattern index.
 
 ---
 
+### ADR-016: Finalize device-level settings (idle timeout + frontlight)
+before task 8.2
+
+**Context**: ADR-014's closing summary named task 8.2 (`secret_store`
+implementation) as the next step. The user requested reordering: finish
+the device-level settings that have **no dependency on `secret_store`/
+PIN** first — specifically the auto-sleep idle timeout (mechanism
+already built and hardware-validated per ADR-012/013, but locked "off"
+by a `MSF_DEBUG_NO_SLEEP` debug flag and only settable via REPL) and the
+frontlight (LEDC pins hardware-validated per `hardware-specs.md`, but
+zero software above the raw GPIO/PWM level — the Settings > Display row
+was a hardcoded "not available yet" placeholder). Rationale: both are
+self-contained, and finishing them now means the real product screens
+(built after task 8.2) won't need the Settings menu's shape to change
+again.
+
+**Decisions (user-validated 2026-09-19)**:
+1. Idle timeout: `MSF_DEBUG_NO_SLEEP` reverted to `0` (real sleep
+   restored) now that the timeout is user-configurable — but the NVS
+   default stays `0` (disabled), not reverted to ADR-012's originally-
+   validated 45s. A `stepperRow` (±15s, range `[0,300]`, "Off" at 0) was
+   added to the already-fully-enabled `SETTINGS_CONTROLS` screen, not a
+   new half-built `SETTINGS_SECURITY` screen — that screen's other rows
+   ("Change PIN", "Auto-lock (PIN)") still need `secret_store`. It will
+   move into `SETTINGS_SECURITY` once that screen can ship as a whole.
+2. Frontlight color is a **discrete Warm/Cool choice** (exactly one LEDC
+   channel active at a time), not a continuous warm↔cool blend like
+   `freeink-sdk`'s `FrontlightManager` — matches `UI-SPECS.md` §2.14's
+   ASCII mockup exactly and needs no blending math.
+3. New `boards/x4pro/app/frontlight.h`/`.c`: a small native ESP-IDF LEDC
+   driver (one timer, 25 kHz/10-bit, two channels — cool `GPIO8`/warm
+   `GPIO9`, `hw_config.h`), pattern-matched to
+   `references/Luc-Pibot-cnc-pendant-firmware`'s `disp_backlight.c`
+   (single-channel LEDC driver, extended to 2 channels) rather than
+   porting `freeink-sdk`'s `FrontlightManager` C++ class (gamma curve +
+   blending + deep-sleep park/release — more than this design needs, per
+   [[feedback_check_pibot_reference]]'s "extract the pattern, don't
+   vendor the class" precedent already used in ADR-010).
+4. Four new NVS settings (`settings_defs.inc`): `FrontlightOn`,
+   `FrontlightColor`, `FrontlightIntensity` (0-100), `FrontlightAutoOffS`
+   — same X-macro pattern as `PowerShortConfirm`/`IdleTimeoutS`
+   (ADR-012's amendment). New `Screen::SettingsDisplay` in `ui_nav.cpp`:
+   a `toggleRow` (on/off), a `settingRow` with a cycling value (color —
+   reuses the existing tappable-row widget instead of building a new
+   segmented-control component), a `sliderRow` (intensity, buttons-only,
+   no drag wired), and a `stepperRow` (auto-off). Every change applies
+   immediately via `frontlight_apply()`, mirroring
+   `ACTION_TOGGLE_POWER_CONFIRM`'s no-cached-state pattern.
+5. **Auto-off design choice**: cuts the physical LEDC output only after
+   inactivity — it does NOT clear the persisted "on" NVS preference, so
+   the light does not relight itself on the next touch (mirrors the
+   existing idle-sleep mechanism, which also never auto-wakes). The user
+   re-toggles it explicitly.
+6. `splash.cpp`'s `board_sleep_screen_show()` now also calls
+   `frontlight_off()` alongside the existing `rails_hold_for_sleep()`,
+   guaranteeing the light is off before deep sleep regardless of whether
+   auto-off already fired. No `rtc_gpio_hold_en()` added for the two
+   frontlight pins (unlike the touch/SD rails): their "off" level is
+   duty-0/LOW, the same state an un-driven pad defaults to, not an
+   active-HIGH level that must be actively held through sleep — flagged
+   as a hardware-validation follow-up (watch for flicker/drain) rather
+   than built preemptively.
+
+**Status**: build-verified only (`./msf_build.bat build`, clean) as of
+2026-09-19. Hardware validation (idle-sleep actually firing again at a
+configured timeout, frontlight on/off/color/intensity/auto-off, light
+off before sleep, state restored on wake) still to be done.
+
+**Amendment 2026-09-20 (first hardware round) — 6 fixes from real usage**:
+the first hands-on test surfaced concrete UX issues addressed the same
+session, plus one likely root-caused bug:
+
+1. **Touch debounce added** (`input_sampler_task`, `ui_nav.cpp`): a
+   single short tap on "Color" was cycling Warm→Cool→Warm instead of
+   landing on Cool — physical buttons already debounce in hardware/
+   `buttons.c`, touch never had an equivalent. A raw press/release
+   transition must now stay stable 30 ms before being trusted as a real
+   edge (same technique as a mechanical-switch debounce, in software).
+   Confirmed fixed by the user on retest.
+2. **Confirm-press flash skipped for direct touch taps**: the shared
+   ~500 ms flash-then-flush (ADR-014, added for confirms with no natural
+   press visual — Left/Right+Select, Power-short-press) was firing on
+   EVERY touch tap too, even though a touch release already follows a
+   natural press-and-hold visual on the same widget — pure ~0.5-1s
+   redundant latency, felt worst on repeated stepper taps. Now skipped
+   whenever the resolving input was `touchReleased` (kept for
+   `input.confirm`, which still has no natural feedback).
+3. **Color changed from discrete Warm-XOR-Cool to a continuous 0-100
+   warm↔cool mix** (`frontlight_apply()` rewritten to drive both LEDC
+   channels simultaneously, linear crossfade, not photometrically
+   corrected) — reverses this same ADR's earlier "discrete, matches the
+   mockup literally" decision after hands-on testing showed a plain
+   toggle felt wrong for what reads as a color-temperature control.
+   Surfaced as 3 stops (Warm/Neutral/Cool via a `StepperRowProps`, not a
+   full slider — an in-between position has no meaningful numeric target
+   without a color-temperature readout the device doesn't have).
+4. **Frontlight auto-off changed from a linear ±5s stepper (min 5s, no
+   way to reach 0) to 4 discrete presets**: Off/30s/1min/2min — the fine
+   steps had no real meaning below ~30s and couldn't disable the feature
+   at all. The "color turns off by itself" the user noticed was this
+   auto-off firing as designed, likely tripped by the old 5s-steppable
+   default combined with pauses caused by issue #2 above — not a
+   separate bug.
+5. **Color/Intensity greyed out while Frontlight is off** (`.enabled`
+   tied to the on/off toggle) — adjusting either had no effect while the
+   light itself was off, which read as broken rather than inert. Known
+   cosmetic gap: the vendored `StepperRowProps` (unlike `SliderRowProps`)
+   doesn't propagate `.row.enabled` to its own +/- buttons, so Color's
+   buttons stay visually "live" while off — guarded instead in
+   `handle_action()` (a tap is a no-op), not fixed at the widget level
+   (frozen vendored copy, ADR-010 pt.3).
+6. **Intensity control enlarged**: `sliderRowHeight()`'s `controlHeight`
+   raised 44→72 (taller bar, bigger +/- targets), after the user compared
+   it unfavorably against `crosspoint-reader`'s much larger equivalent
+   control — the original size was part of why Intensity "barely
+   reacted" alongside issue #2's latency.
+
+Redundant per-row confirm-flash removed from every `StepperRowProps` row
+in this file (idle-timeout, Color, auto-off): their label area has no
+action of its own, so it only ever flashed from an explicit (now
+removed) `.row.state` assignment, never from real interaction — the
+buttons' own natural press feedback was already sufficient.
+
+Still build-verified only for this amendment's own changes; the
+2026-09-19 items above (frontlight on/off/color/intensity/auto-off
+end-to-end, light off before sleep, state restored on wake) that this
+round of testing exercised are now considered hardware-validated except
+where noted (debounce fix and confirm-flash skip both user-confirmed on
+retest; the continuous color blend, discrete auto-off presets, and
+enlarged Intensity control are new since and not yet retested).
+
+**Amendment 2026-09-20 (continued) — 2 more fixes from the same
+testing round**:
+
+1. **Intensity switched from `SliderRowProps` to `StepperRowProps`**: its
+   capsule bar was never wired to drag/tap (deliberately, to avoid
+   drag-position math) — user feedback: an undraggable slider is
+   misleading when only the +/- buttons ever worked and the "NN%" text
+   already shows the level. Now the same stepper widget as the other
+   three controls on this screen.
+2. **Consistent, bigger +/- buttons across all 4 stepper rows** (idle-
+   timeout, Color, Intensity, Auto-off): `stepperRow`'s own default style
+   has no visible border (`defaultButtonStyles()`), unlike `slider-row.h`'s
+   own default (`sliderRowStepStyles()`, bordered) — so before this fix,
+   Intensity's old slider buttons looked like proper buttons while every
+   stepper's +/- looked like bare glyphs floating with no box, and all of
+   them were smaller than they needed to be. New shared
+   `apply_big_stepper_style()` (`ui_nav.cpp`) applies the same bordered
+   style + a bigger button box (56×56) + a bigger/thicker hand-drawn
+   glyph (`controlSize`/`controlStroke`) to all four.
+
+Known cosmetic gap, carried forward: the vendored `StepperRowProps`
+doesn't propagate `.row.enabled` to its own +/- buttons (unlike
+`SliderRowProps`, which does) — Color's and now Intensity's buttons stay
+visually "live" while Frontlight is off, even though tapping them is a
+guarded no-op in `handle_action()`. Not fixed at the widget level (frozen
+vendored copy, ADR-010 pt.3) — acceptable for now, revisit if it proves
+confusing on hardware.
+
+**Amendment 2026-09-20 (continued) — pressed +/- buttons went solid
+black, glyph invisible**: `apply_big_stepper_style()`'s use of
+`sliderRowStepStyles()` as-is inverted the button's background to solid
+black on press (that style's own `active` variant) — but `stepper-row.h`
+draws the +/- glyph itself as a hand-drawn line with a FIXED black
+`controlPaint`, never tied to the resolved style's foreground the way a
+text glyph would be. Black glyph on a now-black background disappeared
+entirely, reading as "the whole button turned black". Fixed by giving
+the active state a light-gray dithered background instead of a full
+invert (border/foreground stay black-on-white otherwise) — still visibly
+different on press, but the glyph stays legible throughout.
+
+**Amendment 2026-09-20 (continued) — Frontlight toggle enlarged**:
+`ToggleRowProps`' own default switch is 38x18 — bumped to 72x36
+(`on_row.toggleWidth/toggleHeight`, `draw_settings_display()`), a plain
+size override with no vendored-widget limitation this time (unlike the
+stepper buttons above, `ToggleProps`/`ToggleRowProps` expose width/height
+directly). The equivalent "Power short press" toggle on Controls &
+Calibration still uses the small default — left as-is, not reported as
+an issue, but the same one-line fix if it turns out to need it too.
+
+**Amendment 2026-09-20 (continued) — 2 more fixes**:
+
+1. **Toggle switches force a full refresh**: user reported no visible
+   difference between checked/unchecked on the enlarged Frontlight
+   toggle. The rendering logic itself was correct (track color inverts,
+   knob moves) — the likely cause is `eink_display_fb_fast()`'s DU
+   refresh not reliably resolving a fairly large solid-fill polarity
+   flip (the same class of limitation already documented for this
+   panel/driver, ADR-010). Toggling stays on the same screen, so
+   `switch_screen()` never sets `s_force_full_refresh` — now set
+   explicitly in both `ACTION_TOGGLE_FRONTLIGHT` and
+   `ACTION_TOGGLE_POWER_CONFIRM` (same widget, same latent issue, fixed
+   alongside even though only Frontlight's was reported). A toggle is
+   pressed rarely enough that the slower full (GC) refresh is a
+   non-issue.
+2. **Color and Auto-off now wrap around** (new `wrap_index()` helper,
+   `ui_nav.cpp`) instead of clamping at their preset list's ends — user
+   suggestion: both are genuinely cyclic (Warm/Neutral/Cool,
+   Off/30s/1min/2min), unlike Intensity (0-100%) or the idle timeout
+   (0-300s), which stay clamped since wrapping a linear range from max
+   straight to min has no intuitive relationship between the two ends.
+   Halves the worst-case presses needed to reach any state in a short
+   preset list.
+
+**Amendment 2026-09-20 (continued) — redundant row-wide flash removed
+from both toggle rows too**: user confirmed the enlarged Frontlight
+toggle now visibly changes state, and pointed out the whole-row invert
+on top of it is unnecessary — the switch itself (track color + knob
+position) already shows the change instantly. `.row.state =
+flash_state(...)` removed from both `ToggleRowProps` in this file
+(Frontlight, Power short press) — same reasoning already applied to
+every `StepperRowProps` row earlier in this amendment.
+
+**Amendment 2026-09-20 (continued) — "Auto-off after" removed, merged
+into the device's idle-sleep timeout**: user pushed back on having two
+separate inactivity timers (frontlight-only auto-off, `SETTINGS_DISPLAY`,
+vs. the device's own idle-sleep timeout, `SETTINGS_CONTROLS`) — correctly
+pointed out this was two settings for one effective job, since the
+device going to sleep already turns the frontlight off as a side effect
+(`frontlight_off()`, `splash.cpp`'s `board_sleep_screen_show()`).
+Removed entirely: `FrontlightAutoOffS` (`settings_defs.inc`,
+`settings_store.c/.h`), the "Auto-off after" stepper row and its action
+(`draw_settings_display()`), the `kAutoOffPresets`/`kAutoOffLabels`
+preset tables, and the separate runtime check + `s_frontlight_lit`
+tracking variable in `board_ui_nav_task`'s idle loop (`ui_nav.cpp`) — the
+idle-sleep timeout there is now the one and only inactivity timer, and
+it already implies the light goes out too. `SETTINGS_DISPLAY` is now
+Frontlight/Color/Intensity only.
+
+**Amendment 2026-09-20 (continued) — not-yet-available rows compacted to
+an "NA" badge**: `SettingsMenuItem`'s `subtitle` field (full sentences
+like "PIN, auto-lock - not available yet") doubled every disabled
+Settings row's height for a message a greyed-out, non-chevron row
+already conveys. Renamed to `badge` and wired to `SettingRowProps.value`
+(a right-aligned single-line marker) instead of `.subtitle` (a wrapped
+second line) — Security/Time & Sync/Backup (SD)/Owner info now show a
+plain "NA".
+
+**Amendment 2026-09-20 (continued) — merge regression: wrong value
+scale kept**: the frontlight-auto-off merge (above) accidentally kept
+`SETTINGS_CONTROLS`' pre-existing linear ±15s/[0,300] range for the
+now-single "Auto-sleep after inactivity" timer instead of adopting the
+Off/30s/1min/2min preset scale that had specifically been built for the
+auto-off setting it absorbed. Fixed: `idle_row` now uses
+`nearest_preset_index()`/`wrap_index()` against a new
+`kAutoSleepPresets`/`kAutoSleepLabels` table (same 4 values, moved
+earlier in `ui_nav.cpp` alongside `kColorMixPresets` so both
+`SETTINGS_CONTROLS` and `SETTINGS_DISPLAY` can reach the shared
+`nearest_preset_index()` helper), and `ACTION_IDLE_TIMEOUT_STEP` steps
+through it the same wrap-around way as Color/the old Auto-off.
+
+**Amendment 2026-09-20 (continued) — toggle switch investigation, 3
+rounds, resolved as a design issue not a rendering bug**: user report —
+the on-screen switch always looked the same regardless of on/off.
+Confirmed via hardware (the physical frontlight itself DOES turn on/off
+correctly on every tap) that the underlying setting was never the
+problem.
+
+1. First replaced `toggle.h`/`toggleRow()`'s track+knob with a hand-drawn
+   equivalent using `target.fill()`/`target.stroke()` (the same
+   primitives already proven correct elsewhere — row backgrounds,
+   crosshairs, stepper glyphs), suspecting a bug in the vendored,
+   frozen (ADR-010 pt.3) component. `ToggleRowProps` is no longer used
+   anywhere in `ui_nav.cpp` — both toggle rows (Frontlight, Power for
+   Set) now use `settingRow()` (label + hit target) plus a manual
+   `draw_switch()`.
+2. Still looked unchanged. A temporary "ON"/"OFF" text diagnostic drawn
+   over the hand-drawn track+knob revealed the geometry was actually
+   correct all along: the white "N" only vanished because it landed
+   exactly on the (correctly positioned, correctly colored) white knob,
+   and the black "O" only vanished landing on the black knob — proof the
+   track color and knob position/color WERE both flipping as designed.
+   The real problem was legibility, not a bug: a small iOS-style
+   track+knob reads as "something black on the left, something white on
+   the right" in EITHER state (for opposite structural reasons each
+   time), too subtle to tell apart at a glance on a 1-bit, low-contrast
+   e-ink panel at this size.
+3. First fix (solid black square = ON, white+outline = OFF) confirmed
+   working but looked inconsistent next to the bordered +/- stepper
+   buttons already on the same screens. Final design: a checkbox --
+   `draw_switch()` now draws the same bordered-white-box look as
+   `apply_big_stepper_style()`'s buttons (white background, black
+   border, 56×56, matching size too, and the same radius-18 rounded
+   corners) at every state, with a smaller filled black square inside
+   when ON and nothing inside when OFF — one consistent "control" visual
+   language across every interactive element on these two screens.
+
+**Amendment 2026-09-20 (continued) — the previous fix didn't touch the
+real cause**: user reported the "Frontlight" row still fully inverted on
+press after `.row.state = flash_state(...)` was removed. Root cause:
+`toggle-row.h` makes the WHOLE row a real hit target by default (not
+just the switch), so the row genuinely goes `StateActive` from the
+framework's own touch-hold tracking while a finger is down — entirely
+independent of the custom `flash_state()`/`s_flash_action` mechanism,
+which only ever covered a separate post-release flash (itself already
+skipped for touch). Fixed properly this time with a dedicated
+`toggle_row_no_press_invert()` style (`defaultListRowStyles()` with
+`active` set to the milder `focused` variant instead of a full invert),
+applied to both `ToggleRowProps.row.styles` in this file — same
+technique, and same light-gray-not-black choice, as
+`apply_big_stepper_style()`'s fix for the +/- buttons.
+
+**Amendment 2026-09-20 (continued) — light-gray was still "an effect"**:
+user pushed back on `toggle_row_no_press_invert()`'s first version
+(`active = focused`, a light-gray dither) — still a visible change on
+the label text they didn't want. Changed to `active = normal` outright:
+the row's label now never reacts to a press at all, fully decoupled from
+touch state; only the switch itself changes, and only once the action
+actually applies on release.
+
+Not yet hardware-validated (this amendment's own changes).
+
+---
+
 ## Project rules
 
 1. **No code without a spec** — Every component has a documented header before implementation.

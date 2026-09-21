@@ -80,3 +80,16 @@
 /* ---- Battery gauge CW2017 (0x63), same shared I2C bus #0 ---- */
 #define GAUGE_I2C_ADDR      0x63
 #define CHARGE_PIN          GPIO_NUM_21   /* active-HIGH = charging/USB */
+
+/* ---- Dual warm/cool frontlight (LEDC PWM, hardware-specs.md) ----
+ * 25 kHz, 10-bit, both channels active-HIGH. Channel/timer numbers are
+ * our own choice (no LEDC use elsewhere in this app to collide with) --
+ * they don't need to match the OEM's ch4/ch5 assignment recovered by RE. */
+#define FRONTLIGHT_COOL_PIN     GPIO_NUM_8
+#define FRONTLIGHT_WARM_PIN     GPIO_NUM_9
+#define FRONTLIGHT_LEDC_TIMER   LEDC_TIMER_0
+#define FRONTLIGHT_LEDC_MODE    LEDC_LOW_SPEED_MODE   /* S3: no high-speed mode */
+#define FRONTLIGHT_LEDC_FREQ_HZ 25000
+#define FRONTLIGHT_LEDC_RES     LEDC_TIMER_10_BIT
+#define FRONTLIGHT_COOL_CHANNEL LEDC_CHANNEL_0
+#define FRONTLIGHT_WARM_CHANNEL LEDC_CHANNEL_1

@@ -32,6 +32,7 @@
 extern "C" {
 #include "eink.h"
 #include "hw_config.h"
+#include "frontlight.h"
 #include "driver/gpio.h"
 #include "driver/rtc_io.h"
 #include "esp_log.h"
@@ -193,5 +194,13 @@ extern "C" void board_sleep_screen_show(void)
     }
     eink_power_off();
     rails_hold_for_sleep();
+    /* Guarantee the frontlight is off before deep sleep, regardless of
+     * whether ui_nav.cpp's own auto-off already fired -- unlike the
+     * touch/SD rails above, no rtc_gpio_hold_en() here: frontlight's off
+     * level is duty-0/LOW, the same state an un-driven pad defaults to,
+     * not an active-HIGH level that needs to be actively held through
+     * sleep. Flagged for hardware validation (watch for flicker/drain)
+     * rather than built preemptively. */
+    frontlight_off();
     ESP_LOGI(TAG, "sleep screen drawn, controller in POF, rails held for sleep");
 }
