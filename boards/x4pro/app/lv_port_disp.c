@@ -30,6 +30,7 @@
 #include "esp_timer.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "app_log_workaround.h"
@@ -141,8 +142,17 @@ void lv_port_disp_init(void)
     const uint32_t buf_size = s_lv_stride * SCREEN_HEIGHT + LV_COLOR_INDEXED_PALETTE_SIZE(LV_COLOR_FORMAT_I1) * 4;
     s_lv_buf = heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM);
     if (!s_lv_buf) {
-        ESP_LOGE(TAG, "PSRAM alloc failed for the %u-byte LVGL frame buffer", (unsigned)buf_size);
-        return;
+        /* Used to log and return here, leaving LVGL with no display buffers
+         * configured -- board_ui_nav_task would carry on into build_screens()
+         * regardless, hit lv_obj_create()/lv_screen_load() with no display
+         * to attach to, and crash later with no clear link back to this,
+         * the real cause (2026-09-22 audit finding). Fail loudly and
+         * immediately instead: PSRAM exhaustion this early is unrecoverable
+         * anyway (48KB, the smallest thing LVGL needs here), so there's
+         * nothing a caller could usefully do with a soft failure. */
+        ESP_LOGE(TAG, "PSRAM alloc FAILED for the %u-byte LVGL frame buffer -- cannot start the UI",
+                 (unsigned)buf_size);
+        abort();
     }
 
     lv_display_set_buffers(disp, s_lv_buf, NULL, buf_size, LV_DISPLAY_RENDER_MODE_FULL);

@@ -18,11 +18,15 @@
 */
 /**
  * @file buttons.c
- * @brief MySafeFob App — X4 Pro physical buttons (polling + debounce).
+ * @brief MySafeFob App — X4 Pro physical buttons: raw GPIO level read only.
+ *        Debounce + edge detection live in lv_port_indev.c's
+ *        input_sampler_task (2026-09-22 change -- see its own doc comment):
+ *        this used to block here until release (button_wait_press()),
+ *        which stalled that task's touch sampling for as long as a button
+ *        was held. buttons_read_raw() never blocks.
  */
 #include "buttons.h"
 
-#include "freertos/FreeRTOS.h"
 #include "driver/gpio.h"
 
 void buttons_init(void)
@@ -38,32 +42,10 @@ void buttons_init(void)
     gpio_config(&io);
 }
 
-static button_id_t read_pressed(void)
+button_id_t buttons_read_raw(void)
 {
     if (gpio_get_level(BTN_LEFT_PIN) == 0)  return BTN_1;
     if (gpio_get_level(BTN_RIGHT_PIN) == 0) return BTN_2;
     if (gpio_get_level(BTN_POWER_PIN) == 0) return BTN_3;
     return BTN_NONE;
-}
-
-button_id_t button_wait_press(int timeout_ms)
-{
-    int waited = 0;
-    while (1) {
-        button_id_t b = read_pressed();
-        if (b != BTN_NONE) {
-            vTaskDelay(pdMS_TO_TICKS(30));          /* debounce */
-            if (read_pressed() == b) {
-                while (read_pressed() == b) {       /* wait for release */
-                    vTaskDelay(pdMS_TO_TICKS(10));
-                }
-                return b;
-            }
-        }
-        if (timeout_ms > 0) {
-            waited += 10;
-            if (waited >= timeout_ms) return BTN_NONE;
-        }
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
 }

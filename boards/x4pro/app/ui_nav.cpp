@@ -90,10 +90,11 @@ void board_activity_notify(void)
  * touch-edge queue): a single bool can only ever represent "one pending",
  * so two presses landing while board_ui_nav_task is busy (mid-flush) would
  * coalesce into one action, silently costing the user a step. Bounded
- * naturally -- buttons.c's button_wait_press() only returns once per real
- * press+release cycle (it blocks on the level until release), so these can
- * only ever be incremented by genuine distinct presses, never by a held
- * button or a polling artifact. */
+ * naturally -- lv_port_indev.c's input_sampler_task only increments these
+ * on a debounced RELEASE edge (its own button_raw_state/button_debounced
+ * tracking, same pattern as its touch debounce), so these can only ever be
+ * incremented by genuine distinct presses, never by a held button or a
+ * polling artifact. */
 static std::atomic<int> s_power_confirm_pending{0};
 
 void board_ui_nav_power_confirm(void)

@@ -127,8 +127,11 @@ touch_point_t lv_port_indev_get_last_touch(void)
  * quick touch tap sampled inline on that same task can start and end
  * entirely inside that window, never seen at all). Software debounce
  * (30 ms) also carried over from that same fix — a capacitive panel's
- * bounce at press/release was occasionally read as two taps. */
+ * bounce at press/release was occasionally read as two taps. Reused below
+ * (same 30ms) for the physical buttons' own debounce -- same mechanical
+ * bounce problem, no reason for a different constant. */
 static const int64_t kTouchDebounceUs = 30000;
+static const int64_t kButtonDebounceUs = 30000;
 
 static void input_sampler_task(void *arg)
 {
@@ -157,16 +160,43 @@ static void input_sampler_task(void *arg)
     int16_t last_valid_raw_x = 0, last_valid_raw_y = 0;
     bool last_valid_home = false;
 
+    /* Same debounce pattern as touch above (2026-09-22 change): buttons.c
+     * used to block here until physical release (button_wait_press()),
+     * which stalled THIS loop's touch sampling for as long as a button was
+     * held -- buttons_read_raw() never blocks, so the debounce/edge
+     * detection moved here instead, interleaved with touch every
+     * iteration. Acts on the RELEASE edge, matching button_wait_press()'s
+     * original behavior (it only ever returned once the physical release
+     * was seen), not the press edge. */
+    button_id_t button_raw_state = BTN_NONE;
+    button_id_t button_debounced = BTN_NONE;
+    int64_t button_raw_since_us = 0;
+
     while (1) {
-        button_id_t btn = button_wait_press(20);
-        if (btn == BTN_1) {
-            board_activity_notify();
-            board_ui_nav_focus_prev();
-        } else if (btn == BTN_2) {
-            board_activity_notify();
-            board_ui_nav_focus_next();
-        } else if (btn == BTN_3) {
-            board_activity_notify();   /* Power: activity only, never acted on here */
+        button_id_t button_raw = buttons_read_raw();
+        if (button_raw != button_raw_state) {
+            button_raw_state = button_raw;
+            button_raw_since_us = esp_timer_get_time();
+        }
+        button_id_t new_button_debounced = button_debounced;
+        if (button_raw_state != button_debounced &&
+            (esp_timer_get_time() - button_raw_since_us) >= kButtonDebounceUs) {
+            new_button_debounced = button_raw_state;
+        }
+        const bool button_release_edge = button_debounced != BTN_NONE && new_button_debounced == BTN_NONE;
+        button_id_t released_btn = button_debounced;
+        button_debounced = new_button_debounced;
+
+        if (button_release_edge) {
+            if (released_btn == BTN_1) {
+                board_activity_notify();
+                board_ui_nav_focus_prev();
+            } else if (released_btn == BTN_2) {
+                board_activity_notify();
+                board_ui_nav_focus_next();
+            } else if (released_btn == BTN_3) {
+                board_activity_notify();   /* Power: activity only, never acted on here */
+            }
         }
 
         if (s_touch_ok) {
@@ -251,6 +281,12 @@ static void input_sampler_task(void *arg)
                 }
             }
         }
+
+        /* Sets this loop's overall poll cadence (~20ms) -- previously
+         * provided implicitly by button_wait_press()'s own internal delay
+         * loop, now that both button and touch sampling above are fully
+         * non-blocking. */
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
 }
 

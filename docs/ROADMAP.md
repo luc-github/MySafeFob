@@ -2162,6 +2162,98 @@ actually applies on release.
 
 Not yet hardware-validated (this amendment's own changes).
 
+**Amendment 2026-09-22 — post-LVGL-rewrite hardening: one file per screen +
+touch/refresh reliability audit**. Context gap: the entries above still
+describe the pre-LVGL FreeInkUI screens (`toggleRow`/`sliderRow`/
+`stepperRow`); ADR-010's LVGL rewrite (2026-09-21, `boards/x4pro/app/
+ui_nav.cpp` and friends) replaced all of that but was never logged here.
+This entry only covers the follow-up hardening session, not a retroactive
+write-up of the rewrite itself.
+
+**Refactor**: `ui_nav.cpp` (1226 lines: all 6 screens + every shared
+widget builder in one file) split into `ui_screens.h` (the internal
+Screen enum + `switch_screen()`/`build_xxx()` contract shared between
+files), `ui_widgets.h/.cpp` (generic builders: buttons, rows, toggles,
+header, battery label), one `ui_screen_*.cpp` per screen, and
+`app_log_workaround.h` (centralizing the printf-based `ESP_LOG*`
+workaround previously copy-pasted into 4 files). `ui_nav.cpp` itself now
+only owns the task loop, the Screen array, and the ADR-012 activity/
+idle-sleep manager.
+
+**Fixes, all found via hardware testing with added timestamped logging**
+(touch press/release in `lv_port_indev.c`, value changes in
+`ui_screen_settings_display.cpp`, flush duration in `lv_port_disp.c`):
+1. Left/Right focus moves no longer force a full e-ink GC refresh (a fast
+   DU redraw is enough for a focus outline) — was making every navigation
+   step take a full ~1.5s GC for no visual reason.
+2. `touch.c`'s I2C device handle is now cached in `touch_init()` instead
+   of opened/closed on every single register access (was happening 2-3x
+   per ~20ms poll) — cut touch-sampling latency and heap churn.
+3. `eink.c`'s mandatory ghost-budget full refresh (~30 fast DUs since the
+   last full one) is now slipped into an idle gap between interactions
+   (`ui_nav.cpp`'s `maybe_run_ghost_housekeeping()`, backed by a new
+   `eink_ghost_budget_low()` query) instead of landing at random on
+   whatever flush the user happens to be waiting on for their last tap —
+   root cause of a reported "+ button takes 4-6s to show 100%".
+4. Real dropped-click bug in `touch.c`: a held touch could intermittently
+   report `x=-1,y=-1` on a poll where the GT911 had no fresh buffer yet
+   (chip doesn't re-assert "buffer ready" every single ~20ms poll while a
+   finger is stationary) — LVGL re-hit-tests the touched object on every
+   `PRESSED` sample, so a stray `(-1,-1)` fired `PRESS_LOST` on the real
+   button and the eventual release found no active object left: focus
+   stayed visible (set before the glitch) but `CLICKED` never fired.
+   Fixed by holding the last known-good coordinate across those gaps
+   (`lv_port_indev.c`'s `input_sampler_task`).
+5. Replaced the level-based touch state fed to LVGL's pointer indev with
+   a discrete press/release edge queue (`lv_port_indev.c`, 16 deep),
+   drained via LVGL's own `continue_reading` mechanism. A tap whose whole
+   press+release cycle happened to fall inside a slow flush's blocking
+   window used to be entirely invisible to LVGL (this app's single task
+   both flushes and pumps `lv_timer_handler()`); queued edges are now
+   always replayed in order once the task frees up, however late.
+6. New `ui_defer()` (`ui_widgets.h`, thin `lv_async_call()` wrapper),
+   used by **every** click/value-changed callback across every screen, no
+   per-control judgment calls. Root incident: Settings > Display's
+   Frontlight toggle mutates its own `lv_group_t`'s membership
+   (`lv_group_add_obj()`/`lv_group_remove_obj()`, showing/hiding the
+   Color/Intensity rows) from directly inside the event callback that
+   same group's click triggered — confirmed on hardware to occasionally
+   drop a rapid second tap's effect entirely. No other control happened
+   to mutate group/object structure from its own handler, so nothing else
+   had hit this yet, but the next one to would have, with nothing in the
+   code hinting at the risk. Deferring universally removes the whole
+   hazard class instead of relying on each future control's author to
+   recognize it (cost: ~1 `lv_timer_handler()` pass of latency, <20ms,
+   negligible against this panel's 700-1500ms flush times). The one
+   documented exception is `toggle_confirm_click_cb()`, which needs
+   `lv_indev_get_act()` read synchronously to tell a real tap from the
+   Power/touch-Home confirm pulse.
+7. `board_ui_nav_focus_prev/next()`/`board_ui_nav_power_confirm()`
+   (`ui_nav.cpp`/`ui_nav.h`) changed from `std::atomic<bool>` flags to
+   `std::atomic<int>` counters, and `board_ui_nav_task`'s loop now drains
+   all pending steps, not just one — same coalescing risk as #5 above,
+   at the physical-button level: two quick presses of the same button
+   landing while the loop is busy used to collapse into a single action.
+
+**Verified on hardware**: dozens of rapid taps on Intensity/Color/
+Frontlight, including back-to-back double-taps that previously
+reproduced fix #6's drop, all registering correctly; a full `idf.py
+build` after all of the above compiles clean.
+
+**Still open** (deliberately deferred, not done in this session):
+- True windowed/partial e-ink refresh (only a changed rectangle, not the
+  full frame) — `lv_port_disp.c` still uses `LV_DISPLAY_RENDER_MODE_FULL`
+  and `eink_display_fb_fast()`'s `PTL` window always spans the whole
+  screen. The DU/GC distinction above is a different axis (waveform type,
+  not redrawn area) and was not conflated with this in the fixes above.
+- `lv_port_disp_init()` silently returns if the PSRAM buffer allocation
+  fails, leaving LVGL unconfigured instead of failing loudly — the app
+  would crash confusingly later instead of at the real cause.
+- `buttons.c`'s `button_wait_press()` blocks on the physical level until
+  release; holding Left/Right also pauses touch sampling in the same
+  `input_sampler_task` loop. Low real-world impact (buttons are a more
+  deliberate gesture than a touch tap), not addressed here.
+
 ---
 
 ## Project rules

@@ -41,8 +41,12 @@ typedef enum {
 void buttons_init(void);
 
 /**
- * @brief Waits for a press (with debounce), timeout possible.
- * @param timeout_ms Max delay; 0 = blocking.
- * @return BTN_NONE on timeout, otherwise the pressed button.
+ * @brief Instantaneous GPIO level read -- no debounce, never blocks (not
+ *        even briefly): the caller (lv_port_indev.c's input_sampler_task)
+ *        polls this every loop iteration, interleaved with touch sampling,
+ *        and does its own debounce/edge detection on the sequence of
+ *        results, the same pattern already used there for touch. A button
+ *        held down must never stop that loop from also servicing touch.
+ * @return BTN_NONE if no button is currently pressed, otherwise which one.
  */
-button_id_t button_wait_press(int timeout_ms);
+button_id_t buttons_read_raw(void);
