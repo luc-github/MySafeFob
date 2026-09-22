@@ -34,6 +34,7 @@
  */
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 #include "esp_err.h"
 
@@ -60,6 +61,28 @@ esp_err_t eink_display_fb(const uint8_t *fb);
  * EINK_FAST_BUDGET (30) fasts (ghost purge).
  */
 esp_err_t eink_display_fb_fast(const uint8_t *fb);
+
+/**
+ * @brief True once the fast-DU ghost budget is close to exhausted (see
+ *        EINK_FAST_BUDGET_LOW_WATERMARK, eink.c) -- a read-only warning,
+ *        does not change any state or force anything by itself.
+ *
+ *        The mandatory full GC purge (~2-4s, see eink_display_fb_fast())
+ *        still happens automatically and unconditionally once the hard
+ *        budget is reached, so ghosting is always bounded even if nobody
+ *        calls this. But left unattended, THAT full GC lands on whatever
+ *        flush happens to be the 31st one -- which, on a screen with
+ *        several quick taps in a row (e.g. Settings > Display's -/+
+ *        steppers), can be the very flush the user is waiting on for
+ *        their last tap's result, making an ordinary button press look
+ *        stuck for several seconds.
+ *
+ *        Callers (ui_nav.cpp's task loop) use this to slip the mandatory
+ *        full GC into a short idle gap between interactions instead --
+ *        purely a scheduling optimization, changes no display-quality
+ *        constant validated on hardware.
+ */
+bool eink_ghost_budget_low(void);
 
 /**
  * @brief Powers off the controller (POF + wait idle).

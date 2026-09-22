@@ -9,7 +9,11 @@
 # lv_port_disp/lv_port_indev glue LVGL onto eink.c/touch.c without
 # touching either driver.
 idf_component_register(
-    SRCS "splash.cpp" "eink.c" "touch.c" "buttons.c" "i2c_bus.c" "ui_nav.cpp"
+    SRCS "splash.cpp" "eink.c" "touch.c" "buttons.c" "i2c_bus.c"
+         "ui_nav.cpp" "ui_widgets.cpp"
+         "ui_screen_home.cpp" "ui_screen_settings.cpp"
+         "ui_screen_settings_controls.cpp" "ui_screen_settings_display.cpp"
+         "ui_screen_settings_about.cpp" "ui_screen_touch_diag.cpp"
          "settings_store.c" "battery.c" "frontlight.c"
          "lv_port_disp.c" "lv_port_indev.c"
     INCLUDE_DIRS "."

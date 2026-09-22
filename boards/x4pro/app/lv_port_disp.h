@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -23,6 +25,18 @@ void lv_port_disp_init(void);
  *        screen-type change). One-shot — cleared right after that flush.
  */
 void lv_port_disp_request_full_refresh(void);
+
+/**
+ * @brief True when eink.c's fast-DU ghost budget is close enough to
+ *        exhausted that the NEXT few flushes risk triggering its
+ *        automatic, several-seconds-long full GC purge (see
+ *        eink_ghost_budget_low(), eink.h). ui_nav.cpp's task loop polls
+ *        this to slip that same mandatory purge into a short gap between
+ *        user interactions instead of leaving it to land, at random,
+ *        on whichever flush happens to be the 30th one -- which can make
+ *        an ordinary button tap look stuck for several seconds.
+ */
+bool lv_port_disp_ghost_budget_low(void);
 
 #ifdef __cplusplus
 }

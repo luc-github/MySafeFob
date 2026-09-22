@@ -32,26 +32,7 @@
 #include <stdio.h>
 #include <string.h>
 
-/* WORKAROUND (2026-09-18, see touch.c's twin comment): standard ESP_LOG*
- * calls from boards/x4pro/app never reach the serial monitor, 100%
- * reproducible -- a raw printf() from the same call site always works.
- * Scoped to this translation unit only; revert once the real cause is
- * found. */
-#undef ESP_LOGE
-#undef ESP_LOGW
-#undef ESP_LOGI
-#define ESP_LOGE(tag, fmt, ...) do { \
-        printf("E (%lld) %s: " fmt "\r\n", (long long)(esp_timer_get_time() / 1000), tag, ##__VA_ARGS__); \
-        fflush(stdout); \
-    } while (0)
-#define ESP_LOGW(tag, fmt, ...) do { \
-        printf("W (%lld) %s: " fmt "\r\n", (long long)(esp_timer_get_time() / 1000), tag, ##__VA_ARGS__); \
-        fflush(stdout); \
-    } while (0)
-#define ESP_LOGI(tag, fmt, ...) do { \
-        printf("I (%lld) %s: " fmt "\r\n", (long long)(esp_timer_get_time() / 1000), tag, ##__VA_ARGS__); \
-        fflush(stdout); \
-    } while (0)
+#include "app_log_workaround.h"
 
 static const char *TAG = "lv_port_disp";
 
@@ -99,11 +80,29 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
         }
     }
 
-    esp_err_t err = s_force_full_refresh ? eink_display_fb(s_native_fb)
-                                          : eink_display_fb_fast(s_native_fb);
+    /* Timed, but only LOGGED for a FULL refresh (rare: one per screen switch
+     * or ghost-budget housekeeping) or an abnormally slow fast DU (should
+     * never exceed ~1s; > kSlowFastMs would mean something is actually
+     * wrong, worth knowing about). The routine per-tap "fast" case used to
+     * be logged unconditionally too (2026-09-22 diagnosis of a dropped-click
+     * bug, since fixed in lv_port_indev.c) -- at the tap rate a real user
+     * hits during testing, that was itself enough serial output to risk
+     * UART back-pressure blocking this task's own printf()/fflush() calls,
+     * adding exactly the kind of latency being diagnosed. Now quiet unless
+     * there's something worth seeing. */
+    static const int64_t kSlowFastMs = 1200;
+    bool full = s_force_full_refresh;
+    int64_t t0 = esp_timer_get_time();
+    esp_err_t err = full ? eink_display_fb(s_native_fb)
+                          : eink_display_fb_fast(s_native_fb);
+    int64_t elapsed_ms = (esp_timer_get_time() - t0) / 1000;
     s_force_full_refresh = false;
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "flush failed: %s", esp_err_to_name(err));
+    } else if (full) {
+        ESP_LOGI(TAG, "flush FULL done in %lld ms", (long long)elapsed_ms);
+    } else if (elapsed_ms > kSlowFastMs) {
+        ESP_LOGW(TAG, "flush fast unusually slow: %lld ms", (long long)elapsed_ms);
     }
 
     lv_display_flush_ready(disp);
@@ -159,4 +158,9 @@ void lv_port_disp_init(void)
 void lv_port_disp_request_full_refresh(void)
 {
     s_force_full_refresh = true;
+}
+
+bool lv_port_disp_ghost_budget_low(void)
+{
+    return eink_ghost_budget_low();
 }

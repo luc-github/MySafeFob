@@ -81,7 +81,22 @@ static const char *TAG = "eink";
 #define EINK_FAST_BUDGET     30      /* fast DUs between two full GCs —
                                       * see boards/x4pro/factory/main/eink.c
                                       * for the tuning history (validated
-                                      * on hardware, factory session). */
+                                      * on hardware, factory session). DO
+                                      * NOT raise this to paper over slow
+                                      * mandatory full-GC hits landing
+                                      * mid-interaction -- see
+                                      * eink_ghost_budget_low()/eink.h
+                                      * instead, which lets a caller slip
+                                      * that same mandatory GC into an idle
+                                      * gap without changing this validated
+                                      * ghosting limit. */
+#define EINK_FAST_BUDGET_LOW_WATERMARK (EINK_FAST_BUDGET - 6)   /* ~6 fast
+                                      * DUs of advance warning -- enough
+                                      * that a caller polling once per idle
+                                      * check (ui_nav.cpp, every 20ms task
+                                      * tick) reliably catches a short pause
+                                      * between taps before the hard budget
+                                      * above is reached. */
 
 static spi_device_handle_t s_spi = NULL;
 static bool s_initialized = false;
@@ -415,6 +430,11 @@ esp_err_t eink_display_fb_fast(const uint8_t *fb)
 
     s_fast_count++;
     return ESP_OK;
+}
+
+bool eink_ghost_budget_low(void)
+{
+    return s_prev_valid && s_fast_count >= EINK_FAST_BUDGET_LOW_WATERMARK;
 }
 
 esp_err_t eink_power_off(void)

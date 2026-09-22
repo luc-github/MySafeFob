@@ -46,29 +46,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 
-/* WORKAROUND (2026-09-18): standard ESP_LOG* calls from this file never
- * reach the serial monitor, in every test so far, 100% reproducible --
- * not a race. A raw printf() from the exact same call site (verified in
- * ui_nav.cpp's board_ui_nav_task/input_sampler_task, see ROADMAP.md
- * ADR-014's amendment) works every time. Root cause not yet understood;
- * redefined ESP_LOG* to a printf-based equivalent, scoped to this
- * translation unit only, so touch diagnostics are actually visible in
- * the meantime. Revert this override once the real cause is found. */
-#undef ESP_LOGE
-#undef ESP_LOGW
-#undef ESP_LOGI
-#define ESP_LOGE(tag, fmt, ...) do { \
-        printf("E (%lld) %s: " fmt "\r\n", (long long)(esp_timer_get_time() / 1000), tag, ##__VA_ARGS__); \
-        fflush(stdout); \
-    } while (0)
-#define ESP_LOGW(tag, fmt, ...) do { \
-        printf("W (%lld) %s: " fmt "\r\n", (long long)(esp_timer_get_time() / 1000), tag, ##__VA_ARGS__); \
-        fflush(stdout); \
-    } while (0)
-#define ESP_LOGI(tag, fmt, ...) do { \
-        printf("I (%lld) %s: " fmt "\r\n", (long long)(esp_timer_get_time() / 1000), tag, ##__VA_ARGS__); \
-        fflush(stdout); \
-    } while (0)
+#include "app_log_workaround.h"
 
 /* Distinctive tag (2026-09-18, was "touch"): makes every GT911 register
  * read stand out in a busy serial log while diagnosing "touch does
@@ -142,6 +120,16 @@ static int16_t touch_lerp_y(int16_t raw_x)
 
 static i2c_master_bus_handle_t s_bus = NULL;
 static uint8_t s_addr = 0;
+/* Persistent device handle for the resolved GT911 address, opened once
+ * touch_init() succeeds. reg_read()/reg_write() used to open+remove a fresh
+ * i2c_master_dev_handle_t on EVERY call (2-3 times per ~20ms poll cycle in
+ * lv_port_indev.c's input_sampler_task) -- correctly freed each time, not a
+ * leak, but constant driver-internal alloc/free churn that added latency and
+ * heap fragmentation risk on the touch hot path. Kept open for the entire
+ * device lifetime instead; only the address-probing code (gt911_probe_address(),
+ * which must try two candidate addresses before either is known good) still
+ * opens its own short-lived handles. */
+static i2c_master_dev_handle_t s_dev = NULL;
 
 /* Host 480x800 config (185 bytes @0x8047, [184] = recomputed checksum). */
 static const uint8_t s_cfg_480x800[185] = {
@@ -194,32 +182,31 @@ static esp_err_t i2c_dev_open(uint16_t addr, i2c_master_dev_handle_t *out)
     return i2c_master_bus_add_device(s_bus, &cfg, out);
 }
 
+static esp_err_t touch_dev_ensure(void)
+{
+    if (s_dev) return ESP_OK;
+    return i2c_dev_open(s_addr, &s_dev);
+}
+
 /* 16-bit register read (>= 2 bytes: 1-byte reads get NACKed,
  * an IDF 5.4 I2C driver quirk validated on this hardware). */
 static esp_err_t reg_read(uint16_t reg, uint8_t *out, int len)
 {
-    i2c_master_dev_handle_t dev = NULL;
-    if (i2c_dev_open(s_addr, &dev) != ESP_OK) return ESP_FAIL;
+    if (touch_dev_ensure() != ESP_OK) return ESP_FAIL;
     uint8_t addr16[2] = {(uint8_t)(reg >> 8), (uint8_t)(reg & 0xFF)};
-    esp_err_t err = i2c_master_transmit_receive(dev, addr16, 2, out, len,
-                                                pdMS_TO_TICKS(100));
-    i2c_master_bus_rm_device(dev);
-    return err;
+    return i2c_master_transmit_receive(s_dev, addr16, 2, out, len,
+                                       pdMS_TO_TICKS(100));
 }
 
 static esp_err_t reg_write(uint16_t reg, const uint8_t *data, int len)
 {
-    i2c_master_dev_handle_t dev = NULL;
-    if (i2c_dev_open(s_addr, &dev) != ESP_OK) return ESP_FAIL;
+    if (touch_dev_ensure() != ESP_OK) return ESP_FAIL;
     uint8_t buf[2 + 185];
     if (len > 185) len = 185;
     buf[0] = (uint8_t)(reg >> 8);
     buf[1] = (uint8_t)(reg & 0xFF);
     memcpy(buf + 2, data, len);
-    esp_err_t err = i2c_master_transmit(dev, buf, (size_t)(2 + len),
-                                        pdMS_TO_TICKS(200));
-    i2c_master_bus_rm_device(dev);
-    return err;
+    return i2c_master_transmit(s_dev, buf, (size_t)(2 + len), pdMS_TO_TICKS(200));
 }
 
 /* Full POR dance (FreeInk xteink-x4pro-support.md): self-load /
@@ -364,7 +351,14 @@ bool touch_init(void)
     }
 
     /* Attempt 2 (fallback already validated on this unit): full dance
-     * with rail power-cycle + host config upload if needed. */
+     * with rail power-cycle + host config upload if needed. Drop attempt 1's
+     * cached device handle first -- it was opened (by reg_read() above, via
+     * touch_dev_ensure()) against attempt 1's s_addr, which attempt 2 may
+     * resolve to a different address. */
+    if (s_dev) {
+        i2c_master_bus_rm_device(s_dev);
+        s_dev = NULL;
+    }
     s_addr = 0;
     gt911_por_dance();
     if (!gt911_probe_address()) {
@@ -498,11 +492,7 @@ touch_point_t touch_read(void)
     }
 
     /* Free the buffer for next time. */
-    uint8_t clr[3] = {0x81, 0x4E, 0x00};
-    i2c_master_dev_handle_t dev = NULL;
-    if (i2c_dev_open(s_addr, &dev) == ESP_OK) {
-        i2c_master_transmit(dev, clr, sizeof(clr), pdMS_TO_TICKS(100));
-        i2c_master_bus_rm_device(dev);
-    }
+    uint8_t clr_val = 0x00;
+    reg_write(GT_REG_STATUS, &clr_val, 1);
     return pt;
 }
