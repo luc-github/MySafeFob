@@ -1,5 +1,5 @@
-# MySafeFob — dépendances gérées (ESP-IDF component manager)
-# LVGL retiré (ADR-010, docs/ROADMAP.md) : remplacé par FreeInkUI, vendorisé
-# en copies figées indépendantes (boards/<board>/*/components/freeinkui/),
-# pas via le component manager.
+# MySafeFob — managed dependencies (ESP-IDF component manager).
+# LVGL is back (ADR-010 amended, docs/ROADMAP.md) as a per-component
+# dependency of boards/x4pro/app only (its own idf_component.yml) —
+# the "main" component itself still needs nothing from the registry.
 dependencies: {}

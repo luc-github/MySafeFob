@@ -1,14 +1,30 @@
-# X4 Pro — sdkconfig complémentaire (apres le sdkconfig.defaults commun)
-# Hardware : ESP32-S3R8, flash 16 MB quad, PSRAM octal 8 Mo.
-# Pinout et drivers : docs/hardware-specs.md (bring-up valide 2026-09-13).
-# Les reglages specifiques drivers (SPI e-ink, I2C, SDMMC...) seront
-# ajoutes ici avec les drivers de la tâche 8c.
+# X4 Pro — board-specific sdkconfig (layered after the common sdkconfig.defaults)
+# Hardware: ESP32-S3R8, 16 MB quad flash, 8 MB octal PSRAM.
+# Pinout and drivers: docs/hardware-specs.md (bring-up validated 2026-09-13).
 
-# Table de partitions propre a cette board (chemin relatif au projet src/).
+# Board-specific partition table (path relative to the project root).
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="boards/x4pro/partitions.csv"
 
-# Requis par power_mgr_switch_to_factory() (2026-09-16, ADR-009 amende) :
-# l'app ecrit/efface le secteur de backup otadata @0xB000, avant la 1re
-# partition (NVS @0xD000) -> "dangerous" par defaut. Meme contrat que
-# boards/x4pro/factory/sdkconfig.defaults (hooks.c bootloader).
+# Required by power_mgr_switch_to_factory() (2026-09-16, ADR-009 amended):
+# the app writes/erases the otadata backup sector @0xB000, before the
+# first partition (NVS @0xD000) -> "dangerous" by default. Same contract
+# as boards/x4pro/factory/sdkconfig.defaults (hooks.c bootloader).
 CONFIG_SPI_FLASH_DANGEROUS_WRITE_ALLOWED=y
+
+# LVGL (boards/x4pro/app only, ADR-010 amended again — see idf_component.yml):
+# 1bpp color depth matches the e-ink panel's native 1bpp framebuffer and
+# auto-selects LV_USE_THEME_MONO ("suitable for some E-paper & dot matrix
+# displays", lvgl's own Kconfig help text) instead of the default/simple
+# themes' gradients and shadows, which have no meaning on this panel.
+CONFIG_LV_COLOR_DEPTH_1=y
+
+# Default Montserrat 14 (LVGL's own Kconfig default) reads as tiny on this
+# 480x800 panel meant to be read like a book/menu -- matches the old
+# FreeInkUI default (~24px) instead. Found on first hardware test
+# (2026-09-21: "les textes sont tous petit").
+CONFIG_LV_FONT_DEFAULT_MONTSERRAT_24=y
+
+# Extra size (not the default) for the -/+ stepper buttons' glyphs
+# specifically (2026-09-21: "le contenu + et - sont trop petits") --
+# ui_nav.cpp sets this explicitly on those labels only.
+CONFIG_LV_FONT_MONTSERRAT_32=y

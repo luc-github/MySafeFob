@@ -51,15 +51,50 @@ void board_ui_nav_task(void *arg);
 void board_activity_notify(void);
 
 /**
- * @brief Injects one confirm pulse into the nav loop's InteractionBuffer,
- *        equivalent to a touch-Home tap. Called by main.c's
- *        power_button_task on a Power release shorter than
- *        MSF_POWER_LONG_MS — gated there behind the "Power short press =
- *        Select" setting (settings_store.h). Power still never becomes a
- *        screen-level actor: this is a single pulse consumed by the next
- *        loop iteration, not GPIO3 joining this loop's own input reads.
+ * @brief Injects one confirm pulse (fires LV_EVENT_CLICKED on the
+ *        currently focused widget, see board_ui_nav_task's loop) — the
+ *        same pulse for two unrelated physical gestures that both mean
+ *        "confirm, not a positional tap":
+ *         - main.c's power_button_task, on a Power release shorter than
+ *           MSF_POWER_LONG_MS, gated behind the "Power short press =
+ *           Select" setting (settings_store.h);
+ *         - lv_port_indev.c's input_sampler_task, on a touch-Home press
+ *           edge (the GT911 digitizer's dedicated capacitive zone below
+ *           the visible e-ink glass, per touch.c — its x/y calibrates
+ *           into the normal on-screen range, which would make LVGL treat
+ *           it as a tap on whatever's drawn there; this pulse is used
+ *           instead of feeding that touch to the pointer indev at all).
+ *        Neither Power nor touch-Home otherwise joins this loop's own
+ *        screen-level input handling — this is a single pulse consumed
+ *        by the next loop iteration.
  */
 void board_ui_nav_power_confirm(void);
+
+/**
+ * @brief Queues a Left/Right group-focus step, consumed by
+ *        board_ui_nav_task's own loop. LVGL is not thread-safe -- calling
+ *        lv_group_focus_prev/next() directly from lv_port_indev.c's
+ *        input_sampler_task (a different FreeRTOS task) crashed on
+ *        hardware 2026-09-21 (two tasks touching LVGL's invalidated-area
+ *        list at once). Same pattern as board_ui_nav_power_confirm(): the
+ *        sampler task only ever raises a flag, board_ui_nav_task is the
+ *        sole task that ever calls into LVGL.
+ */
+void board_ui_nav_focus_prev(void);
+void board_ui_nav_focus_next(void);
+
+/**
+ * @brief Stops board_ui_nav_task's own loop from pumping lv_timer_handler()
+ *        any further, so it can't touch LVGL concurrently with whatever
+ *        happens right after this call (LVGL is not thread-safe). The
+ *        deep sleep screen itself is drawn without LVGL at all: splash.cpp's
+ *        board_sleep_screen_show() (which calls this first) blits
+ *        resources/sleep.png (tools/gen_sleep.py -> sleep_bitmap.h)
+ *        straight into eink.c's native framebuffer, the same pre-LVGL path
+ *        board_splash_show() already uses for the boot splash, then owns
+ *        eink_power_off() and the rail-holding sequence right after.
+ */
+void ui_nav_suspend_lvgl_for_sleep(void);
 
 #ifdef __cplusplus
 }

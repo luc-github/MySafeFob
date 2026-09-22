@@ -1,0 +1,11 @@
+# MySafeFob — x4pro/app component dependencies (ESP-IDF Component Manager).
+# LVGL is a per-component managed dependency here only (ADR-010 amended,
+# docs/ROADMAP.md): the factory image keeps its own frozen FreeInkUI copy
+# and does not pull LVGL.
+# Version left open above 9.4 (not pinned to a single patch) so the
+# component manager resolves the latest 9.x stable release at fetch time
+# instead of a number chosen ahead of time — confirm the resolved version
+# in dependencies.lock after the first `idf.py build`.
+dependencies:
+  lvgl/lvgl:
+    version: "^9.4.0"

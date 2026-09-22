@@ -272,6 +272,34 @@ boolean was ever set) for real. Result:
   gets used for exactly this — tap progressively closer to each edge and
   note where the raw reading stops updating/registering.
 
+## 10. Top-edge dead zone — now actually measured (2026-09-21, LVGL migration testing)
+
+§9's open question ("how wide is the dead zone, exactly") got a rough
+off-the-cuff estimate first ("0 to about 70" — not a measurement,
+corrected in an earlier revision of this section), then a real one: the
+Touch calibration screen (`build_touch_diag()`, `ui_nav.cpp`) got a
+permanent column of labeled tick marks at known absolute y values (10,
+50, 90, 130, ... every 40px), independent of any flex/theme layout —
+same technique as the 5-cross test screen that found the I1
+palette-offset bug, but kept as a real tool instead of thrown away.
+Tapping down the column against the live raw-coordinate readout: the
+y=10 and y=50 ticks never register; **y=90 is the first one that
+does**, with the actual reported logical y landing around **87**.
+
+So: the dead zone's upper edge is somewhere in **(50, 90)**, closer to
+90 — good enough to design margins against, though the exact boundary
+within that 40px gap is still not pinned down (the tick spacing is the
+limiting factor, not the touch reading itself). Only the top edge has
+been characterized this way; the other three are still unmeasured.
+
+`kHeaderTopMargin` (`ui_nav.cpp`) raised 80 -> 100 for headroom above
+this real measurement.
+
+`boards/x4pro/app/ui_nav.cpp`'s header bar top margin was raised
+40px -> 80px anyway, as a defensive margin against the rough estimate,
+not as a value derived from a real measurement. Revisit once the
+diagnostic above actually happens.
+
 ## 10. RESOLVED (2026-09-18/19) — the axes are swapped, not just miscalibrated
 
 Everything above (§1-9) was investigated under the assumption that
