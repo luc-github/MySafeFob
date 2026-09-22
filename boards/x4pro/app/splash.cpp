@@ -18,16 +18,25 @@
 */
 /**
  * @file splash.cpp
- * @brief MySafeFob App — boot screen + sleep screen (board x4pro),
- *        via FreeInkUI::DisplayTarget (ADR-010 amended — frozen copy
- *        components/freeinkui/, independent from the factory's).
+ * @brief MySafeFob App — boot screen + sleep screen (board x4pro).
  *
- * Reuses the proven eink.c driver (same UC8279 sequences as the
- * factory). Replaces the old homemade text rendering (font8x16 + put_pixel) —
- * user feedback 2026-09-16: both screens were unreadable
- * (font too small, dense layout with no visual hierarchy).
+ * board_splash_show() runs before LVGL is initialized (called from
+ * app_main(), ahead of board_ui_nav_task) and stays LVGL-free: it blits
+ * the pre-rendered splash bitmap straight into eink.c's native
+ * framebuffer using the same portrait->landscape transpose convention
+ * documented in hw_config.h (fb_x = uy, fb_y = 479 - ux) that
+ * FreeInkUIDisplayTarget used to apply internally (ADR-010 amended again
+ * — LVGL replaced FreeInkUI, docs/ROADMAP.md).
+ *
+ * board_sleep_screen_show() runs after board_ui_nav_task has started, but
+ * stays LVGL-free too (2026-09-22 request: replace the sleep screen with
+ * resources/sleep.png outright) -- it calls ui_nav_suspend_lvgl_for_sleep()
+ * first (LVGL is not thread-safe: this stops board_ui_nav_task's own loop
+ * from touching it concurrently with the blit below), then blits the sleep
+ * bitmap the same way board_splash_show() blits the boot splash.
  */
 #include "splash.h"
+#include "ui_nav.h"
 
 extern "C" {
 #include "eink.h"
@@ -36,18 +45,81 @@ extern "C" {
 #include "driver/gpio.h"
 #include "driver/rtc_io.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 }
 
 #include "splash_bitmap.h"
+#include "sleep_bitmap.h"
 
+#include <cstdio>
 #include <cstring>
 
-#include <FreeInkUIDisplayTarget.h>
-
-using namespace freeink::ui;
+/* WORKAROUND (2026-09-18, see touch.c's twin comment): standard ESP_LOG*
+ * calls from boards/x4pro/app never reach the serial monitor, 100%
+ * reproducible -- a raw printf() from the same call site always works.
+ * Scoped to this translation unit only; revert once the real cause is
+ * found. */
+#undef ESP_LOGE
+#undef ESP_LOGW
+#undef ESP_LOGI
+#define ESP_LOGE(tag, fmt, ...) do { \
+        printf("E (%lld) %s: " fmt "\r\n", (long long)(esp_timer_get_time() / 1000), tag, ##__VA_ARGS__); \
+        fflush(stdout); \
+    } while (0)
+#define ESP_LOGW(tag, fmt, ...) do { \
+        printf("W (%lld) %s: " fmt "\r\n", (long long)(esp_timer_get_time() / 1000), tag, ##__VA_ARGS__); \
+        fflush(stdout); \
+    } while (0)
+#define ESP_LOGI(tag, fmt, ...) do { \
+        printf("I (%lld) %s: " fmt "\r\n", (long long)(esp_timer_get_time() / 1000), tag, ##__VA_ARGS__); \
+        fflush(stdout); \
+    } while (0)
 
 static const char *TAG = "SPLASH";
 static uint8_t s_fb[SCREEN_FB_SIZE];
+
+/* Splash bitmap is pre-rendered portrait (SPLASH_W=480, SPLASH_H=800,
+ * SPLASH_STRIDE=60 bytes/row, MSB-first, 1=ink/black) by
+ * tools/gen_splash.py. Same transpose FreeInkUIDisplayTarget's
+ * Orientation::Portrait used to apply per-pixel: fb_x = uy, fb_y = 479 - ux
+ * into the native landscape fb (EINK_WB=100 bytes/row). Only ink (black)
+ * bits are written — s_fb is memset to white (0xFF) first. */
+static void blit_splash_to_fb(uint8_t *fb)
+{
+    for (int uy = 0; uy < SPLASH_H; uy++) {
+        for (int ux = 0; ux < SPLASH_W; ux++) {
+            const uint8_t src_byte = splash_bits[uy * SPLASH_STRIDE + (ux >> 3)];
+            const bool ink = (src_byte >> (7 - (ux & 7))) & 1;
+            if (!ink) {
+                continue;
+            }
+            const int fb_x = uy;
+            const int fb_y = SPLASH_W - 1 - ux;
+            uint8_t *byte = &fb[fb_y * EINK_WB + (fb_x >> 3)];
+            *byte &= static_cast<uint8_t>(~(0x80 >> (fb_x & 7)));
+        }
+    }
+}
+
+/* Same format/transpose as blit_splash_to_fb() above, just a different
+ * source bitmap (sleep_bitmap.h, tools/gen_sleep.py from
+ * resources/sleep.png) for the deep sleep screen. */
+static void blit_sleep_to_fb(uint8_t *fb)
+{
+    for (int uy = 0; uy < SLEEP_H; uy++) {
+        for (int ux = 0; ux < SLEEP_W; ux++) {
+            const uint8_t src_byte = sleep_bits[uy * SLEEP_STRIDE + (ux >> 3)];
+            const bool ink = (src_byte >> (7 - (ux & 7))) & 1;
+            if (!ink) {
+                continue;
+            }
+            const int fb_x = uy;
+            const int fb_y = SLEEP_W - 1 - ux;
+            uint8_t *byte = &fb[fb_y * EINK_WB + (fb_x >> 3)];
+            *byte &= static_cast<uint8_t>(~(0x80 >> (fb_x & 7)));
+        }
+    }
+}
 
 static void rails_for_splash(void)
 {
@@ -118,15 +190,7 @@ extern "C" void board_splash_show(void)
 
     /* Same bitmap as the factory (resources/splash.png): visual
      * continuity factory -> app at startup (2026-09-15 request). */
-    DisplayTarget target(s_fb, EINK_W, EINK_H, EINK_WB, Orientation::Portrait);
-    BitmapRef bmp;
-    bmp.data = splash_bits;
-    bmp.width = SPLASH_W;
-    bmp.height = SPLASH_H;
-    bmp.format = BitmapFormat::BW1;
-    bmp.progmem = false;
-    target.bitmap(Rect{0, 0, target.logicalWidth(), target.logicalHeight()},
-                  bmp, BitmapMode::Contain);
+    blit_splash_to_fb(s_fb);
 
     if (eink_display_fb(s_fb) != ESP_OK) {
         ESP_LOGE(TAG, "e-ink refresh FAILED");
@@ -148,6 +212,12 @@ extern "C" void board_splash_show(void)
 
 extern "C" void board_sleep_screen_show(void)
 {
+    /* First thing, before touching eink.c/s_fb below: board_ui_nav_task
+     * (a different task when this is reached via main.c's Power-long-press
+     * path) must stop pumping lv_timer_handler() before anything else here
+     * runs, LVGL is not thread-safe. */
+    ui_nav_suspend_lvgl_for_sleep();
+
     rails_for_splash();
 
     if (eink_init() != ESP_OK) {
@@ -157,41 +227,16 @@ extern "C" void board_sleep_screen_show(void)
         return;
     }
 
+    /* Blitted straight into the framebuffer, same pre-LVGL path as the
+     * boot splash (2026-09-22 request: replace the sleep screen outright
+     * with resources/sleep.png) -- this function still owns
+     * eink_power_off()/rails_hold_for_sleep() right after, unchanged. */
     memset(s_fb, 0xFF, sizeof(s_fb));
-
-    DisplayTarget target(s_fb, EINK_W, EINK_H, EINK_WB, Orientation::Portrait);
-    const int16_t w = target.logicalWidth();
-
-    TextStyle title;
-    title.align = TextAlign::Center;
-    target.text(Rect{0, 60, w, 40}, "MySafeFob", title);
-    target.line(Point{60, 120}, Point{static_cast<int16_t>(w - 60), 120}, 1,
-               Paint::solid(Color::Black));
-
-    /* "ASLEEP" in inverted video — same visual language as the factory
-     * menu selection — rather than relying on a different font size (only
-     * one bitmap font embedded, same size everywhere). */
-    const Rect box{60, 340, static_cast<int16_t>(w - 120), 70};
-    target.fill(box, Paint::solid(Color::Black));
-    TextStyle inverted;
-    inverted.align = TextAlign::Center;
-    inverted.color = Color::White;
-    target.text(box, "ASLEEP", inverted);
-
-    target.line(Point{60, 460}, Point{static_cast<int16_t>(w - 60), 460}, 1,
-               Paint::solid(Color::Black));
-
-    TextStyle hint;
-    hint.align = TextAlign::Center;
-    target.text(Rect{0, 490, w, 40}, "Power = Wake", hint);
-
-    /* Battery indicator + contact-if-lost: task 8c (CW2017, opt-in).
-     * Factory-rescue combo intentionally NOT shown (DECISIONS §16). */
-
+    blit_sleep_to_fb(s_fb);
     if (eink_display_fb(s_fb) != ESP_OK) {
-        ESP_LOGE(TAG, "e-ink refresh FAILED — sleeping anyway");
-        return;
+        ESP_LOGE(TAG, "e-ink refresh FAILED (sleep screen)");
     }
+
     eink_power_off();
     rails_hold_for_sleep();
     /* Guarantee the frontlight is off before deep sleep, regardless of
