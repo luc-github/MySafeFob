@@ -86,28 +86,36 @@ void board_activity_notify(void)
     s_last_activity_us.store(esp_timer_get_time(), std::memory_order_relaxed);
 }
 
-static std::atomic<bool> s_power_confirm_pending{false};
+/* Counters, not flags (2026-09-22, same reasoning as lv_port_indev.c's
+ * touch-edge queue): a single bool can only ever represent "one pending",
+ * so two presses landing while board_ui_nav_task is busy (mid-flush) would
+ * coalesce into one action, silently costing the user a step. Bounded
+ * naturally -- buttons.c's button_wait_press() only returns once per real
+ * press+release cycle (it blocks on the level until release), so these can
+ * only ever be incremented by genuine distinct presses, never by a held
+ * button or a polling artifact. */
+static std::atomic<int> s_power_confirm_pending{0};
 
 void board_ui_nav_power_confirm(void)
 {
-    s_power_confirm_pending.store(true, std::memory_order_relaxed);
+    s_power_confirm_pending.fetch_add(1, std::memory_order_relaxed);
 }
 
 /* See ui_nav.h's doc comment: LVGL is not thread-safe -- these are only
  * ever set from lv_port_indev.c's input_sampler_task (a different task)
  * and consumed by board_ui_nav_task's own loop, which is the only task
  * that ever touches LVGL. */
-static std::atomic<bool> s_focus_prev_pending{false};
-static std::atomic<bool> s_focus_next_pending{false};
+static std::atomic<int> s_focus_prev_pending{0};
+static std::atomic<int> s_focus_next_pending{0};
 
 void board_ui_nav_focus_prev(void)
 {
-    s_focus_prev_pending.store(true, std::memory_order_relaxed);
+    s_focus_prev_pending.fetch_add(1, std::memory_order_relaxed);
 }
 
 void board_ui_nav_focus_next(void)
 {
-    s_focus_next_pending.store(true, std::memory_order_relaxed);
+    s_focus_next_pending.fetch_add(1, std::memory_order_relaxed);
 }
 
 void switch_screen(Screen s)
@@ -263,7 +271,12 @@ void board_ui_nav_task(void *arg)
         if (!s_lvgl_suspended.load(std::memory_order_relaxed)) {
             lv_timer_handler();
 
-            if (s_power_confirm_pending.exchange(false, std::memory_order_relaxed)) {
+            /* Counters, not flags -- see their declaration's comment. Drain
+             * ALL pending steps queued while this loop was busy (e.g. mid-
+             * flush), not just one, so two quick presses of the same
+             * button always produce two actions once the loop catches up. */
+            int power_confirms = s_power_confirm_pending.exchange(0, std::memory_order_relaxed);
+            for (int i = 0; i < power_confirms; i++) {
                 board_activity_notify();
                 /* lv_group_send_data(group, LV_KEY_ENTER) only fires a raw
                  * LV_EVENT_KEY on the focused widget -- turning that into
@@ -286,10 +299,12 @@ void board_ui_nav_task(void *arg)
              * state change on this UI. No lv_port_disp_request_full_refresh() here
              * (2026-09-22 fix): forcing a full GC flash on every single Left/Right
              * press made navigation feel slow for no visual benefit. */
-            if (s_focus_prev_pending.exchange(false, std::memory_order_relaxed)) {
+            int focus_prev_steps = s_focus_prev_pending.exchange(0, std::memory_order_relaxed);
+            for (int i = 0; i < focus_prev_steps; i++) {
                 lv_group_focus_prev(s_groups[static_cast<int>(s_screen)]);
             }
-            if (s_focus_next_pending.exchange(false, std::memory_order_relaxed)) {
+            int focus_next_steps = s_focus_next_pending.exchange(0, std::memory_order_relaxed);
+            for (int i = 0; i < focus_next_steps; i++) {
                 lv_group_focus_next(s_groups[static_cast<int>(s_screen)]);
             }
 

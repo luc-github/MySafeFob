@@ -51,7 +51,7 @@ void board_ui_nav_task(void *arg);
 void board_activity_notify(void);
 
 /**
- * @brief Injects one confirm pulse (fires LV_EVENT_CLICKED on the
+ * @brief Queues one confirm pulse (fires LV_EVENT_CLICKED on the
  *        currently focused widget, see board_ui_nav_task's loop) — the
  *        same pulse for two unrelated physical gestures that both mean
  *        "confirm, not a positional tap":
@@ -65,20 +65,28 @@ void board_activity_notify(void);
  *           it as a tap on whatever's drawn there; this pulse is used
  *           instead of feeding that touch to the pointer indev at all).
  *        Neither Power nor touch-Home otherwise joins this loop's own
- *        screen-level input handling — this is a single pulse consumed
- *        by the next loop iteration.
+ *        screen-level input handling. A COUNTER, not a single flag
+ *        (2026-09-22, same reasoning as the touch-edge queue fix in
+ *        lv_port_indev.c): two calls landing while board_ui_nav_task is
+ *        busy (e.g. mid-flush) both still fire their own pulse once it
+ *        catches up, instead of the second one silently overwriting/
+ *        losing the first.
  */
 void board_ui_nav_power_confirm(void);
 
 /**
- * @brief Queues a Left/Right group-focus step, consumed by
+ * @brief Queues one Left/Right group-focus step, consumed by
  *        board_ui_nav_task's own loop. LVGL is not thread-safe -- calling
  *        lv_group_focus_prev/next() directly from lv_port_indev.c's
  *        input_sampler_task (a different FreeRTOS task) crashed on
  *        hardware 2026-09-21 (two tasks touching LVGL's invalidated-area
  *        list at once). Same pattern as board_ui_nav_power_confirm(): the
- *        sampler task only ever raises a flag, board_ui_nav_task is the
- *        sole task that ever calls into LVGL.
+ *        sampler task only ever raises a counter, board_ui_nav_task is the
+ *        sole task that ever calls into LVGL -- and it's a counter, not a
+ *        flag, for the same reason: two quick presses of the same button
+ *        while the loop is busy (mid-flush) both still move focus once it
+ *        catches up, rather than the second press coalescing into the
+ *        first and silently costing the user one step.
  */
 void board_ui_nav_focus_prev(void);
 void board_ui_nav_focus_next(void);
