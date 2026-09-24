@@ -204,7 +204,7 @@ static void power_button_task(void *arg)
                 }
             } else if (!factory_triggered && settings_store_get_power_short_confirm()) {
                 esp3d_log_d("Power short press: confirm (settings_store)");
-                board_ui_nav_power_confirm();
+                board_ui_nav_power_confirm(false);
             }
             held = false;
         }

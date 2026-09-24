@@ -96,10 +96,30 @@ void board_activity_notify(void)
  * incremented by genuine distinct presses, never by a held button or a
  * polling artifact. */
 static std::atomic<int> s_power_confirm_pending{0};
+/* Kept separate from the counter above (2026-09-23) precisely so a screen
+ * can ask for touch-Home confirms to be dropped without affecting the
+ * Power-button path -- see board_ui_nav_suppress_touch_confirm()'s own
+ * doc comment (ui_nav.h) for the hardware bug this closes. */
+static std::atomic<int> s_touch_home_confirm_pending{0};
+static std::atomic<bool> s_suppress_touch_confirm{false};
 
-void board_ui_nav_power_confirm(void)
+void board_ui_nav_power_confirm(bool from_touch_home)
 {
-    s_power_confirm_pending.fetch_add(1, std::memory_order_relaxed);
+    if (from_touch_home) {
+        s_touch_home_confirm_pending.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        s_power_confirm_pending.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void board_ui_nav_suppress_touch_confirm(bool suppress)
+{
+    s_suppress_touch_confirm.store(suppress, std::memory_order_relaxed);
+}
+
+bool board_ui_nav_is_touch_confirm_suppressed(void)
+{
+    return s_suppress_touch_confirm.load(std::memory_order_relaxed);
 }
 
 /* See ui_nav.h's doc comment: LVGL is not thread-safe -- these are only
@@ -146,6 +166,15 @@ void enter_sleep_from_idle_or_menu(const char *reason)
  * CURRENTLY visible (s_screen), same one switch_screen() already targets. */
 static void battery_timer_cb(lv_timer_t *timer)
 {
+    /* No periodic label update on Touch Calibration (2026-09-24 user
+     * request): an unrelated flush landing mid-run is exactly the kind of
+     * surprise that screen's tap-counting is built to be robust against,
+     * and there's nothing to gain from a live battery figure during a
+     * ~2-minute one-off procedure. The label is still refreshed on entry
+     * (switch_screen()). */
+    if (s_screen == Screen::TouchDiag) {
+        return;
+    }
     bool charging = refresh_battery_label(s_battery_labels[static_cast<int>(s_screen)]);
     lv_timer_set_period(timer, charging ? 10000 : 30000);
 }
@@ -195,38 +224,16 @@ static void build_screens(void)
     build_screen(Screen::TouchDiag, build_touch_diag);
 }
 
-/* Slips eink.c's mandatory ghost-budget full GC (~2-4s, ~30 fast DUs
- * worth of ghosting) into a short gap between interactions instead of
- * leaving it to land on whatever flush happens to be the 30th one --
- * which, on a screen with several quick taps in a row (Settings > Display's
- * -/+ steppers, 2026-09-22 bug report: "+90% -> le +passage a 100% se fait
- * 4 a 6s apres"), can be the very flush the user is waiting on for their
- * last tap's result, making an ordinary button press look stuck for
- * several seconds. Purely a scheduling optimization: the hard budget in
- * eink.c is untouched and still fires unconditionally if this never finds
- * an idle gap (e.g. non-stop tapping), so ghosting stays bounded either
- * way -- see eink_ghost_budget_low()'s doc comment. */
-static constexpr int64_t kGhostHousekeepingIdleUs = 500000;   /* 500 ms */
-static bool s_ghost_housekeeping_pending = false;
-
-static void maybe_run_ghost_housekeeping(void)
-{
-    if (!lv_port_disp_ghost_budget_low()) {
-        s_ghost_housekeeping_pending = false;   /* budget reset by a flush since last check */
-        return;
-    }
-    if (s_ghost_housekeeping_pending) {
-        return;   /* already requested, waiting for it to actually flush */
-    }
-    int64_t idle_us = esp_timer_get_time() - s_last_activity_us.load(std::memory_order_relaxed);
-    if (idle_us < kGhostHousekeepingIdleUs) {
-        return;   /* still mid-interaction -- don't start a slow refresh now */
-    }
-    ESP_LOGI(TAG, "ghost budget low + idle -- running housekeeping full refresh");
-    lv_port_disp_request_full_refresh();
-    lv_obj_invalidate(lv_screen_active());
-    s_ghost_housekeeping_pending = true;
-}
+/* REMOVED 2026-09-24 (was: slip eink.c's mandatory ghost-budget full GC
+ * into an idle gap instead of letting it land on an active tap, added
+ * 2026-09-22). User feedback: any refresh firing without a direct user
+ * interaction is unwanted, including one scheduled for an idle moment --
+ * matches this app's original, stricter rule (full refresh only on a
+ * screen-type change or sleep/wake, UI-SPECS.md §1.1). The hard budget in
+ * eink.c (EINK_FAST_BUDGET, unconditional every ~30 fast DUs) is
+ * untouched and still bounds ghosting on its own; it can now once again
+ * land on an active tap if someone stays on one screen tapping non-stop
+ * long enough, same tradeoff this app accepted before 2026-09-22. */
 
 static void check_idle_timeout(void)
 {
@@ -295,6 +302,24 @@ void board_ui_nav_task(void *arg)
                 }
             }
 
+            /* Touch-Home confirms: still counted as activity (a real touch
+             * happened) even when dropped -- see
+             * board_ui_nav_suppress_touch_confirm()'s doc comment (ui_nav.h)
+             * for why a suppressed screen still discards these instead of
+             * queuing them for later. */
+            int touch_home_confirms = s_touch_home_confirm_pending.exchange(0, std::memory_order_relaxed);
+            bool suppress_touch_confirm = s_suppress_touch_confirm.load(std::memory_order_relaxed);
+            for (int i = 0; i < touch_home_confirms; i++) {
+                board_activity_notify();
+                if (suppress_touch_confirm) {
+                    continue;
+                }
+                lv_obj_t *focused = lv_group_get_focused(s_groups[static_cast<int>(s_screen)]);
+                if (focused) {
+                    lv_obj_send_event(focused, LV_EVENT_CLICKED, nullptr);
+                }
+            }
+
             /* Moving focus only changes a button's outline ring (add_to_group()) --
              * a small delta the fast DU refresh handles fine, same as any other
              * state change on this UI. No lv_port_disp_request_full_refresh() here
@@ -309,7 +334,6 @@ void board_ui_nav_task(void *arg)
                 lv_group_focus_next(s_groups[static_cast<int>(s_screen)]);
             }
 
-            maybe_run_ghost_housekeeping();
             check_idle_timeout();
         }
         vTaskDelay(pdMS_TO_TICKS(20));

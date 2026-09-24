@@ -49,3 +49,12 @@ SETTINGS_DEF(IdleTimeoutS,      "idle_to_s",    U32,  0)
 SETTINGS_DEF(FrontlightOn,        "fl_on",      BOOL, 0)
 SETTINGS_DEF(FrontlightColor,     "fl_color",   U32,  0)   /* 0-100 warm<->cool mix, 0=warm */
 SETTINGS_DEF(FrontlightIntensity, "fl_intens",  U32,  60)
+/* Touch calibration (touch.c's per-unit correction, ui_screen_touch_diag.cpp) --
+ * scale is x1000 fixed-point (1000 = 1.000x); offset is a signed pixel
+ * delta stored via its raw 32-bit bit pattern (nvs_(get|set)_u32 round-trip
+ * two's complement bit-for-bit, no bias trick needed -- see
+ * settings_store.h's touch cal accessors). */
+SETTINGS_DEF(TouchCalScaleX,  "tc_scale_x", U32, 1000)
+SETTINGS_DEF(TouchCalOffsetX, "tc_off_x",   U32, 0)
+SETTINGS_DEF(TouchCalScaleY,  "tc_scale_y", U32, 1000)
+SETTINGS_DEF(TouchCalOffsetY, "tc_off_y",   U32, 0)

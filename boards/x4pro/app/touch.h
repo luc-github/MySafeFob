@@ -40,6 +40,19 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* 2026-09-23: this header used to rely on every C++ caller wrapping its own
+ * #include "touch.h" in extern "C" -- broke silently (C++-mangled linkage,
+ * a link-time "undefined reference" far from the actual cause) the moment
+ * ANY file pulled this header in unwrapped first (lv_port_indev.h does, via
+ * its own plain #include "touch.h"): #pragma once then makes every LATER
+ * #include a no-op, including one deliberately wrapped in extern "C" by a
+ * different .cpp file, silently keeping the FIRST (unwrapped) linkage.
+ * Guarding it here instead, like every other header in this component,
+ * makes it correct regardless of include order. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct {
     bool pressed;       /* true if a finger is down */
     bool home;          /* true if the point is within the Home pad zone
@@ -67,3 +80,74 @@ bool touch_init(void);
  *        re-dancing on every poll prevented scanning).
  */
 touch_point_t touch_read(void);
+
+/**
+ * @brief Per-unit linear correction (scale + offset per axis) applied on
+ *        top of the fixed calibration above (touch_lerp()/touch_lerp_y()),
+ *        persisted in settings_store.h/NVS -- 2026-09-23, Settings >
+ *        Touch Calibration's guided 9-target sequence
+ *        (ui_screen_touch_diag.cpp) computes and calls this once at the
+ *        end of a run. Cached in RAM (loaded once by touch_init()) so
+ *        touch_read()'s hot path (~50Hz poll) never touches NVS itself.
+ *        Defaults to identity (scale=1000, offset=0) until a calibration
+ *        run has been completed at least once.
+ * @param scale_x1000/scale_y1000 Per-axis scale, x1000 fixed-point
+ *        (1000 = 1.000x).
+ * @param offset_x/offset_y Per-axis offset in logical pixels, added AFTER
+ *        scaling.
+ * @return True once every one of the 4 values has been read straight back
+ *         from NVS and matches what was just written -- a real check, not
+ *         just "the write call didn't return an error" (settings_store.h's
+ *         setters are void, matching NVS's own fire-and-forget convention,
+ *         so without this a silent flash-write failure would otherwise be
+ *         invisible here). False means the correction is still applied
+ *         in RAM for this session, but was NOT reliably saved -- it won't
+ *         survive a reboot.
+ */
+bool touch_set_calibration(int32_t scale_x1000, int32_t offset_x,
+                           int32_t scale_y1000, int32_t offset_y);
+
+/**
+ * @brief Reads back the currently-applied (in-RAM) correction -- 2026-09-24,
+ *        Settings > Touch Calibration saves this before starting a fresh
+ *        run (which always resets to identity first, see
+ *        touch_reset_calibration()'s own call site there) so a failed run
+ *        can restore it afterward instead of leaving identity applied.
+ */
+void touch_get_calibration(int32_t *scale_x1000, int32_t *offset_x,
+                           int32_t *scale_y1000, int32_t *offset_y);
+
+/**
+ * @brief Fits touch_set_calibration()'s per-axis linear correction from n
+ *        (measured, expected) logical-coordinate point pairs via
+ *        least-squares regression, persists it, and returns the worst
+ *        residual error (px) across those same points once the new
+ *        correction is applied to them -- lets the caller show a
+ *        pass/fail readout without re-deriving the fit itself.
+ *        `measured_*`/`expected_*` are parallel arrays of length n.
+ * @param out_persisted If non-NULL, set to touch_set_calibration()'s own
+ *        verified-persistence result (see its doc comment) -- the caller
+ *        uses this to tell the user whether the calibration will survive
+ *        a reboot, not just that the fit itself succeeded.
+ * @return The max residual error in px, or -1 if the fit itself was
+ *         rejected as unsafe (calibration_fit_is_sane(), touch.c) and
+ *         NEVER applied or persisted -- the previous correction (identity,
+ *         if this run started fresh) is left untouched. *out_persisted is
+ *         false in that case too. See calibration_fit_is_sane()'s own
+ *         comment for the 2026-09-23 incident (a corrupted fit briefly
+ *         made every future tap register as Y=0) this guards against.
+ */
+int32_t touch_calibrate(const int16_t *measured_x, const int16_t *measured_y,
+                         const int16_t *expected_x, const int16_t *expected_y, int n,
+                         bool *out_persisted);
+
+/**
+ * @brief Resets the per-unit correction to identity (scale=1000, offset=0)
+ *        and persists that -- Settings > Touch Calibration's own "Reset"
+ *        control, in case a bad run made things worse.
+ */
+void touch_reset_calibration(void);
+
+#ifdef __cplusplus
+}
+#endif

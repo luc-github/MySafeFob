@@ -36,7 +36,9 @@
 #include "touch.h"
 #include "hw_config.h"
 #include "i2c_bus.h"
+#include "settings_store.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -74,16 +76,10 @@ static const char *TAG = "GT911";
  * point was within ~25px (consistent with plain tap imprecision, not a
  * real curve -- the two X half-ranges have almost identical slopes:
  * 0.650 vs 0.668). Y's two halves don't: -2.564 (top-to-mid) vs -0.870
- * (mid-to-bottom) -- a real, repeatable nonlinearity, not noise. Y is
- * therefore fit as two line segments meeting at the measured center
- * point instead of one; X stays a single line. */
-#define TOUCH_Y_RAWX_TOP     415   /* raw_x at the TOP crosshairs (logical y=240) */
-#define TOUCH_Y_LOGICAL_TOP  240
-#define TOUCH_Y_RAWX_MID     334   /* raw_x at the CENTER crosshair (logical y=440) */
-#define TOUCH_Y_LOGICAL_MID  440
-#define TOUCH_Y_RAWX_BOTTOM  104   /* raw_x at the BOTTOM crosshairs (logical y=640) */
-#define TOUCH_Y_LOGICAL_BOTTOM 640
-
+ * (mid-to-bottom) -- a real, repeatable nonlinearity, not noise. X stays a
+ * single line; Y's own fit was superseded 2026-09-24 -- see
+ * kTouchYBreakpoints below, this was the first (2-segment) cut at the same
+ * underlying nonlinearity, later found to need more than 2 segments. */
 /* Linear interpolation/extrapolation between two calibration points,
  * clamped to [0, logical_max]. Shared by both axes above -- same math,
  * different points and a different logical_max (EINK_H-1 for X, since
@@ -99,16 +95,245 @@ static int16_t touch_lerp(int16_t raw, int16_t raw_lo, int16_t logical_lo,
     return (int16_t)v;
 }
 
-/* Y-axis: picks which of the two segments (see the constants above)
- * raw_x falls into, then interpolates within that segment only. */
+/* Y-axis breakpoints, raw_x DESCENDING as logical_y increases (2026-09-24
+ * rewrite -- was a 2-segment TOP/MID/BOTTOM fit). A dense single-tap sweep
+ * down the vertical center of the screen (Settings > Touch Calibration,
+ * temporarily repurposed as a raw-mapping tool) found raw_x staying almost
+ * flat from y=440 to y=490 (322 -> 315, a real plateau, not noise -- 2
+ * independent sweeps agreed within a few units) then dropping abruptly to
+ * ~138 by y=500 -- a ~180-unit jump over just 10px, 15-20x steeper than
+ * every other interval measured. No single linear scale+offset can
+ * represent a plateau immediately followed by a cliff, which is exactly
+ * why every attempt at a per-unit correction (touch_calibrate()) kept
+ * getting its fitted scale rejected as unsafe (up to 3x out of bounds) --
+ * it was trying to fit a straight line through a real discontinuity.
+ * Likely cause (docs/touch-calibration-notes.md §2): this unit's GT911
+ * runs a generic substitute config (`s_cfg_480x800` below, adapted from an
+ * unrelated 1024x600 reference panel, since this unit's own OTP config
+ * was blank) rather than X4 Pro's real factory config -- a config-blob
+ * property can easily produce exactly this kind of non-uniform raw
+ * response if its virtual sensitivity zones don't match this panel's real
+ * electrode layout. Fixing that would need the real OEM config bytes
+ * (not available); this piecewise table works around it in software using
+ * the actual measured response instead. TOP and the y=640 point are the
+ * original 2026-09-18 hardware-validated calibration, unchanged and still
+ * consistent with the new sweep; the rest are new. */
+typedef struct {
+    int16_t raw_x;
+    int16_t logical_y;
+} touch_y_breakpoint_t;
+
+static const touch_y_breakpoint_t kTouchYBreakpoints[] = {
+    /* Header/upper region (2026-09-24, 2 sweeps at x=240, averaged): raw_x
+     * falls ~0.5 units/px like the rest of the panel, flattening near the
+     * top (~477) as it nears the ~87px dead zone. Before this, every raw_x
+     * >= 415 clamped to y=240, so no tap above y~240 could ever land on
+     * the Back/Settings buttons (y~88-144). */
+    { 477,  90 },
+    { 475, 100 },
+    { 472, 115 },
+    { 468, 130 },
+    { 456, 150 },
+    { 441, 180 },
+    { 428, 210 },
+    { 415, 240 },   /* TOP (2026-09-18, unchanged; today's sweep read ~412) */
+    { 322, 440 },   /* refined MID (was raw_x=334 in the original 2-segment fit) */
+    { 315, 490 },   /* plateau end -- raw_x barely moved since the point above */
+    { 138, 500 },   /* post-jump -- raw_x dropped ~180 units over just 10px */
+    { 104, 640 },   /* BOTTOM (2026-09-18, unchanged -- still consistent with the new sweep) */
+    {  45, 750 },   /* extended range, beyond the original BOTTOM point */
+};
+#define TOUCH_Y_BREAKPOINT_COUNT \
+    (int)(sizeof(kTouchYBreakpoints) / sizeof(kTouchYBreakpoints[0]))
+
+/* Y-axis: picks which segment (see the breakpoint table above) raw_x
+ * falls into, then interpolates within that segment only. Clamps to the
+ * outermost breakpoints instead of extrapolating past them with whatever
+ * slope the nearest segment happens to have. */
 static int16_t touch_lerp_y(int16_t raw_x)
 {
-    if (raw_x >= TOUCH_Y_RAWX_MID) {
-        return touch_lerp(raw_x, TOUCH_Y_RAWX_TOP, TOUCH_Y_LOGICAL_TOP,
-                           TOUCH_Y_RAWX_MID, TOUCH_Y_LOGICAL_MID, EINK_W - 1);
+    if (raw_x >= kTouchYBreakpoints[0].raw_x) {
+        return kTouchYBreakpoints[0].logical_y;
     }
-    return touch_lerp(raw_x, TOUCH_Y_RAWX_MID, TOUCH_Y_LOGICAL_MID,
-                       TOUCH_Y_RAWX_BOTTOM, TOUCH_Y_LOGICAL_BOTTOM, EINK_W - 1);
+    if (raw_x <= kTouchYBreakpoints[TOUCH_Y_BREAKPOINT_COUNT - 1].raw_x) {
+        return kTouchYBreakpoints[TOUCH_Y_BREAKPOINT_COUNT - 1].logical_y;
+    }
+    for (int i = 0; i + 1 < TOUCH_Y_BREAKPOINT_COUNT; i++) {
+        if (raw_x <= kTouchYBreakpoints[i].raw_x && raw_x >= kTouchYBreakpoints[i + 1].raw_x) {
+            return touch_lerp(raw_x, kTouchYBreakpoints[i].raw_x, kTouchYBreakpoints[i].logical_y,
+                              kTouchYBreakpoints[i + 1].raw_x, kTouchYBreakpoints[i + 1].logical_y,
+                              EINK_W - 1);
+        }
+    }
+    return kTouchYBreakpoints[TOUCH_Y_BREAKPOINT_COUNT - 1].logical_y;   /* unreachable given the clamps above */
+}
+
+/* -----------------------------------------------------------------------
+ * Per-unit correction (2026-09-23) -- Settings > Touch Calibration's
+ * guided 9-target sequence (ui_screen_touch_diag.cpp) fits a linear
+ * (scale + offset) correction per axis on top of the fixed calibration
+ * above, to absorb whatever per-unit deviation the 5-crosshair diagnostic
+ * this replaced could only ever show, never correct. Cached in RAM
+ * (loaded once by touch_init()) so touch_read()'s ~50Hz poll never touches
+ * NVS -- same reasoning as this file's own I2C device-handle caching.
+ * Defaults to identity (scale=1000, offset=0) until a run completes.
+ * ----------------------------------------------------------------------- */
+static int32_t s_cal_scale_x1000 = 1000, s_cal_offset_x = 0;
+static int32_t s_cal_scale_y1000 = 1000, s_cal_offset_y = 0;
+
+static void load_calibration(void)
+{
+    s_cal_scale_x1000 = (int32_t)settings_store_get_touch_cal_scale_x();
+    s_cal_offset_x = settings_store_get_touch_cal_offset_x();
+    s_cal_scale_y1000 = (int32_t)settings_store_get_touch_cal_scale_y();
+    s_cal_offset_y = settings_store_get_touch_cal_offset_y();
+}
+
+static int16_t apply_cal_x(int16_t x)
+{
+    int32_t v = ((int32_t)x * s_cal_scale_x1000) / 1000 + s_cal_offset_x;
+    if (v < 0) v = 0;
+    if (v > EINK_H - 1) v = EINK_H - 1;
+    return (int16_t)v;
+}
+
+static int16_t apply_cal_y(int16_t y)
+{
+    int32_t v = ((int32_t)y * s_cal_scale_y1000) / 1000 + s_cal_offset_y;
+    if (v < 0) v = 0;
+    if (v > EINK_W - 1) v = EINK_W - 1;
+    return (int16_t)v;
+}
+
+bool touch_set_calibration(int32_t scale_x1000, int32_t offset_x,
+                            int32_t scale_y1000, int32_t offset_y)
+{
+    s_cal_scale_x1000 = scale_x1000;
+    s_cal_offset_x = offset_x;
+    s_cal_scale_y1000 = scale_y1000;
+    s_cal_offset_y = offset_y;
+    settings_store_set_touch_cal_scale_x((uint32_t)scale_x1000);
+    settings_store_set_touch_cal_offset_x(offset_x);
+    settings_store_set_touch_cal_scale_y((uint32_t)scale_y1000);
+    settings_store_set_touch_cal_offset_y(offset_y);
+
+    /* settings_store_set_*() is void -- every setter in this codebase is,
+     * matching NVS's own fire-and-forget convention -- so a silent write
+     * failure would otherwise be completely invisible here, and the
+     * calibration screen would cheerfully report "saved" regardless
+     * (2026-09-23 user question: "comment sait-on que la calibration est
+     * sauvegardee?" -- honest answer at the time was "we don't check").
+     * Read every value straight back from NVS and compare: a real
+     * verification, not just trusting a void function returned. */
+    bool persisted =
+        settings_store_get_touch_cal_scale_x() == (uint32_t)scale_x1000 &&
+        settings_store_get_touch_cal_offset_x() == offset_x &&
+        settings_store_get_touch_cal_scale_y() == (uint32_t)scale_y1000 &&
+        settings_store_get_touch_cal_offset_y() == offset_y;
+    if (!persisted) {
+        ESP_LOGE(TAG, "calibration write did not verify on read-back -- NOT reliably saved "
+                 "(still applied for this session)");
+    }
+    return persisted;
+}
+
+void touch_get_calibration(int32_t *scale_x1000, int32_t *offset_x,
+                           int32_t *scale_y1000, int32_t *offset_y)
+{
+    if (scale_x1000) *scale_x1000 = s_cal_scale_x1000;
+    if (offset_x) *offset_x = s_cal_offset_x;
+    if (scale_y1000) *scale_y1000 = s_cal_scale_y1000;
+    if (offset_y) *offset_y = s_cal_offset_y;
+}
+
+void touch_reset_calibration(void)
+{
+    touch_set_calibration(1000, 0, 1000, 0);
+}
+
+/* Least-squares fit of expected = measured*scale + offset, over n point
+ * pairs -- run once at the end of a 9-target calibration sequence, never
+ * in a hot path, so plain double math is fine (this MCU has an FPU). */
+static void linear_fit(const int16_t *measured, const int16_t *expected, int n,
+                        double *out_scale, double *out_offset)
+{
+    double sum_m = 0, sum_e = 0, sum_me = 0, sum_mm = 0;
+    for (int i = 0; i < n; i++) {
+        sum_m += measured[i];
+        sum_e += expected[i];
+        sum_me += (double)measured[i] * expected[i];
+        sum_mm += (double)measured[i] * measured[i];
+    }
+    double denom = (double)n * sum_mm - sum_m * sum_m;
+    if (denom == 0.0) {
+        *out_scale = 1.0;
+        *out_offset = 0.0;
+        return;
+    }
+    *out_scale = ((double)n * sum_me - sum_m * sum_e) / denom;
+    *out_offset = (sum_e - (*out_scale) * sum_m) / (double)n;
+}
+
+/* Sanity bounds for a fitted correction, checked BEFORE it's ever applied
+ * or persisted (2026-09-23 hardware incident: a desynced set of
+ * (measured, expected) pairs -- see ui_screen_touch_diag.cpp's tap-cooldown
+ * fix for the actual root cause -- flipped the fitted Y scale's sign;
+ * touch_set_calibration() applied it immediately and unconditionally,
+ * which clamped every subsequent tap's Y to 0 and made the touchscreen
+ * unusable, INCLUDING for the rest of that same calibration run. A fit
+ * this far from identity is never a real per-unit deviation on a panel
+ * that already went through hardware-validated calibration in touch_lerp()
+ * -- it's a measurement/pairing problem, and applying it would do more
+ * harm than just keeping the previous (or, mid-run, identity) correction
+ * and reporting failure. */
+static bool calibration_fit_is_sane(int32_t scale_x1000, int32_t offset_x,
+                                    int32_t scale_y1000, int32_t offset_y)
+{
+    if (scale_x1000 < 500 || scale_x1000 > 2000) return false;
+    if (scale_y1000 < 500 || scale_y1000 > 2000) return false;
+    if (offset_x < -EINK_H || offset_x > EINK_H) return false;
+    if (offset_y < -EINK_W || offset_y > EINK_W) return false;
+    return true;
+}
+
+int32_t touch_calibrate(const int16_t *measured_x, const int16_t *measured_y,
+                         const int16_t *expected_x, const int16_t *expected_y, int n,
+                         bool *out_persisted)
+{
+    double scale_x, offset_x, scale_y, offset_y;
+    linear_fit(measured_x, expected_x, n, &scale_x, &offset_x);
+    linear_fit(measured_y, expected_y, n, &scale_y, &offset_y);
+
+    int32_t scale_x1000 = (int32_t)lround(scale_x * 1000.0);
+    int32_t scale_y1000 = (int32_t)lround(scale_y * 1000.0);
+    int32_t offset_x_i = (int32_t)lround(offset_x);
+    int32_t offset_y_i = (int32_t)lround(offset_y);
+
+    if (!calibration_fit_is_sane(scale_x1000, offset_x_i, scale_y1000, offset_y_i)) {
+        ESP_LOGE(TAG, "fitted calibration (scale %ld/%ld offset %ld/%ld) out of sane bounds "
+                 "-- REJECTED, not applied", (long)scale_x1000, (long)scale_y1000,
+                 (long)offset_x_i, (long)offset_y_i);
+        if (out_persisted) {
+            *out_persisted = false;
+        }
+        return -1;
+    }
+
+    bool persisted = touch_set_calibration(scale_x1000, offset_x_i, scale_y1000, offset_y_i);
+    if (out_persisted) {
+        *out_persisted = persisted;
+    }
+
+    int32_t max_err = 0;
+    for (int i = 0; i < n; i++) {
+        int32_t cx = (int32_t)measured_x[i] * scale_x1000 / 1000 + offset_x_i;
+        int32_t cy = (int32_t)measured_y[i] * scale_y1000 / 1000 + offset_y_i;
+        int32_t dx = cx - expected_x[i];
+        int32_t dy = cy - expected_y[i];
+        int32_t err = (int32_t)lround(sqrt((double)(dx * dx + dy * dy)));
+        if (err > max_err) max_err = err;
+    }
+    return max_err;
 }
 
 /* GT911 registers */
@@ -324,6 +549,13 @@ bool touch_init(void)
 {
     if (s_bus && s_addr) return true;
 
+    /* Independent of the chip itself -- loaded here (once, whichever path
+     * below succeeds or even if none does) rather than after each success
+     * path so there's a single call site. settings_store_init() has
+     * already run by the time this does (main.c, before board_ui_nav_task
+     * starts touch_init() via lv_port_indev_init()). */
+    load_calibration();
+
     rails_init();
 
     /* Attempt 1: "freeink-style" self-load (rail already powered, RST/INT
@@ -486,6 +718,11 @@ touch_point_t touch_read(void)
         pt.x = touch_lerp(raw_y, TOUCH_X_RAWY_LO, TOUCH_X_LOGICAL_LO,
                            TOUCH_X_RAWY_HI, TOUCH_X_LOGICAL_HI, EINK_H - 1);
         pt.y = touch_lerp_y(raw_x);
+        /* Per-unit correction on top of the fixed calibration above --
+         * identity until Settings > Touch Calibration has been run once
+         * (see this file's "Per-unit correction" section). */
+        pt.x = apply_cal_x(pt.x);
+        pt.y = apply_cal_y(pt.y);
         pt.raw_x = raw_x;
         pt.raw_y = raw_y;
         pt.pressed = true;

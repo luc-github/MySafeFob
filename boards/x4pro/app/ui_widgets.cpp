@@ -23,6 +23,7 @@
  *        (docs/ROADMAP.md, one file per screen/component).
  */
 #include "ui_widgets.h"
+#include "ui_nav.h"
 
 extern "C" {
 #include "hw_config.h"
@@ -33,6 +34,7 @@ extern "C" {
 #include "app_log_workaround.h"
 
 #include <cstdio>
+#include <cstring>
 
 static const char *TAG = "ui_widgets";
 
@@ -313,8 +315,20 @@ static void back_event_deferred(void *user_data)
     switch_screen(static_cast<Screen>(reinterpret_cast<intptr_t>(user_data)));
 }
 
+/* 2026-09-23: while a screen has board_ui_nav_suppress_touch_confirm()
+ * turned on (Settings > Touch Calibration, for as long as it's active),
+ * "< Back" must only be reachable via Left/Right + Power, not a direct
+ * touch tap on the button itself either -- see that function's doc
+ * comment (ui_nav.h) for the hardware bug this closes. lv_indev_get_act()
+ * is non-NULL only while LVGL is actively processing a REAL touch's input
+ * cycle (the same check toggle_confirm_click_cb below uses, for the
+ * opposite purpose); the synthetic confirm pulse this escape hatch relies
+ * on is sent with indev_act NULL, so it's never affected by this guard. */
 static void back_event_cb(lv_event_t *e)
 {
+    if (lv_indev_get_act() != nullptr && board_ui_nav_is_touch_confirm_suppressed()) {
+        return;
+    }
     ui_defer(back_event_deferred, lv_event_get_user_data(e));
 }
 
@@ -370,7 +384,14 @@ bool refresh_battery_label(lv_obj_t *label)
         }
     }
 
-    lv_label_set_text(label, buf);
+    /* lv_label_set_text() invalidates unconditionally, even for identical
+     * text -- with battery_timer_cb (ui_nav.cpp) calling this every 10-30s,
+     * that alone was a full e-ink flush on a fixed clock with nothing
+     * changed (2026-09-24 user report: "je vois encore des refresh auto en
+     * periode d'inactivite"). Only touch the label when the text differs. */
+    if (strcmp(lv_label_get_text(label), buf) != 0) {
+        lv_label_set_text(label, buf);
+    }
     return have_battery && charging;
 }
 

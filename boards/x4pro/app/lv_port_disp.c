@@ -41,6 +41,7 @@ static uint8_t *s_lv_buf;             /* portrait I1 render buffer, PSRAM */
 static uint32_t s_lv_stride;          /* bytes per portrait row */
 static uint8_t s_native_fb[SCREEN_FB_SIZE];  /* landscape native fb, rebuilt every flush */
 static bool s_force_full_refresh = true;
+static uint32_t s_flush_count;        /* see lv_port_disp_get_flush_count() */
 
 static inline int lv_i1_get_bit(const uint8_t *buf, uint32_t stride, int x, int y)
 {
@@ -61,8 +62,6 @@ static inline void native_set_bit(uint8_t *buf, int x, int y, int value)
 
 static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 {
-    (void)area;  /* LV_DISPLAY_RENDER_MODE_FULL always flushes the whole screen */
-
     /* An I1 buffer's first LV_COLOR_INDEXED_PALETTE_SIZE(I1)*4 = 8 bytes
      * are a reserved/assumed palette, not pixel data -- already accounted
      * for in lv_port_disp_init()'s buffer *size* (the crash fix below),
@@ -81,6 +80,21 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
         }
     }
 
+    /* Zone refresh (2026-09-22): even under LV_DISPLAY_RENDER_MODE_FULL,
+     * `area` is NOT "the whole screen" -- LVGL's refr_invalid_areas()
+     * (lv_refr.c) always passes the ACTUAL invalidated rectangle here,
+     * the render BUFFER covers the whole screen but the CHANGED region is
+     * tracked separately and given to us for free. Transposed through the
+     * same portrait->native mapping as the pixel loop above (fb_y =
+     * SCREEN_WIDTH-1-ux), `area`'s ux range becomes the native gate/row
+     * window -- the dimension that actually costs refresh TIME on this
+     * panel (sequential gate scan), passed to eink_display_fb_fast_region()
+     * instead of always re-scanning every one of the 480 gates for a
+     * change that might only span a few dozen. Full refreshes stay
+     * unrestricted on purpose (see that function's doc comment). */
+    int32_t native_y1 = SCREEN_WIDTH - 1 - area->x2;
+    int32_t native_y2 = SCREEN_WIDTH - 1 - area->x1;
+
     /* Timed, but only LOGGED for a FULL refresh (rare: one per screen switch
      * or ghost-budget housekeeping) or an abnormally slow fast DU (should
      * never exceed ~1s; > kSlowFastMs would mean something is actually
@@ -95,7 +109,7 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
     bool full = s_force_full_refresh;
     int64_t t0 = esp_timer_get_time();
     esp_err_t err = full ? eink_display_fb(s_native_fb)
-                          : eink_display_fb_fast(s_native_fb);
+                          : eink_display_fb_fast_region(s_native_fb, native_y1, native_y2);
     int64_t elapsed_ms = (esp_timer_get_time() - t0) / 1000;
     s_force_full_refresh = false;
     if (err != ESP_OK) {
@@ -104,6 +118,9 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
         ESP_LOGI(TAG, "flush FULL done in %lld ms", (long long)elapsed_ms);
     } else if (elapsed_ms > kSlowFastMs) {
         ESP_LOGW(TAG, "flush fast unusually slow: %lld ms", (long long)elapsed_ms);
+    }
+    if (err == ESP_OK) {
+        s_flush_count++;
     }
 
     lv_display_flush_ready(disp);
@@ -170,7 +187,7 @@ void lv_port_disp_request_full_refresh(void)
     s_force_full_refresh = true;
 }
 
-bool lv_port_disp_ghost_budget_low(void)
+uint32_t lv_port_disp_get_flush_count(void)
 {
-    return eink_ghost_budget_low();
+    return s_flush_count;
 }

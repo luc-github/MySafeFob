@@ -184,3 +184,43 @@ void settings_store_set_frontlight_intensity(uint32_t percent)
     settings_set_u32(SETTINGS_ID_FrontlightIntensity, percent);
 }
 
+uint32_t settings_store_get_touch_cal_scale_x(void)
+{
+    return settings_get_u32(SETTINGS_ID_TouchCalScaleX);
+}
+
+void settings_store_set_touch_cal_scale_x(uint32_t scale_x1000)
+{
+    settings_set_u32(SETTINGS_ID_TouchCalScaleX, scale_x1000);
+}
+
+int32_t settings_store_get_touch_cal_offset_x(void)
+{
+    return (int32_t)settings_get_u32(SETTINGS_ID_TouchCalOffsetX);
+}
+
+void settings_store_set_touch_cal_offset_x(int32_t offset_px)
+{
+    settings_set_u32(SETTINGS_ID_TouchCalOffsetX, (uint32_t)offset_px);
+}
+
+uint32_t settings_store_get_touch_cal_scale_y(void)
+{
+    return settings_get_u32(SETTINGS_ID_TouchCalScaleY);
+}
+
+void settings_store_set_touch_cal_scale_y(uint32_t scale_y1000)
+{
+    settings_set_u32(SETTINGS_ID_TouchCalScaleY, scale_y1000);
+}
+
+int32_t settings_store_get_touch_cal_offset_y(void)
+{
+    return (int32_t)settings_get_u32(SETTINGS_ID_TouchCalOffsetY);
+}
+
+void settings_store_set_touch_cal_offset_y(int32_t offset_px)
+{
+    settings_set_u32(SETTINGS_ID_TouchCalOffsetY, (uint32_t)offset_px);
+}
+

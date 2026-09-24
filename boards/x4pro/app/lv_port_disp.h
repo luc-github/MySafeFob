@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -27,16 +28,20 @@ void lv_port_disp_init(void);
 void lv_port_disp_request_full_refresh(void);
 
 /**
- * @brief True when eink.c's fast-DU ghost budget is close enough to
- *        exhausted that the NEXT few flushes risk triggering its
- *        automatic, several-seconds-long full GC purge (see
- *        eink_ghost_budget_low(), eink.h). ui_nav.cpp's task loop polls
- *        this to slip that same mandatory purge into a short gap between
- *        user interactions instead of leaving it to land, at random,
- *        on whichever flush happens to be the 30th one -- which can make
- *        an ordinary button tap look stuck for several seconds.
+ * @brief Number of successful flushes (fast DU or full GC alike) completed
+ * so far, since boot. Monotonically increasing, never resets.
+ *
+ * 2026-09-23: Settings > Touch Calibration uses this instead of guessing a
+ * fixed "wait this many ms" delay to know whether the panel has actually
+ * redrawn since its target crosshair last moved -- a tap arriving before
+ * the count has advanced is aimed at whatever the panel is STILL showing
+ * (the flush hasn't happened yet), not the new position, no matter how
+ * long the caller waited (a full GC and a DU take very different times,
+ * and an unrelated queued refresh -- e.g. ghost-budget housekeeping --
+ * can land in between and push it out further still). Confirmed on
+ * hardware: a fixed ~1.7s guess still let a couple of stale taps through.
  */
-bool lv_port_disp_ghost_budget_low(void);
+uint32_t lv_port_disp_get_flush_count(void);
 
 #ifdef __cplusplus
 }

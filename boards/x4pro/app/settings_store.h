@@ -96,6 +96,23 @@ void settings_store_set_frontlight_color(uint32_t color);
 uint32_t settings_store_get_frontlight_intensity(void);
 void settings_store_set_frontlight_intensity(uint32_t percent);
 
+/**
+ * @brief touch.c's per-unit calibration correction (Settings > Touch
+ *        Calibration's guided sequence, ui_screen_touch_diag.cpp). Scale
+ *        is x1000 fixed-point (1000 = 1.000x, always >= 0); offset is a
+ *        signed pixel delta -- stored/read via nvs_(get|set)_u32's raw
+ *        32-bit value, which round-trips a two's-complement int32_t
+ *        bit-for-bit, so no bias encoding is needed here.
+ */
+uint32_t settings_store_get_touch_cal_scale_x(void);
+void settings_store_set_touch_cal_scale_x(uint32_t scale_x1000);
+int32_t settings_store_get_touch_cal_offset_x(void);
+void settings_store_set_touch_cal_offset_x(int32_t offset_px);
+uint32_t settings_store_get_touch_cal_scale_y(void);
+void settings_store_set_touch_cal_scale_y(uint32_t scale_y1000);
+int32_t settings_store_get_touch_cal_offset_y(void);
+void settings_store_set_touch_cal_offset_y(int32_t offset_px);
+
 #ifdef __cplusplus
 }
 #endif

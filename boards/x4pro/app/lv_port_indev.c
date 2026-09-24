@@ -277,7 +277,7 @@ static void input_sampler_task(void *arg)
             if (press_edge) {
                 board_activity_notify();
                 if (tp.home) {
-                    board_ui_nav_power_confirm();   /* touch-Home = confirm, see pointer_read_cb */
+                    board_ui_nav_power_confirm(true);   /* touch-Home = confirm, see pointer_read_cb */
                 }
             }
         }

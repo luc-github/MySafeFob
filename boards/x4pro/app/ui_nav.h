@@ -57,22 +57,66 @@ void board_activity_notify(void);
  *        "confirm, not a positional tap":
  *         - main.c's power_button_task, on a Power release shorter than
  *           MSF_POWER_LONG_MS, gated behind the "Power short press =
- *           Select" setting (settings_store.h);
+ *           Select" setting (settings_store.h) -- pass false;
  *         - lv_port_indev.c's input_sampler_task, on a touch-Home press
  *           edge (the GT911 digitizer's dedicated capacitive zone below
  *           the visible e-ink glass, per touch.c — its x/y calibrates
  *           into the normal on-screen range, which would make LVGL treat
  *           it as a tap on whatever's drawn there; this pulse is used
- *           instead of feeding that touch to the pointer indev at all).
+ *           instead of feeding that touch to the pointer indev at all) --
+ *           pass true.
  *        Neither Power nor touch-Home otherwise joins this loop's own
  *        screen-level input handling. A COUNTER, not a single flag
  *        (2026-09-22, same reasoning as the touch-edge queue fix in
  *        lv_port_indev.c): two calls landing while board_ui_nav_task is
  *        busy (e.g. mid-flush) both still fire their own pulse once it
  *        catches up, instead of the second one silently overwriting/
- *        losing the first.
+ *        losing the first. Kept as two separate counters internally
+ *        (button vs. touch-Home) precisely so board_ui_nav_suppress_touch_confirm()
+ *        below can drop only one of the two origins.
+ * @param from_touch_home True for the touch-Home path, false for the
+ *        Power-button path -- see board_ui_nav_suppress_touch_confirm().
  */
-void board_ui_nav_power_confirm(void);
+void board_ui_nav_power_confirm(bool from_touch_home);
+
+/**
+ * @brief While true, confirm pulses queued with from_touch_home=true are
+ *        silently dropped instead of activating the focused widget --
+ *        Power-button confirms (from_touch_home=false) are NEVER affected,
+ *        the physical button stays a reliable way to confirm/escape no
+ *        matter what a screen's own touch handling is doing.
+ *
+ *        2026-09-23: Settings > Touch Calibration turns this on for as
+ *        long as it's the active screen. Its own guided sequence reads raw
+ *        taps anywhere on a content area that spans most of the panel --
+ *        confirmed on hardware that a tap near the touch-Home pad's own
+ *        capacitive zone (touch.c: raw_x<70 && raw_y in [660,720]) can
+ *        alias into it through touch_lerp()'s fixed mapping, which used to
+ *        silently activate whatever was focused (deliberately "< Back",
+ *        the screen's own escape hatch) and wipe the run in progress. This
+ *        drops that specific signal cleanly at the source, by ORIGIN, in
+ *        place of only ever trying to keep every calibration target
+ *        geometrically far enough from the risky corner to *probably*
+ *        avoid triggering it.
+ *
+ *        Also consulted directly (via board_ui_nav_is_touch_confirm_suppressed()
+ *        below) by "< Back"'s own click handler (ui_widgets.cpp) and
+ *        Touch Calibration's "Restart" button, to reject a DIRECT touch
+ *        tap landing on either of them too while a screen wants this
+ *        escape hatch to be physical-button-only -- not just the
+ *        touch-Home confirm path this flag was first added for. Either
+ *        button staying reachable via Left/Right + Power is unaffected;
+ *        only a touch-originated activation (lv_indev_get_act() != NULL)
+ *        is rejected while suppressed.
+ */
+void board_ui_nav_suppress_touch_confirm(bool suppress);
+
+/**
+ * @brief Read-only query for board_ui_nav_suppress_touch_confirm()'s
+ *        current state -- see its own doc comment for who calls this and
+ *        why.
+ */
+bool board_ui_nav_is_touch_confirm_suppressed(void);
 
 /**
  * @brief Queues one Left/Right group-focus step, consumed by

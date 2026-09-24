@@ -84,19 +84,14 @@ static const char *TAG = "eink";
                                       * on hardware, factory session). DO
                                       * NOT raise this to paper over slow
                                       * mandatory full-GC hits landing
-                                      * mid-interaction -- see
-                                      * eink_ghost_budget_low()/eink.h
-                                      * instead, which lets a caller slip
-                                      * that same mandatory GC into an idle
-                                      * gap without changing this validated
-                                      * ghosting limit. */
-#define EINK_FAST_BUDGET_LOW_WATERMARK (EINK_FAST_BUDGET - 6)   /* ~6 fast
-                                      * DUs of advance warning -- enough
-                                      * that a caller polling once per idle
-                                      * check (ui_nav.cpp, every 20ms task
-                                      * tick) reliably catches a short pause
-                                      * between taps before the hard budget
-                                      * above is reached. */
+                                      * mid-interaction -- an idle-gap
+                                      * scheduling workaround for that was
+                                      * tried (2026-09-22) and removed
+                                      * (2026-09-24, user feedback: any
+                                      * refresh firing without a direct
+                                      * interaction is unwanted). Accept
+                                      * the occasional slow tap instead of
+                                      * changing this validated limit. */
 
 static spi_device_handle_t s_spi = NULL;
 static bool s_initialized = false;
@@ -344,15 +339,26 @@ esp_err_t eink_display_fb(const uint8_t *fb)
     return ESP_OK;
 }
 
-esp_err_t eink_display_fb_fast(const uint8_t *fb)
+esp_err_t eink_display_fb_fast_region(const uint8_t *fb, int32_t y_start, int32_t y_end)
 {
     if (!s_initialized) return ESP_ERR_INVALID_STATE;
 
     /* A fast DU is only possible on a healthy differential diff:
-       previous frame known AND ghost budget not exhausted. Otherwise full. */
+       previous frame known AND ghost budget not exhausted. Otherwise full
+       (deliberately the UNRESTRICTED full() -- a forced full GC exists to
+       clear accumulated ghosting everywhere, so it must always cover the
+       whole panel regardless of which region the caller asked to update). */
     if (!s_prev_valid || !s_prev || s_fast_count >= EINK_FAST_BUDGET) {
         return eink_display_fb(fb);
     }
+
+    /* Clamp defensively -- this now comes from a caller-computed rectangle
+     * (lv_port_disp.c's flush_cb, from LVGL's own invalidated area) instead
+     * of always being the compile-time full-panel constant, so a bad value
+     * here would otherwise reach the panel as a malformed PTL command. */
+    if (y_start < 0) y_start = 0;
+    if (y_end > EINK_H - 1) y_end = EINK_H - 1;
+    if (y_start > y_end) { y_start = 0; y_end = EINK_H - 1; }
 
     /* NEW = frame, OLD = previous frame (diff, no flashing clear). */
     stream_plane(UC_CMD_DTM2, fb);
@@ -378,17 +384,24 @@ esp_err_t eink_display_fb_fast(const uint8_t *fb)
         return ESP_ERR_TIMEOUT;
     }
 
-    /* PTL: full window, gate coords with the +120 visible offset,
-       PT_SCAN=1. Byte-exact from Uc8279X4Driver. */
+    /* PTL: gate coords with the +120 visible offset, PT_SCAN=1. Byte-exact
+     * from Uc8279X4Driver for the full-window case (y_start=0,
+     * y_end=EINK_H-1); the X window (data/column direction, 0-799) stays
+     * full-width always -- only the Y/gate window (the sequential-scan
+     * dimension, which is what actually costs refresh TIME) is restricted
+     * to the caller's region (2026-09-22, zone refresh: lv_port_disp.c
+     * passes LVGL's own invalidated area here instead of the whole panel
+     * on every single flush). */
     write_cmd(UC_CMD_PTL_IN);
     write_cmd(UC_CMD_PTL);
     {
+        const uint16_t gate_start = (uint16_t)(UC_GATE_OFFSET + y_start);
+        const uint16_t gate_end = (uint16_t)(UC_GATE_OFFSET + y_end);
         const uint8_t v[9] = {
             0x00, 0x00,             /* x start */
             0x03, 0x1F,             /* x end 799|0x07 */
-            (uint8_t)(UC_GATE_OFFSET >> 8), (uint8_t)(UC_GATE_OFFSET & 0xFF),
-            (uint8_t)((UC_GATE_OFFSET + EINK_H - 1) >> 8),
-            (uint8_t)((UC_GATE_OFFSET + EINK_H - 1) & 0xFF),
+            (uint8_t)(gate_start >> 8), (uint8_t)(gate_start & 0xFF),
+            (uint8_t)(gate_end >> 8), (uint8_t)(gate_end & 0xFF),
             0x01,                   /* PT_SCAN */
         };
         write_data(v, sizeof(v));
@@ -432,9 +445,9 @@ esp_err_t eink_display_fb_fast(const uint8_t *fb)
     return ESP_OK;
 }
 
-bool eink_ghost_budget_low(void)
+esp_err_t eink_display_fb_fast(const uint8_t *fb)
 {
-    return s_prev_valid && s_fast_count >= EINK_FAST_BUDGET_LOW_WATERMARK;
+    return eink_display_fb_fast_region(fb, 0, EINK_H - 1);
 }
 
 esp_err_t eink_power_off(void)

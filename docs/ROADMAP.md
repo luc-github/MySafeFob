@@ -2246,13 +2246,104 @@ build` after all of the above compiles clean.
   and `eink_display_fb_fast()`'s `PTL` window always spans the whole
   screen. The DU/GC distinction above is a different axis (waveform type,
   not redrawn area) and was not conflated with this in the fixes above.
+  **Done, see the 2026-09-23 amendment below.**
 - `lv_port_disp_init()` silently returns if the PSRAM buffer allocation
   fails, leaving LVGL unconfigured instead of failing loudly — the app
   would crash confusingly later instead of at the real cause.
+  **Done, see the 2026-09-23 amendment below.**
 - `buttons.c`'s `button_wait_press()` blocks on the physical level until
   release; holding Left/Right also pauses touch sampling in the same
   `input_sampler_task` loop. Low real-world impact (buttons are a more
   deliberate gesture than a touch tap), not addressed here.
+  **Done, see the 2026-09-23 amendment below.**
+
+**Amendment 2026-09-23 — zone refresh + the two remaining minor fixes**.
+
+**Zone refresh**: turns out LVGL already computes the exact invalidated
+rectangle and hands it to `flush_cb()` as its `area` parameter -- even
+under `LV_DISPLAY_RENDER_MODE_FULL` (`lv_refr.c`'s `refr_invalid_areas()`/
+`disp->refreshed_area`; the render *buffer* covers the whole screen in
+this mode, but the *changed region* is tracked separately). No manual
+pixel diffing needed: `flush_cb()` was simply discarding an `area` LVGL
+already gave it for free. New `eink_display_fb_fast_region(fb, y_start,
+y_end)` (`eink.c`/`.h`) restricts the `PTL` command's gate/row window to
+the given range instead of the full 480 gates -- the SPI transfer still
+streams the complete frame (`stream_plane()` has no partial-row write
+path, left untouched/validated), only which rows the *controller*
+actually rescans on the physical panel is restricted, which is the
+dimension that costs refresh time (sequential gate scan). `flush_cb()`
+(`lv_port_disp.c`) now transposes `area`'s portrait ux-range through the
+existing portrait->native mapping (`fb_y = SCREEN_WIDTH-1-ux`) into that
+gate window. Forced full GC refreshes stay deliberately unrestricted
+(their whole purpose is purging ghosting everywhere). Hardware-validated:
+browsed every screen, no regressions.
+
+**`lv_port_disp_init()`**: now `abort()`s with a clear log line if the
+PSRAM frame-buffer allocation fails, instead of silently leaving LVGL
+unconfigured and crashing confusingly later in `build_screens()`.
+
+**`buttons.c`**: `button_wait_press()` (blocked on the physical level
+until release) replaced by `buttons_read_raw()` (instantaneous, never
+blocks). Debounce + edge detection moved into `lv_port_indev.c`'s
+`input_sampler_task`, interleaved with touch sampling every iteration
+(same pattern already used there for touch) and still firing on the
+RELEASE edge to match the old behavior -- holding Left/Right no longer
+stalls touch sampling in the same loop.
+
+**Amendment 2026-09-24 — Touch Calibration screen rebuilt, and the touch
+Y mapping itself fixed**. Hardware-validated: 8px residual error after the
+guided run, Back reachable by touch immediately after, calibration
+persisted across a reboot, header buttons (y~92-109) now reachable.
+
+*Screen* (`ui_screen_touch_diag.cpp`): the old one (5 crosses + tick column
++ live readout, all absolutely positioned, overlapping the header) was a
+one-off diagnostic, not a calibration. Now a guided 9-target sequence, one
+crosshair at a time, 3 taps averaged per target with an explicit "1✓ 2✓ 3"
+counter; on completion `touch_calibrate()` (`touch.c`) least-squares fits a
+per-unit scale+offset per axis, applies it, persists it to NVS (4 new
+`tc_*` settings) and **reads it back to verify** before claiming "saved".
+A fit outside sane bounds (`calibration_fit_is_sane()`: scale 0.5x-2x,
+offset within the panel) is rejected outright — an unsafe fit once made
+every tap read Y=0. Each run saves the previous correction first and
+restores it on any failure. Result shown as SUCCESS/FAILED for 3s, then the
+detail. Restart sits in the header (mirrors Back).
+
+*Escape hatch*: while a run is in progress, Back/Restart only respond to the
+physical buttons (Left/Right + Power) — direct touch on them and the
+touch-Home confirm pulse are ignored (`board_ui_nav_suppress_touch_confirm()`,
+`board_ui_nav_power_confirm(from_touch_home)` now carries its origin). The
+restriction lifts as soon as the outcome is known, so tapping Back doubles
+as an immediate touch check. 30s without progress leaves the screen. The
+battery label timer is suspended on this screen.
+
+*Tap counting robustness*: a tap is only counted once at least one flush has
+completed since the target moved (`lv_port_disp_get_flush_count()`) — a
+fixed delay guess was tried first and let stale taps through (e-ink takes
+0.7-1.5s to show the new target); plus a 400ms anti-bounce.
+
+*Root causes found by mapping sweeps* (screen temporarily repurposed;
+the `TOUCH_CAL_MAPPING_MODE` scaffold was removed once done -- see git history to re-run one): `touch_lerp_y()` was a 2-segment
+fit (2026-09-18) that (a) hid a **plateau + cliff** — raw_x nearly flat for
+y=440-490 (~322→315) then dropping ~180 units by y=500 — which no linear
+correction can represent (fits came out 3x out of bounds), and (b) clamped
+every raw_x >= 415 to y=240, so **no tap above y~240 could land on the
+header buttons**. Replaced by a 14-breakpoint piecewise table
+(`kTouchYBreakpoints`, y=90..750) from dense single-tap sweeps. Likely
+underlying cause: this unit runs a generic substitute GT911 config (own OTP
+blank, `docs/touch-calibration-notes.md` §2), not X4 Pro's real one. The
+top ~87px is a touch dead zone (§10), so nothing registers above it.
+
+*Also*: calibration grid rows moved to y=200/460/720 — a grid covering only
+y=520-700 made the global linear fit extrapolate to the header (a Back tap
+came out ~50px low and hit "Controls"). Home-zone aliasing near the
+bottom-right corner (`home=1`) also avoided by keeping targets off it. The
+battery label now only updates when its text changes; the ghost-budget
+idle housekeeping refresh was removed (any refresh without a direct
+interaction is unwanted; the hard 30-DU budget in `eink.c` is unchanged).
+
+**Decided (2026-09-24)**: the periodic battery timer (10s charging / 30s
+otherwise) stays — it repaints only when the displayed value changes, and is
+suspended while Touch Calibration is the active screen.
 
 ---
 

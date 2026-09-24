@@ -63,26 +63,24 @@ esp_err_t eink_display_fb(const uint8_t *fb);
 esp_err_t eink_display_fb_fast(const uint8_t *fb);
 
 /**
- * @brief True once the fast-DU ghost budget is close to exhausted (see
- *        EINK_FAST_BUDGET_LOW_WATERMARK, eink.c) -- a read-only warning,
- *        does not change any state or force anything by itself.
+ * @brief Same as eink_display_fb_fast(), but restricts the PTL window's
+ *        gate (row) range to [y_start, y_end] (inclusive, native
+ *        landscape framebuffer row indices, 0..EINK_H-1) instead of the
+ *        whole panel -- fewer gates to scan means a physically faster
+ *        refresh for a small change (2026-09-22, zone refresh: driven by
+ *        LVGL's own invalidated area, see lv_port_disp.c's flush_cb).
+ *        `fb` is still the FULL frame (stream_plane() has no partial-row
+ *        write path, unchanged/validated), only which rows the CONTROLLER
+ *        actually redraws on the physical panel is restricted -- rows
+ *        outside the window keep showing whatever was already correctly
+ *        displayed there. Clamped defensively to a valid range.
  *
- *        The mandatory full GC purge (~2-4s, see eink_display_fb_fast())
- *        still happens automatically and unconditionally once the hard
- *        budget is reached, so ghosting is always bounded even if nobody
- *        calls this. But left unattended, THAT full GC lands on whatever
- *        flush happens to be the 31st one -- which, on a screen with
- *        several quick taps in a row (e.g. Settings > Display's -/+
- *        steppers), can be the very flush the user is waiting on for
- *        their last tap's result, making an ordinary button press look
- *        stuck for several seconds.
- *
- *        Callers (ui_nav.cpp's task loop) use this to slip the mandatory
- *        full GC into a short idle gap between interactions instead --
- *        purely a scheduling optimization, changes no display-quality
- *        constant validated on hardware.
+ *        Same automatic full-GC fallback as eink_display_fb_fast() -- and
+ *        deliberately UNRESTRICTED when that happens: a forced full GC
+ *        exists to purge ghosting everywhere, so it always covers the
+ *        whole panel regardless of the region requested here.
  */
-bool eink_ghost_budget_low(void);
+esp_err_t eink_display_fb_fast_region(const uint8_t *fb, int32_t y_start, int32_t y_end);
 
 /**
  * @brief Powers off the controller (POF + wait idle).
