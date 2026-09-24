@@ -222,6 +222,7 @@ static void build_screens(void)
     build_screen(Screen::SettingsDisplay, build_settings_display);
     build_screen(Screen::SettingsAbout, build_settings_about);
     build_screen(Screen::TouchDiag, build_touch_diag);
+    build_screen(Screen::Security, build_security);
 }
 
 /* REMOVED 2026-09-24 (was: slip eink.c's mandatory ghost-budget full GC

@@ -72,6 +72,7 @@ lv_obj_t *build_settings(lv_group_t **group_out, lv_obj_t **battery_label_out)
     add_menu_button(content, "Controls", Screen::SettingsControls, group);
     add_menu_button(content, "Display", Screen::SettingsDisplay, group);
     add_menu_button(content, "About", Screen::SettingsAbout, group);
+    add_menu_button(content, "Security", Screen::Security, group);
     add_menu_button(content, "Touch Calibration", Screen::TouchDiag, group);
 
     return screen;

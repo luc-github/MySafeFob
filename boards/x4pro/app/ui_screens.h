@@ -40,7 +40,7 @@
 
 #ifdef __cplusplus
 
-enum class Screen { Home, Settings, SettingsControls, SettingsAbout, SettingsDisplay, TouchDiag, kCount };
+enum class Screen { Home, Settings, SettingsControls, SettingsAbout, SettingsDisplay, TouchDiag, Security, kCount };
 
 /**
  * @brief Switches to screen `s`: refreshes its battery label, forces the
@@ -75,5 +75,6 @@ lv_obj_t *build_settings_controls(lv_group_t **group_out, lv_obj_t **battery_lab
 lv_obj_t *build_settings_display(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_settings_about(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_touch_diag(lv_group_t **group_out, lv_obj_t **battery_label_out);
+lv_obj_t *build_security(lv_group_t **group_out, lv_obj_t **battery_label_out);
 
 #endif /* __cplusplus */

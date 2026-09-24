@@ -14,6 +14,7 @@ idf_component_register(
          "ui_screen_home.cpp" "ui_screen_settings.cpp"
          "ui_screen_settings_controls.cpp" "ui_screen_settings_display.cpp"
          "ui_screen_settings_about.cpp" "ui_screen_touch_diag.cpp"
+         "ui_screen_security.cpp"
          "settings_store.c" "battery.c" "frontlight.c"
          "lv_port_disp.c" "lv_port_indev.c"
     INCLUDE_DIRS "."
