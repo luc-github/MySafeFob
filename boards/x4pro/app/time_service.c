@@ -258,6 +258,22 @@ bool time_service_set_utc(time_t utc, time_sync_source_t source)
     return ok;
 }
 
+void time_service_set_system_precise(time_t utc, int usec, int32_t *delta_s, bool *delta_valid)
+{
+    struct timeval old_tv;
+    gettimeofday(&old_tv, NULL);
+    *delta_valid = time_service_is_valid();
+    int64_t new_us = (int64_t)utc * 1000000 + usec;
+    int64_t old_us = (int64_t)old_tv.tv_sec * 1000000 + old_tv.tv_usec;
+    int64_t d_us = new_us - old_us;
+    int64_t d_s = (d_us + (d_us >= 0 ? 500000 : -500000)) / 1000000;
+    if (d_s > INT32_MAX - 1) d_s = INT32_MAX - 1;
+    if (d_s < INT32_MIN + 1) d_s = INT32_MIN + 1;
+    *delta_s = (int32_t)d_s;
+    struct timeval tv = {.tv_sec = utc, .tv_usec = usec};
+    settimeofday(&tv, NULL);
+}
+
 bool time_service_commit_system_time(int32_t delta_s, bool delta_valid, time_sync_source_t source)
 {
     time_t now = time_service_get_utc();

@@ -35,3 +35,24 @@ CONFIG_LV_FONT_MONTSERRAT_32=y
 # instead: small blocks stay in internal RAM, larger ones spill to the
 # 8MB PSRAM (CONFIG_SPIRAM_USE_MALLOC).
 CONFIG_LV_USE_CLIB_MALLOC=y
+
+# BLE time sync (ADR-006): NimBLE central only (scan, connect, read the
+# Current Time Service), one connection at a time. Peripheral/broadcaster
+# roles are off to save flash and RAM.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_CONTROLLER_ENABLED=y
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=y
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=y
+# CONFIG_BT_NIMBLE_ROLE_PERIPHERAL is not set
+# CONFIG_BT_NIMBLE_ROLE_BROADCASTER is not set
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+
+# Internal RAM is scarce (2026-09-25: BLE init failed with only ~50KB
+# internal heap left, largest block 21KB, "hci inits failed"). LVGL
+# (C allocator) and the app's own small allocations were filling it. Prefer
+# PSRAM for malloc() at any size (DMA/ISR-critical drivers use explicit
+# internal caps, and CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL keeps a reserve),
+# and put NimBLE's host allocations in PSRAM too.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y

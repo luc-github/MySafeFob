@@ -2352,7 +2352,13 @@ clock service and the reusable alphanumeric keyboard (`ui_keyboard.cpp`);
 the Wi-Fi tab (added right after, `wifi_time.c`) scans, joins a network with
 an on-screen password and sets the clock/RTC from SNTP (`pool.ntp.org`); the
 radio is fully deinitialised after each scan/sync and credentials are never
-stored (`CONFIG_ESP_WIFI_NVS_ENABLED` off, RAM-only). The BLE tab is a placeholder (ADR-006: CTS client, scan then read).
+stored (`CONFIG_ESP_WIFI_NVS_ENABLED` off, RAM-only). The BLE tab (`ble_time.c`, NimBLE central, `sdkconfig.defaults`) scans connectable
+devices (`*` = advertises 0x1805), connects to the chosen one, reads Current Time
+(0x2A2B) and Local Time Information (0x2A0F, else the configured time zone),
+sets the clock at the instant of the read and disconnects; no pairing yet
+(ADR-006 early validation: test with nRF Connect's Advertiser).
+Full design notes, problems met and open items: `docs/time-sync-design.md`; Android
+setup guide for the BLE test: `docs/ble-time-sync-nrf-connect.md`.
 `time_service.c` owns the clock: system clock and BM8563 RTC (I2C 0x51)
 always hold **UTC** (TOTP, RFC 6238, is UTC-only); the local time zone is a
 fixed UTC offset in NVS (`tz_off_min`, no DST) used only for display and

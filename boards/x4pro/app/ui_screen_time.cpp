@@ -32,6 +32,7 @@
 #include "settings_store.h"
 #include "time_service.h"
 #include "wifi_time.h"
+#include "ble_time.h"
 #include "ui_nav.h"
 
 #include <cstdio>
@@ -467,12 +468,106 @@ static void build_wifi_tab(lv_obj_t *panel, lv_group_t *group)
     show_password();
 }
 
+/* ---- BLE tab (Current Time Service client, ADR-006) --------------------- */
+
+static lv_obj_t *s_ble_status;
+static lv_obj_t *s_ble_btn[BLE_TIME_MAX_DEVICES];
+static lv_timer_t *s_ble_timer;
+static ble_time_state_t s_ble_shown_state;
+
+static void fill_ble_list(void)
+{
+    for (int i = 0; i < BLE_TIME_MAX_DEVICES; i++) {
+        ble_time_device_t d;
+        if (ble_time_get_device(i, &d)) {
+            int quality = 2 * (d.rssi + 100);
+            if (quality < 0) quality = 0;
+            if (quality > 100) quality = 100;
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%s%s  %d%%", d.has_cts ? "* " : "", d.name[0] ? d.name : d.addr, quality);
+            lv_label_set_text(lv_obj_get_child(s_ble_btn[i], 0), buf);
+            lv_obj_remove_flag(s_ble_btn[i], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_ble_btn[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+/* Same model as the Wi-Fi poll: alive only while an operation the user
+ * started is in flight. */
+static void ble_poll_cb(lv_timer_t *timer)
+{
+    ble_time_state_t st = ble_time_get_state();
+    if (st == s_ble_shown_state) return;
+    s_ble_shown_state = st;
+    set_label(s_ble_status, ble_time_get_message());
+    bool final_state = (st == BLE_TIME_SCAN_DONE || st == BLE_TIME_SYNC_OK || st == BLE_TIME_FAILED);
+    if (st == BLE_TIME_SCAN_DONE) fill_ble_list();
+    if (final_state) {
+        lv_timer_delete(timer);
+        s_ble_timer = nullptr;
+    } else {
+        board_activity_notify();
+    }
+}
+
+static void start_ble_poll(void)
+{
+    s_ble_shown_state = BLE_TIME_IDLE;
+    if (!s_ble_timer) s_ble_timer = lv_timer_create(ble_poll_cb, 300, nullptr);
+}
+
+static void ble_scan_cb(lv_event_t *)
+{
+    if (!ble_time_scan_start()) {
+        set_label(s_ble_status, "Busy, try again");
+        return;
+    }
+    for (int i = 0; i < BLE_TIME_MAX_DEVICES; i++) lv_obj_add_flag(s_ble_btn[i], LV_OBJ_FLAG_HIDDEN);
+    set_label(s_ble_status, "Scanning...");
+    start_ble_poll();
+}
+
+static void ble_dev_cb(lv_event_t *e)
+{
+    int idx = static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e)));
+    if (ble_time_sync_start(idx)) {
+        set_label(s_ble_status, "Connecting...");
+        start_ble_poll();
+    } else {
+        set_label(s_ble_status, "Busy, try again");
+    }
+}
+
 static void build_ble_tab(lv_obj_t *panel, lv_group_t *group)
 {
-    lv_obj_t *scan = make_button(panel, LV_SYMBOL_BLUETOOTH " " LV_SYMBOL_REFRESH);
+    lv_obj_t *top = make_flex_row(panel, kKeyGap);
+    lv_obj_t *scan = make_button(top, LV_SYMBOL_BLUETOOTH " " LV_SYMBOL_REFRESH);
+    lv_obj_set_style_min_width(scan, 0, 0);
+    lv_obj_set_size(scan, 120, kSmallBtn);
+    lv_obj_set_ext_click_area(scan, 0);
+    lv_obj_add_event_cb(scan, ble_scan_cb, LV_EVENT_CLICKED, nullptr);
     add_to_group(scan, group);
-    lv_obj_t *info = lv_label_create(panel);
-    lv_label_set_text(info, "BLE time sync: coming soon");
+    s_ble_status = lv_label_create(top);
+    lv_label_set_long_mode(s_ble_status, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(s_ble_status, 290);
+    lv_label_set_text(s_ble_status, "Scan for CTS Bluetooth");
+
+    lv_obj_t *list = make_panel(panel);
+    lv_obj_set_style_pad_all(list, kFocusOutlineSlack, 0);
+    lv_obj_set_style_pad_row(list, kApRowGap, 0);
+    for (int i = 0; i < BLE_TIME_MAX_DEVICES; i++) {
+        s_ble_btn[i] = make_button(list, "");
+        lv_obj_set_width(s_ble_btn[i], LV_PCT(100));
+        lv_obj_set_ext_click_area(s_ble_btn[i], 0);
+        lv_obj_t *l = lv_obj_get_child(s_ble_btn[i], 0);
+        lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(l, LV_PCT(95));
+        lv_obj_add_event_cb(s_ble_btn[i], ble_dev_cb, LV_EVENT_CLICKED,
+                            reinterpret_cast<void *>(static_cast<intptr_t>(i)));
+        add_to_group(s_ble_btn[i], group);
+        lv_obj_add_flag(s_ble_btn[i], LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 /* ---- Tabs -------------------------------------------------------------- */

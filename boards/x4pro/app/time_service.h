@@ -64,6 +64,16 @@ typedef enum { TIME_SOURCE_MANUAL = 0, TIME_SOURCE_WIFI = 1, TIME_SOURCE_BLE = 2
 bool time_service_set_utc(time_t utc, time_sync_source_t source);
 
 /**
+ * @brief Sets ONLY the system clock, with microsecond precision, and returns
+ *        how far off it was (new minus old, rounded to seconds). Cheap and
+ *        non-blocking: call it at the instant the time is received, then call
+ *        time_service_commit_system_time() (which blocks 1-2 s for the aligned
+ *        RTC write) once the source has finished.
+ * @param delta_valid set to false if the clock had never been set.
+ */
+void time_service_set_system_precise(time_t utc, int usec, int32_t *delta_s, bool *delta_valid);
+
+/**
  * @brief For sources that already set the system clock themselves (SNTP):
  *        writes the current system time to the RTC and records the sync.
  *        `delta_s` is how far off the clock was at the instant the source
