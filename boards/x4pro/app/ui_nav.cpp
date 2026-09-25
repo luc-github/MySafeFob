@@ -42,6 +42,7 @@ extern "C" {
 #include "hw_config.h"
 #include "battery.h"
 #include "frontlight.h"
+#include "time_service.h"
 #include "power_mgr.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -223,6 +224,7 @@ static void build_screens(void)
     build_screen(Screen::SettingsAbout, build_settings_about);
     build_screen(Screen::TouchDiag, build_touch_diag);
     build_screen(Screen::Security, build_security);
+    build_screen(Screen::Time, build_time);
 }
 
 /* REMOVED 2026-09-24 (was: slip eink.c's mandatory ghost-budget full GC
@@ -265,6 +267,7 @@ void board_ui_nav_task(void *arg)
      * channel pair that had never actually been configured, so it silently
      * had no effect on the physical pins. Must run once, before the first
      * apply_frontlight_from_settings() below. */
+    time_service_init();
     frontlight_init();
     apply_frontlight_from_settings();
 

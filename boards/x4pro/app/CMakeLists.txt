@@ -14,9 +14,11 @@ idf_component_register(
          "ui_screen_home.cpp" "ui_screen_settings.cpp"
          "ui_screen_settings_controls.cpp" "ui_screen_settings_display.cpp"
          "ui_screen_settings_about.cpp" "ui_screen_touch_diag.cpp"
-         "ui_screen_security.cpp"
+         "ui_screen_security.cpp" "ui_screen_time.cpp" "ui_keyboard.cpp"
+         "time_service.c" "wifi_time.c"
          "settings_store.c" "battery.c" "frontlight.c"
          "lv_port_disp.c" "lv_port_indev.c"
     INCLUDE_DIRS "."
     REQUIRES driver esp_timer lvgl power_mgr nvs_flash esp_app_format
+             esp_wifi esp_netif esp_event
 )

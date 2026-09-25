@@ -224,3 +224,43 @@ void settings_store_set_touch_cal_offset_y(int32_t offset_px)
     settings_set_u32(SETTINGS_ID_TouchCalOffsetY, (uint32_t)offset_px);
 }
 
+int32_t settings_store_get_time_tz_offset_min(void)
+{
+    return (int32_t)settings_get_u32(SETTINGS_ID_TimeTzOffsetMin);
+}
+
+void settings_store_set_time_tz_offset_min(int32_t minutes)
+{
+    settings_set_u32(SETTINGS_ID_TimeTzOffsetMin, (uint32_t)minutes);
+}
+
+static const settings_id_t kSyncEpochIds[SETTINGS_TIME_SYNC_HISTORY] = {
+    SETTINGS_ID_TimeSyncEpoch0, SETTINGS_ID_TimeSyncEpoch1, SETTINGS_ID_TimeSyncEpoch2};
+static const settings_id_t kSyncDeltaIds[SETTINGS_TIME_SYNC_HISTORY] = {
+    SETTINGS_ID_TimeSyncDelta0, SETTINGS_ID_TimeSyncDelta1, SETTINGS_ID_TimeSyncDelta2};
+static const settings_id_t kSyncSourceIds[SETTINGS_TIME_SYNC_HISTORY] = {
+    SETTINGS_ID_TimeSyncSource0, SETTINGS_ID_TimeSyncSource1, SETTINGS_ID_TimeSyncSource2};
+
+bool settings_store_get_time_sync(int index, uint32_t *epoch, int32_t *delta_s, uint32_t *source)
+{
+    if (index < 0 || index >= SETTINGS_TIME_SYNC_HISTORY) return false;
+    uint32_t e = settings_get_u32(kSyncEpochIds[index]);
+    if (e == 0) return false;
+    *epoch = e;
+    *delta_s = (int32_t)settings_get_u32(kSyncDeltaIds[index]);
+    *source = settings_get_u32(kSyncSourceIds[index]);
+    return true;
+}
+
+void settings_store_push_time_sync(uint32_t epoch, int32_t delta_s, uint32_t source)
+{
+    for (int i = SETTINGS_TIME_SYNC_HISTORY - 1; i > 0; i--) {
+        settings_set_u32(kSyncEpochIds[i], settings_get_u32(kSyncEpochIds[i - 1]));
+        settings_set_u32(kSyncDeltaIds[i], settings_get_u32(kSyncDeltaIds[i - 1]));
+        settings_set_u32(kSyncSourceIds[i], settings_get_u32(kSyncSourceIds[i - 1]));
+    }
+    settings_set_u32(kSyncEpochIds[0], epoch);
+    settings_set_u32(kSyncDeltaIds[0], (uint32_t)delta_s);
+    settings_set_u32(kSyncSourceIds[0], source);
+}
+

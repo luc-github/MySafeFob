@@ -58,3 +58,21 @@ SETTINGS_DEF(TouchCalScaleX,  "tc_scale_x", U32, 1000)
 SETTINGS_DEF(TouchCalOffsetX, "tc_off_x",   U32, 0)
 SETTINGS_DEF(TouchCalScaleY,  "tc_scale_y", U32, 1000)
 SETTINGS_DEF(TouchCalOffsetY, "tc_off_y",   U32, 0)
+/* Local time zone as a fixed UTC offset in minutes (signed, stored via its
+ * raw 32-bit pattern like the touch offsets). Display only: the RTC, the
+ * system clock and TOTP are always UTC. */
+SETTINGS_DEF(TimeTzOffsetMin, "tz_off_min", U32, 0)
+/* Last 3 clock synchronisations, newest = index 0 (drift tracking, shown in
+ * About): UTC epoch of the sync (0 = none), how far the clock was off just
+ * before it (signed seconds, new minus old; INT32_MIN = unknown), and the
+ * source (0 manual, 1 Wi-Fi, 2 BLE). settings_store_push_time_sync() shifts
+ * the records down. */
+SETTINGS_DEF(TimeSyncEpoch0,  "sync_e0", U32, 0)
+SETTINGS_DEF(TimeSyncEpoch1,  "sync_e1", U32, 0)
+SETTINGS_DEF(TimeSyncEpoch2,  "sync_e2", U32, 0)
+SETTINGS_DEF(TimeSyncDelta0,  "sync_d0", U32, 0x80000000u)
+SETTINGS_DEF(TimeSyncDelta1,  "sync_d1", U32, 0x80000000u)
+SETTINGS_DEF(TimeSyncDelta2,  "sync_d2", U32, 0x80000000u)
+SETTINGS_DEF(TimeSyncSource0, "sync_s0", U32, 0)
+SETTINGS_DEF(TimeSyncSource1, "sync_s1", U32, 0)
+SETTINGS_DEF(TimeSyncSource2, "sync_s2", U32, 0)

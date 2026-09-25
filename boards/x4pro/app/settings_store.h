@@ -113,6 +113,23 @@ void settings_store_set_touch_cal_scale_y(uint32_t scale_y1000);
 int32_t settings_store_get_touch_cal_offset_y(void);
 void settings_store_set_touch_cal_offset_y(int32_t offset_px);
 
+/** @brief Local time zone as a fixed UTC offset in minutes (display only; the clock and TOTP stay UTC). */
+int32_t settings_store_get_time_tz_offset_min(void);
+void settings_store_set_time_tz_offset_min(int32_t minutes);
+
+#define SETTINGS_TIME_SYNC_HISTORY 3
+
+/**
+ * @brief History of the last SETTINGS_TIME_SYNC_HISTORY clock
+ *        synchronisations (drift tracking, About screen), newest = index 0.
+ *        Each record: UTC epoch, signed offset in seconds the clock had just
+ *        before the sync (INT32_MIN = unknown), source (time_service.h's
+ *        time_sync_source_t).
+ * @return false if there is no record at `index`.
+ */
+bool settings_store_get_time_sync(int index, uint32_t *epoch, int32_t *delta_s, uint32_t *source);
+void settings_store_push_time_sync(uint32_t epoch, int32_t delta_s, uint32_t source);
+
 #ifdef __cplusplus
 }
 #endif

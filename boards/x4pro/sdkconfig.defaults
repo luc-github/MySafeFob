@@ -28,3 +28,10 @@ CONFIG_LV_FONT_DEFAULT_MONTSERRAT_24=y
 # specifically (2026-09-21: "le contenu + et - sont trop petits") --
 # ui_nav.cpp sets this explicitly on those labels only.
 CONFIG_LV_FONT_MONTSERRAT_32=y
+
+# LVGL's builtin 64KB pool (internal DRAM) ran out once the Time screen's
+# ~50 keyboard keys were built (2026-09-24: LV_ASSERT_MALLOC in
+# get_local_style -> task watchdog loop at boot). Use the C allocator
+# instead: small blocks stay in internal RAM, larger ones spill to the
+# 8MB PSRAM (CONFIG_SPIRAM_USE_MALLOC).
+CONFIG_LV_USE_CLIB_MALLOC=y

@@ -2345,6 +2345,21 @@ interaction is unwanted; the hard 30-DU budget in `eink.c` is unchanged).
 otherwise) stays — it repaints only when the displayed value changes, and is
 suspended while Touch Calibration is the active screen.
 
+**Amendment 2026-09-24 — Security (PIN keypad, UI test only) and Time screens.**
+Settings gained *Security* (6-digit numeric keypad, nothing stored) and *Time*
+(three tabs: Wi-Fi, BLE, Manual). This step delivers the Manual tab, the
+clock service and the reusable alphanumeric keyboard (`ui_keyboard.cpp`);
+the Wi-Fi tab (added right after, `wifi_time.c`) scans, joins a network with
+an on-screen password and sets the clock/RTC from SNTP (`pool.ntp.org`); the
+radio is fully deinitialised after each scan/sync and credentials are never
+stored (`CONFIG_ESP_WIFI_NVS_ENABLED` off, RAM-only). The BLE tab is a placeholder (ADR-006: CTS client, scan then read).
+`time_service.c` owns the clock: system clock and BM8563 RTC (I2C 0x51)
+always hold **UTC** (TOTP, RFC 6238, is UTC-only); the local time zone is a
+fixed UTC offset in NVS (`tz_off_min`, no DST) used only for display and
+manual entry. The RTC is loaded into the system clock at boot. Key handlers
+of the keypads run synchronously in the click callback: `lv_async_call` does
+not preserve call order, which reversed fast consecutive taps.
+
 ---
 
 ## Project rules
