@@ -1,6 +1,7 @@
 # FEATURES.md — MySafeFob (MSF): X4 Pro firmware — TOTP + Password Manager
 
-> **Status**: v1.0 — ✅ **VALIDATED 2026-09-13 (Phase 6)**
+> **Status**: v1.0 — ✅ **VALIDATED 2026-09-13 (Phase 6)** — amended 2026-09-26
+> (F-02 alert threshold and Alerts screen, ADR-018; §7 UI library, ADR-017)
 > **Rule**: once this document is validated, no new features until v1.0 (Phase 6 gate).
 > Reference: `docs/ROADMAP.md` (ADR-001: time sync via Wi-Fi).
 
@@ -39,9 +40,14 @@ updates only via SD.
   never stored; radio off outside of sync; SNTP → `settimeofday`.
 - **Manual UI entry** (permanent fallback): human-readable date + HH:MM, a
   minute-boundary trick (confirm at :00 → ~1 s precision), UTC offset in settings.
-- **Time health indicator**: age of the last sync + estimated RTC drift shown
-  in settings; **visual alert if the age exceeds 45 days** (RTC drift
-  ±20 ppm ≈ 1.7 s/day, TOTP budget ±15 s).
+- **Time health indicator**: age of the last sync + measured drift per day
+  shown in Settings > About; **alert when the last sync is older than a
+  threshold, default 90 days** (amended 2026-09-26, was 45 days — ADR-018):
+  a warning button appears on HOME and opens the Alerts screen, which
+  explains the problem and links to Settings > Time. The threshold is the
+  setting `TimeSyncMaxAgeS`, changeable from the serial console (`setting`
+  command, F-20) for tests without reflashing. "Never synced" raises an
+  alert too.
 
 ### F-03 — PIN lock
 - **6-digit PIN, fixed length (v1.0)** — trade-off: back-off protects against
@@ -139,7 +145,9 @@ updates only via SD.
   as long as F-03/F-04 are not in place).
 - **Current scope** (Phase 8 skeleton): `help`, `about`,
   `totpselftest`, `sleep`. To be expanded over the phases (e.g. battery/RTC
-  status, storage diagnostics) rather than replaced.
+  status, storage diagnostics) rather than replaced. Planned next
+  (ROADMAP 8.0): `setting list|get|set|reset` over the whole NVS settings
+  table (ADR-018) and `settime` (serial time sync, ADR-006).
 - **⚠️ Pitfall encountered (2026-09-16), checkpoint for the future**:
   `esp_console_new_repl_usb_serial_jtag()`/`_uart()` do create the REPL
   task, but it stays parked in the `CONSOLE_REPL_STATE_INIT` state
@@ -192,7 +200,7 @@ updates only via SD.
 |------------|--------|
 | Flash = only persistent storage, SD mounted only on demand | The SD card serves as: (1) firmware update area, (2) backup export/import, (3) Cryptomator document vault (F-17, read-only wired USB-MSC bridge). Never mounted permanently |
 | ESP-IDF 5.5.x (not 6.x: stability + footprint) | Fixed build target; watch for component renames (`console` vs future `esp_console`) |
-| **FreeInkUI** (ported native ESP-IDF from `freeink-sdk`, MIT — ADR-010, replaces LVGL) | UI to be designed sober from the start; immediate-mode, draws directly into our `eink.c` framebuffer via `DisplayTarget`; navigation via `Frame`/`InteractionBuffer` (focus + confirm), validated on our `buttons.c`/`touch.c` (POC `references/test_apps/freeinkui-poc/`) |
+| **LVGL 9.x** for the app (ADR-017, 2026-09-21 — supersedes ADR-010's FreeInkUI, which only the factory still uses) | Sober mono theme; our own ports: `lv_port_disp.c` (flush into `eink.c`, DU/GC choice, zone refresh) and `lv_port_indev.c` (touch + Left/Right focus groups, confirm) |
 | **3.7" e-ink typography** (confirmed by user 2026-09-14) | 8×16 = unreadable; **minimum 16×32 px** (factory + splash validated at this size). The UI must build on fonts ≥ 20-24 px equivalent, adapted per panel density |
 | **No secure element** (confirmed Phase 5) | The offline barrier = memory-hard Argon2id KDF (F-03/F-04, ADR-004); never store a key in the clear |
 | **BM8563 RTC with validated backup** (survives reboots) | F-02 is still required for initial sync/resync, but time persists between usages |

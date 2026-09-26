@@ -196,6 +196,12 @@ esp_err_t time_sync_wifi(const char *ssid, const char *pwd);  /* never persisted
 esp_err_t time_set_manual(int64_t epoch_s);                   /* HH:MM UI entry */
 int64_t   time_now(void);                                     /* RTC + drift */
 void      time_health(int32_t *drift_ppm, uint32_t *age_sync_s);
+/* As built (2026-09-26): time_service.c/.h (board app) owns the clock
+   (UTC in system clock + BM8563 RTC), wifi_time.c and ble_time.c are
+   the Wi-Fi/BLE sources, the last 3 syncs are kept in NVS (settings_store)
+   for drift tracking. Serial sync = console command `settime` (ROADMAP
+   8.0 P4). The staleness check is the alert registry's job (ADR-018,
+   alerts.c), threshold = setting TimeSyncMaxAgeS (default 90 days). */
 /* Invariants:
    - the 3 radio/serial channels carry ONLY the time, never keystore
      data (ADR-006);
@@ -211,6 +217,11 @@ void      time_health(int32_t *drift_ppm, uint32_t *age_sync_s);
 void ui_show(screen_t s);     /* screen created for its context, the old one destroyed */
 /* Screens: UNLOCK, HOME(menu), TOTP_LIST, TOTP_CODE, PWD_LIST, PWD_VIEW,
    RCV_LIST, RCV_CODE, ADD_EDIT_ENTRY, TIME_SYNC, SETTINGS, UPDATE_SD, STATUS */
+/* Amended 2026-09-26: the authoritative inventory is UI-SPECS.md §1.4
+   (UPDATE_SD dropped, STATUS folded into SETTINGS_ABOUT, ALERTS added by
+   ADR-018). Implemented on LVGL (ADR-017) as `enum class Screen` +
+   switch_screen() in ui_screens.h. Settings' Back uses one "return-to"
+   screen id (UI-SPECS §1.3.1), not a stack. */
 /* input provides: mapped touch coordinates (swapXY+invert_y, cf. hw-spec),
    3 buttons, Home zone (raw point 36,479), long-press. */
 ```
@@ -223,6 +234,27 @@ void    pwr_frontlight_set(bool on, uint8_t level);  /* warm/cool, auto-off */
 ```
 
 ### 4.6 `update_svc` — see §3 (exact sequence).
+
+### 4.7 `alerts` (ADR-018, added 2026-09-26)
+
+```c
+typedef enum { ALERT_TIME_NEVER_SYNCED, ALERT_TIME_SYNC_STALE, ALERT_COUNT } alert_id_t;
+int  alerts_evaluate(void);                 /* re-checks every condition, returns the active count */
+bool alerts_is_active(alert_id_t id);       /* from the last alerts_evaluate() */
+const char *alerts_title(alert_id_t id);
+void alerts_describe(alert_id_t id, char *buf, size_t len);  /* explanation, built now */
+/* Invariants: evaluated when HOME is built, never from a timer; alerts
+   are condition-based (no acknowledge state in v1); the text never
+   contains a secret. */
+```
+
+### 4.8 Serial console settings access (ADR-018)
+
+`setting list | get <id> | set <id> <value> | reset <id>` over the
+`settings_defs.inc` table (F-20). Values: BOOL `0/1/on/off`; U32 decimal,
+negative accepted, optional `s/m/h/d` suffix. Secrets are never in that
+table (they live in the `secrets` partition), so the command cannot expose
+them.
 
 ## 5. Global invariants (non-negotiable)
 
@@ -242,5 +274,5 @@ void    pwr_frontlight_set(bool on, uint8_t level);  /* warm/cool, auto-off */
       (target 0.5-1 s/attempt) and fix the values in the code.
 - [ ] **PIN length**: fixed at 6 (FEATURES F-03). UI entry to be specified at
       the time of the UNLOCK screen (full-screen numeric keypad, anti-smudge layout).
-- [ ] **Frontlight trigger** (F-16): manual activation confirmed; the exact
-      UI widget is decided during implementation of the status bar.
+- [x] ~~**Frontlight trigger** (F-16)~~: done — Settings > Display toggle
+      (ADR-016).

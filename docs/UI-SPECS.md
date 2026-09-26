@@ -4,8 +4,15 @@
 > retroactively during task 8.4 rather than Phase 6 — no screen implementation
 > beyond the provisional nav-loop placeholder existed before this document).
 > Reference: `docs/FEATURES.md` (features/use cases), `docs/INTERFACES.md`
-> §4.4 (`ui_mgr` screen enum), `docs/ROADMAP.md` ADR-010/ADR-013 (FreeInkUI,
-> nav loop already validated on hardware).
+> §4.4 (`ui_mgr` screen enum), `docs/ROADMAP.md` ADR-013 (nav loop) and
+> ADR-017 (the app UI is LVGL since 2026-09-21).
+>
+> **Note (2026-09-26)**: sections written before 2026-09-21 name FreeInkUI
+> components (`key-grid.h`, `option-dialog.h`, `qwerty-keyboard.h`,
+> `StepperRowProps`, `draw_*()`, `InteractionBuffer`…). They are historical:
+> ADR-017 moved the app to LVGL, and the equivalents are our own widgets in
+> `ui_widgets.*`/`ui_keyboard.*` and LVGL focus groups. The screen layouts
+> and behaviors described stay valid unless amended.
 
 ---
 
@@ -94,7 +101,6 @@ validated 2026-09-19)
   in the **fixed zone's primary action slot** (§1.3 — not a separate
   contextual-zone header row; that changed 2026-09-19, see below) —
   reachable by Left/Right focus like any other widget, or by direct tap.
-  `FreeInkUICore.h`'s `InputBack` mask is exactly what this maps to.
 
 ### 1.3 Chrome — two zones per screen (amended 2026-09-19, hardware-
 validated layout): a **fixed header** (identical structure, but not
@@ -159,11 +165,22 @@ validated 2026-09-19:
     used to sit centered next to Back there too; removed entirely
     (2026-09-19) since it duplicated row 1's title and Back's
     focused/active highlight could visually run into it.
-- The former "time-since-sync alert past 45 days" badge (F-02) is
-  planned to move into the TIME_SYNC screen itself (§2.15) rather than
-  living permanently in the fixed header — it's actionable information
-  relevant when you'd go looking for it, not a constant-attention item
-  like a phone's clock. Not built yet (TIME_SYNC doesn't exist).
+- **Alert button (HOME only, ADR-018, 2026-09-26)** — replaces the earlier
+  plan of putting the time-sync alert inside TIME_SYNC, where nobody sees
+  it without going there: an icon button `LV_SYMBOL_WARNING`, same size
+  and style as the Settings icon button, in row 2 **on the right**, same
+  vertical position as Settings (left). Created only while at least one
+  alert is active (`alerts.c`); otherwise absent, not merely hidden, so it
+  never adds an empty stop to the focus cycle. Focus order: Settings,
+  alert button, content. Tap/confirm opens ALERTS (§2.21).
+
+  ```
+  ┌──────────────────────────────────────┐
+  │                                 87%  │
+  ════════════════════════════════════════
+  │ [ ⚙ ]                         [ ⚠ ] │
+  │ ── (HOME content) ───────────────────│
+  ```
 
 **Footer** (`draw_footer()`, 2026-09-18): a divider line plus the running
 firmware's version and build date/time (`esp_app_get_description()` —
@@ -219,6 +236,7 @@ other flow.
 | SETTINGS_BACKUP | F-06b | SETTINGS |
 | SETTINGS_OWNER_INFO | F-19 | SETTINGS |
 | SETTINGS_ABOUT | F-20 (status) | SETTINGS |
+| ALERTS | F-02 + future alerts (ADR-018) | HOME's alert button (§1.3), only while an alert is active |
 | SLEEP | F-19 | anywhere (Power long-press / idle timeout / "Sleep now") — already implemented, `splash.cpp` |
 
 `UPDATE_SD` from `INTERFACES.md`'s draft enum is **dropped**: F-06/ADR-011
@@ -259,7 +277,9 @@ screen.
 ```
 
 - No chrome header (nothing to go "Back" to before unlocking).
-- Digit grid built on FreeInkUI's `key-grid.h`; re-randomized on every
+- Digit grid (originally planned on FreeInkUI's `key-grid.h`; now an LVGL
+  keypad derived from Settings > Security's test keypad,
+  `ui_screen_security.cpp`); re-randomized on every
   screen entry (new unlock attempt, or after a wrong PIN) — reads
   `esp_random()`, never a fixed layout.
 - Left/Right cycles focus through the 3×3 grid + DEL, row-major; Home/tap
@@ -502,6 +522,12 @@ review). All 7 rows below fold in every settings-shaped item mentioned
 across FEATURES.md, so nothing is left dangling as an unplaced "open
 point" the way the previous draft of this section left idle-lock delay
 and frontlight.
+
+> **Amendment (2026-09-26) — actual menu today**: Controls, Display, Time,
+> Security, Touch Calibration, About (`ui_screen_settings.cpp`). Touch
+> Calibration got its own row (ADR-014 amendments). **Still missing**:
+> Backup (SD) and Owner info — ROADMAP 8.0 P11. Security currently holds
+> only the PIN keypad UI test (nothing stored).
 
 ### 2.12 SETTINGS_CONTROLS (added 2026-09-17, see
 `docs/touch-calibration-notes.md`)
@@ -774,6 +800,18 @@ FEATURES.md's stated defaults: off by default, 30 s auto-off.
   that confirm tap unambiguous (a single large "Confirm at :00" button,
   nothing else focusable in that moment to avoid a mis-tap).
 
+> **Amendment (2026-09-24/26) — as built**: one screen "Time" with three
+> tabs, **Wi-Fi / BLE / Manual** (`ui_screen_time.cpp`, details in
+> `time-sync-design.md`), instead of the menu of four rows above. Manual
+> entry is a 12-digit keypad (date + time) plus a UTC offset stepper, not
+> the "Confirm at :00" button. Differences still to close:
+> - **Serial (USB)** has no tab: it will be a console command, `settime`
+>   (ROADMAP 8.0 P4) — the PC is the one driving it, no screen needed.
+> - **Health line** ("Last sync… / drift…") is not on this screen: last
+>   sync and drift per day are in Settings > About, and the "too old"
+>   alert is the HOME alert button + ALERTS screen (§1.3, §2.21, ADR-018).
+> - **BLE confirmation** before applying the received time (ROADMAP 8.0 P5).
+
 ### 2.16 SETTINGS_BACKUP (F-06b)
 
 ```
@@ -813,6 +851,9 @@ FEATURES.md's stated defaults: off by default, 30 s auto-off.
 └──────────────────────────────────────┘
 ```
 
+Storage needs a **string setting type**, which `settings_store` does not
+have yet (BOOL/U32 only) — ROADMAP 8.0 P3.
+
 Directly implements F-19's "optional owner contact info ... configurable
 in Settings, disabled by default". The text field is only reachable/
 editable when the toggle above is On — this info is shown on the sleep
@@ -838,8 +879,9 @@ screen)
 ```
 
 Reused for: TOTP/password delete (§2.5/2.8), keystore-import overwrite
-(§2.16). `option-dialog.h` (already vendored in FreeInkUI) is the natural
-fit. Default focus on `Cancel` — a destructive action must never be the
+(§2.16). Built as one shared LVGL modal in `ui_widgets.*` (ADR-017; the
+FreeInkUI `option-dialog.h` originally named here no longer exists in the
+app). Default focus on `Cancel` — a destructive action must never be the
 path of least resistance through Left/Right+Home alone.
 
 ### 2.19 Full-screen text entry (shared pattern, not a top-level screen)
@@ -862,7 +904,11 @@ path of least resistance through Left/Right+Home alone.
 └──────────────────────────────────────┘
 ```
 
-- `qwerty-keyboard.h` (vendored, unused so far). Used by every text field
+- **Built 2026-09-24** as `ui_keyboard.cpp` (LVGL, 4 letter rows 7/7/6/6 +
+  control row, layers lower/upper/digits+symbols, `time-sync-design.md`
+  §3) — not the classic 10-key QWERTY drawn above. Used by the Wi-Fi
+  password today. **Still to add** (ROADMAP 8.0 P7): a Base32 mode (A-Z and
+  2-7 only, for TOTP secrets) and a numeric mode. Used by every text field
   in this document (TOTP label/secret, password fields, Wi-Fi SSID/pass,
   export passphrase). One shared implementation, not one per screen.
 - Left/Right cycling a full QWERTY key-by-key is slow but must remain
@@ -892,6 +938,43 @@ Static info screen, same content as the current REPL `about` command
 (F-20 — the REPL stays permanent and independent; this is just the
 on-screen equivalent for when USB isn't connected).
 
+### 2.21 ALERTS (ADR-018, added 2026-09-26)
+
+```
+┌──────────────────────────────────────┐
+│  Alerts                         87%  │
+════════════════════════════════════════
+│ [ < Back ]                           │
+│ ──────────────────────────────────── │
+│  ⚠ Time sync is old                  │
+│  Last sync: 2026-06-20 (Wi-Fi),      │
+│  98 days ago. The clock may have     │
+│  drifted; TOTP codes can be refused  │
+│  if it is off by more than ~15 s.    │
+│  Sync the time over Wi-Fi or BLE.    │
+│              [ Set the time ]        │
+│ ──────────────────────────────────── │
+│  (next alert, same layout)           │
+└──────────────────────────────────────┘
+```
+
+- Reached only from HOME's alert button (§1.3); Back returns to HOME.
+- One block per active alert, in registry order (`alerts.c`): title line
+  (with `LV_SYMBOL_WARNING`), explanation text built at screen build time
+  (dates, ages, values), optional action button to the screen that fixes
+  it (here Settings > Time). A divider between blocks; the content
+  scrolls when it does not fit (Left/Right moves through the action
+  buttons).
+- If every alert has cleared by the time the screen is built: a single
+  line "No active alerts".
+- Generic by design: any future alert or message (RTC lost power,
+  battery low, calibration missing…) is a new registry entry, not a new
+  screen. Alerts are condition-based (they disappear when the condition
+  is gone); acknowledge/dismiss is not part of v1.
+- First alerts: *Time never synchronised* and *Time sync is old*
+  (threshold `TimeSyncMaxAgeS`, default 90 days, console `setting`
+  command).
+
 ---
 
 ## 3. Open points (flagged, not blocking this document's review)
@@ -904,7 +987,9 @@ on-screen equivalent for when USB isn't connected).
       on the same hardware — likely explanation is a foreign/generic
       GT911 config blob rather than a coordinate-math bug, still
       unconfirmed.
-- [ ] **Power-short-press confirm bridge** (§1.2/§2.12): needs a new
+- [x] ~~Power-short-press confirm bridge~~ — **done**: `board_ui_nav_power_confirm()`
+      exists and the toggle is wired and hardware-validated (§1.2). Original note:
+      needs a new
       function (e.g. `board_ui_nav_power_confirm()`) so
       `power_button_task` (`main.c`, owns GPIO3) can inject a confirm
       pulse into `ui_nav.cpp`'s `InteractionBuffer` on a qualifying short
@@ -920,13 +1005,16 @@ on-screen equivalent for when USB isn't connected).
       plumbing (`ui_nav.cpp`'s `IDLE_TIMEOUT_MS` is a compile-time
       constant today) and the PIN re-lock behavior itself (never
       implemented at all yet) before that screen is real.
+- [ ] **Alerts (ADR-018)**: alert button + ALERTS screen + `alerts.c`
+      registry + `TimeSyncMaxAgeS` setting + `setting` console command —
+      ROADMAP 8.0 P1/P2, not built yet.
 - [ ] **`ui_mgr`'s "return-to" slot** (§1.3.1): `INTERFACES.md` §4.4 needs
       a small addition — one remembered screen id, set when Settings is tapped
       and consumed by SETTINGS's top-level Back — not yet in that
       document's `ui_show(screen_t)` contract.
-- [ ] **Frontlight** (F-16, should-have): driver-level GPIO8/9 PWM already
-      validated (`hardware-specs.md`); SETTINGS_DISPLAY (§2.14) specs the
-      UI side, still needs the actual binding wired.
+- [x] ~~Frontlight~~ — **done 2026-09-19/20** (ADR-016, §2.14
+      amendments): Frontlight + Color + Intensity; auto-off merged into
+      the idle-sleep timeout.
 - [x] ~~Battery indicator~~ — **done 2026-09-18**: text-only `NN%` in the
       fixed zone (§1.3), `boards/x4pro/app/battery.c`. No icon (no
       vendored bitmap assets, see §1.3's note) and unread on the `--`

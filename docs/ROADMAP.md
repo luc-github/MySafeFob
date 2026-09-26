@@ -113,6 +113,33 @@ Each phase produces a documented and validated deliverable before moving on to t
 
 **Exit gates**: Each sub-phase tested and validated individually.
 
+#### 8.0 Preparation backlog — everything that does not need the TOTP engine or `secret_store` (added 2026-09-26)
+
+User decision (2026-09-26): finish the environment around the TOTP flow
+first — missing settings and UI screens testable on their own, with
+dummy data where needed (same approach as the Security PIN keypad) —
+then start the TOTP core (8.1/8.2). Order below is the working order.
+
+| # | Item | Depends on | Status |
+|---|------|------------|--------|
+| P1 | Alert indicator + Alerts screen + sync-age threshold setting (ADR-018) | — | ⏳ |
+| P2 | Generic `setting` console command (list/get/set, ADR-018) | — | ⏳ |
+| P3 | String setting type in `settings_store` + Owner info screen + owner line on the sleep screen (F-19, UI-SPECS §2.17) | — | ⏳ |
+| P4 | Serial time sync: `settime` console command (ADR-006 serial channel, new sync source `serial`) | — | ⏳ |
+| P5 | BLE time: confirmation step before applying (device name, proposed time, offset; mandatory above ~60 s) | — | ⏳ |
+| P6 | Shared destructive-action confirmation dialog (UI-SPECS §2.18) | — | ⏳ |
+| P7 | Keyboard modes: Base32 (A-Z, 2-7) and numeric, on top of `ui_keyboard.cpp` | — | ⏳ |
+| P8 | Generic entry list screen (TOTP/PWD/RCV lists), dummy data | — | ⏳ |
+| P9 | TOTP_CODE prototype with a fake code: countdown + e-ink refresh strategy under the ghost budget | — | ⏳ |
+| P10 | UNLOCK screen: shuffled (anti-trace) keypad + back-off display, fake counter | — | ⏳ |
+| P11 | Settings menu gains Backup (SD detection/listing only, no crypto) and Owner info rows | P3 | ⏳ |
+
+Open decision carried by this backlog: F-05's auto-clear delay (secret
+shown → neutral screen) — fixed value or a setting? To settle before P9.
+Already settled, not open: the PIN failure counter lives in a plaintext
+sector of the `secrets` partition, outside the blob (`INTERFACES.md` §1.3),
+not in NVS.
+
 ---
 
 ### Phase 9: Integration and testing
@@ -762,6 +789,9 @@ done, already validated in production by crosspoint-reader) and
 not an LVGL-style complex UI).
 
 **Status**: ✅ VALIDATED 2026-09-15 (port to be carried out in task 8.4).
+**⚠️ SUPERSEDED for the app on 2026-09-21 by ADR-017** (the app's UI moved
+back to LVGL). Still in force for the factory, which keeps its frozen
+FreeInkUI copy for its splash screen (`FACTORY.md`).
 
 **Amendment (task 8.4 minimal slice, 2026-09-16 session)**: point 2's plan
 to port `EpdBus`/`Uc8279X4Driver` from `freeink-sdk` is **dropped**.
@@ -2365,6 +2395,109 @@ fixed UTC offset in NVS (`tz_off_min`, no DST) used only for display and
 manual entry. The RTC is loaded into the system clock at boot. Key handlers
 of the keypads run synchronously in the click callback: `lv_async_call` does
 not preserve call order, which reversed fast consecutive taps.
+
+---
+
+### ADR-017: App UI back on LVGL (supersedes ADR-010 for the app) — retroactive
+
+**Context**: ADR-010 (2026-09-15) dropped LVGL for a native port of
+`freeink-sdk`'s FreeInkUI. The app's screens were built on it (tasks
+8.4, ADR-013/014/016), then rewritten on LVGL on 2026-09-21 (commit
+`f2f38b4`, "Move from FreeInkUI to Lvgl as more mature"). The rewrite was
+never logged as a decision; the 2026-09-22 amendment above only notes the
+gap. This entry records it after the fact.
+
+**Decision**:
+1. The app's UI uses **LVGL 9.x** (`lvgl/lvgl ^9.4.0`,
+   `boards/x4pro/app/idf_component.yml`), mono theme, portrait 480×800,
+   through our own ports: `lv_port_disp.c` (flush into `eink.c`, DU/GC
+   waveform choice, zone refresh from LVGL's invalidated area) and
+   `lv_port_indev.c` (touch edge queue + physical buttons, focus groups).
+2. The app's FreeInkUI component is removed. The **factory** keeps its
+   frozen FreeInkUI copy (splash only, `FACTORY.md` §3) — ADR-010 still
+   applies there.
+3. Rules that came with the rewrite and stay mandatory: one file per
+   screen (`ui_screen_*.cpp`), shared builders in `ui_widgets.*`,
+   every navigation callback deferred through `ui_defer()`, keypad key
+   handlers synchronous (order matters, `time-sync-design.md` §3),
+   `CONFIG_LV_USE_CLIB_MALLOC=y` (LVGL's 64 KB pool is too small).
+
+**Why**: LVGL is more mature (widgets, focus groups, text, layouts) and the
+e-ink concerns ADR-010 raised were handled inside our display port
+(waveform choice, ghost budget, zone refresh) instead of by the UI library.
+
+**Consequences**: every doc mention of FreeInkUI components for the app
+(`key-grid.h`, `option-dialog.h`, `qwerty-keyboard.h`, `StepperRowProps`…)
+is historical; the LVGL equivalents are our own widgets in `ui_widgets.*`
+and `ui_keyboard.*`.
+
+**Status**: ✅ VALIDATED (in production since 2026-09-21, recorded
+2026-09-26).
+
+---
+
+### ADR-018: Alert indicator + Alerts screen; time-sync age threshold
+
+**Context**: F-02 asked for a visual alert when the last time sync gets
+old (45 days in FEATURES, about 3 months in `time-sync-design.md` §6 — an
+inconsistency). UI-SPECS §1.3 had moved that alert into the Time screen,
+where nobody sees it unless they go looking. More alert-type messages
+will come (RTC lost power, battery low, calibration missing…), so the
+alert needs a generic home rather than a one-off label.
+
+**Decisions (user, 2026-09-26)**:
+1. **Alert button on HOME**: an icon button `LV_SYMBOL_WARNING` in the
+   header's second row, **right side, same row as the Settings button**
+   (Settings stays left). It exists only while at least one alert is
+   active — when none is, the button is not created at all (no empty stop
+   in the Left/Right focus cycle). Focus order: Settings, then the alert
+   button, then the content.
+2. **Alerts screen** (new `Screen::Alerts`), opened by that button, Back
+   returns to HOME. It lists every active alert as a block: a title line,
+   an explanation text (what is wrong, why it matters, what to do), and an
+   optional action button that opens the screen that fixes it (e.g. "Set
+   the time" → Settings > Time). It is the generic place for future
+   alerts and messages, not a time-specific screen.
+3. **Alert registry** (`alerts.c`/`.h`, board app): a fixed table of
+   alert ids, each with a condition function and a text builder. Checked
+   when HOME is built (so on every return to HOME and after wake) — never
+   by a timer (project rule: no screen refresh without an interaction).
+   First alerts:
+   - `TIME_NEVER_SYNCED`: no sync recorded (`sync_e0` = 0).
+   - `TIME_SYNC_STALE`: `now - sync_e0 >= TimeSyncMaxAgeS`. The text
+     gives the last sync date and source, its age in days and, when the
+     drift history allows it, the estimated error accumulated since.
+   Candidates for later: RTC voltage-low flag (BM8563 `VL` bit: the RTC
+   lost power, time unreliable), battery low, touch calibration still at
+   factory defaults.
+4. **Threshold = a setting**, default **90 days**: `TimeSyncMaxAgeS`
+   (NVS `sync_maxage_s`, U32 **seconds**, default 7 776 000; 0 = alert
+   disabled). Seconds rather than days so tests can use a few minutes.
+   No UI control for it in v1; it is changed from the serial console.
+5. **Generic `setting` console command** (F-20), driven by the
+   `settings_defs.inc` X-macro table so every current and future setting
+   comes for free:
+   - `setting list` — every id, NVS key, type, current and default value;
+   - `setting get <id>`;
+   - `setting set <id> <value>` — BOOL: `0/1/on/off`; U32: decimal,
+     negative numbers accepted (stored as their 32-bit pattern, like
+     `tz_off_min`), optional suffix `s`/`m`/`h`/`d` for durations
+     (`setting set TimeSyncMaxAgeS 5m`);
+   - `setting reset <id>` — back to the default (erases the NVS key).
+   It also makes alert tests easy without reflashing, e.g. age the last
+   sync by writing an old epoch: `setting set TimeSyncEpoch0 1700000000`.
+   Runtime consumers read settings on use (existing no-cached-state
+   pattern), so a change applies at the next HOME build. Secrets never
+   go through this table (the keystore and PIN counter live in the
+   `secrets` partition), so the command cannot expose them.
+
+**Why 90 days**: the measured drift (Settings > About, drift per day
+since fix 4/5 of `time-sync-design.md`) is far below the ±20 ppm
+worst case F-02 used; the threshold is a setting anyway, and can be
+tightened once the drift history of this unit is known.
+
+**Status**: ✅ VALIDATED 2026-09-26 (design; implementation = backlog
+P1/P2, Phase 8.0).
 
 ---
 

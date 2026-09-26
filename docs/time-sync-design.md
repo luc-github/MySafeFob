@@ -133,7 +133,12 @@ Files: `time_service.[ch]`, `wifi_time.[ch]`, `ble_time.[ch]`, `ui_keyboard.[ch]
 
 - Confirmation step before applying a BLE time (show device name, proposed time and
   offset; mandatory above a threshold such as 60 s), and/or refuse absurd jumps.
-- Reminder to resync after about 3 months, and an optional ppm compensation from the
+- ~~Reminder to resync after about 3 months~~: decided in ADR-018 (2026-09-26) —
+  HOME alert button + Alerts screen, threshold setting `TimeSyncMaxAgeS`
+  (default 90 days, changeable with the console `setting` command); also an alert
+  when no sync was ever recorded. Not built yet (ROADMAP 8.0 P1/P2).
+- Serial (USB) sync: console command `settime` (ADR-006 serial channel), ROADMAP 8.0 P4.
+- An optional ppm compensation from the
   measured drift per day (the About screen shows it once 3 syncs exist; the first three
   records taken before fix 4 are unreliable).
 - BLE pairing/bonding (PIN) for peers that require encryption (iPhone/iPad, some

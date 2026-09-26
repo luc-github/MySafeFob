@@ -103,7 +103,7 @@ The default board is `x4pro`. See `boards/<name>/README.md`.
 | Store/export magics | `MSF1` (blob), `MSFS` (internal cleartext), `MSFEX1` (SD export) | `docs/INTERFACES.md` + future `secret_store.c` |
 | Recovery boot | **Power = GPIO3** button held ≥ 10 s (GPIO0 = strapping; Power+Right combo abandoned, ADR-009 amendment 2026-09-16) | `hooks.c` |
 | Application log | esp3d_log (level `-DMSF_LOG_LEVEL=`, default 3=debug); board drivers stay on `ESP_LOG*` | `components/esp3d_log/`, root `CMakeLists.txt` |
-| App UI | **FreeInkUI** (native ESP-IDF port from `freeink-sdk`, MIT) replaces LVGL — see ADR-010 (`docs/ROADMAP.md`) | `docs/ROADMAP.md` §ADR-010, prototype `references/test_apps/freeinkui-poc/` |
+| App UI | **LVGL 9.x** (ADR-017, supersedes ADR-010 for the app; the factory keeps its frozen FreeInkUI splash) | `docs/ROADMAP.md` §ADR-017, `boards/x4pro/app/lv_port_*.c`, `ui_*.cpp` |
 
 ## Known open points
 
