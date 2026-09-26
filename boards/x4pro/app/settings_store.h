@@ -130,6 +130,46 @@ void settings_store_set_time_tz_offset_min(int32_t minutes);
 bool settings_store_get_time_sync(int index, uint32_t *epoch, int32_t *delta_s, uint32_t *source);
 void settings_store_push_time_sync(uint32_t epoch, int32_t delta_s, uint32_t source);
 
+/**
+ * @brief ADR-018: age of the last time sync (seconds) above which HOME's
+ *        alert button reports "time sync is old". Default 90 days,
+ *        0 = alert disabled.
+ */
+uint32_t settings_store_get_time_sync_max_age_s(void);
+
+/**
+ * @brief F-05 auto-clear: seconds a displayed secret stays on screen
+ *        without interaction before the UI returns to a neutral screen.
+ *        Default 300 (5 min).
+ */
+uint32_t settings_store_get_secret_auto_clear_s(void);
+
+/* ---- Generic access by table index (console `setting` command, ADR-018,
+ * main/cmd_setting.c). Indexes run 0..settings_store_count()-1, in
+ * settings_defs.inc order. Consumers read settings on use, so a value set
+ * here applies at its next read (some are only read at boot, e.g. touch
+ * calibration). ---- */
+
+typedef enum { SETTINGS_KIND_BOOL, SETTINGS_KIND_U32, SETTINGS_KIND_I32 } settings_kind_t;
+
+typedef struct {
+    const char *name;        /* X-macro id, e.g. "IdleTimeoutS" */
+    const char *nvs_key;
+    settings_kind_t kind;
+    uint32_t default_value;  /* raw 32-bit pattern (I32: two's complement) */
+} settings_info_t;
+
+int settings_store_count(void);
+bool settings_store_describe(int index, settings_info_t *info);
+/** @brief Index of the setting named `name` (id or NVS key, case-insensitive), -1 if none. */
+int settings_store_find(const char *name);
+/** @brief Current value as its raw 32-bit pattern (default if unset). */
+uint32_t settings_store_get_raw(int index);
+/** @brief Persists a raw value (BOOL: any non-zero = 1). */
+esp_err_t settings_store_set_raw(int index, uint32_t value);
+/** @brief Erases the NVS key, so the setting reads its default again. */
+esp_err_t settings_store_reset(int index);
+
 #ifdef __cplusplus
 }
 #endif

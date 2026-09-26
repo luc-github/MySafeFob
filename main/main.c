@@ -50,6 +50,7 @@
 #include "power_mgr.h"
 #include "ui_nav.h"
 #include "settings_store.h"
+#include "cmd_setting.h"
 
 static bool s_wake_from_sleep = false;
 
@@ -285,6 +286,7 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_console_cmd_register(&about_cmd));
     ESP_ERROR_CHECK(esp_console_cmd_register(&selftest_cmd));
     ESP_ERROR_CHECK(esp_console_cmd_register(&sleep_cmd));
+    ESP_ERROR_CHECK(cmd_setting_register());
     /* BUGFIX 2026-09-16: previous comment was wrong — esp_console_new_repl_*()
      * does create the REPL task, but it stays parked in the
      * CONSOLE_REPL_STATE_INIT state (read loop never executed) until
@@ -324,5 +326,5 @@ void app_main(void)
      * abundant PSRAM. */
     xTaskCreate(power_button_task, "pwr_btn", 12288, NULL, 5, NULL);
 
-    esp3d_log_d("Skeleton ready. Commands: help, about, totpselftest, sleep");
+    esp3d_log_d("Skeleton ready. Commands: help, about, totpselftest, sleep, setting");
 }

@@ -123,7 +123,7 @@ then start the TOTP core (8.1/8.2). Order below is the working order.
 | # | Item | Depends on | Status |
 |---|------|------------|--------|
 | P1 | Alert indicator + Alerts screen + sync-age threshold setting (ADR-018) | — | ⏳ |
-| P2 | Generic `setting` console command (list/get/set, ADR-018) | — | ⏳ |
+| P2 | Generic `setting` console command (list/get/set/reset, ADR-018) — `main/cmd_setting.c`; settings table gained an I32 type (signed values print correctly) and `TimeSyncMaxAgeS` (90 d) + `SecretAutoClearS` (300 s) | — | 🔄 built 2026-09-26, hardware test pending |
 | P3 | String setting type in `settings_store` + Owner info screen + owner line on the sleep screen (F-19, UI-SPECS §2.17) | — | ⏳ |
 | P4 | Serial time sync: `settime` console command (ADR-006 serial channel, new sync source `serial`) | — | ⏳ |
 | P5 | BLE time: confirmation step before applying (device name, proposed time, offset; mandatory above ~60 s) | — | ⏳ |
@@ -134,8 +134,11 @@ then start the TOTP core (8.1/8.2). Order below is the working order.
 | P10 | UNLOCK screen: shuffled (anti-trace) keypad + back-off display, fake counter | — | ⏳ |
 | P11 | Settings menu gains Backup (SD detection/listing only, no crypto) and Owner info rows | P3 | ⏳ |
 
-Open decision carried by this backlog: F-05's auto-clear delay (secret
-shown → neutral screen) — fixed value or a setting? To settle before P9.
+Decided 2026-09-26: F-05's auto-clear delay (secret shown → neutral
+screen) is a setting, `SecretAutoClearS`, default **5 min** (300 s),
+changeable from the console (`setting`, P2); a UI control can come later
+in SETTINGS_SECURITY. Rationale: a TOTP code is valid 30 s anyway, the
+delay only limits how long a secret stays on the e-paper. Used from P9.
 Already settled, not open: the PIN failure counter lives in a plaintext
 sector of the `secrets` partition, outside the blob (`INTERFACES.md` §1.3),
 not in NVS.

@@ -78,6 +78,13 @@ updates only via SD.
 - **Auto-clear**: automatic return to a neutral screen after a delay without
   interaction when a secret is displayed (the e-paper image persists while
   powered off — a displayed password would otherwise stay visible).
+  **Delay decided 2026-09-26: default 5 min**, setting `SecretAutoClearS`
+  (seconds, changeable with the console `setting` command, ADR-018).
+  Applies to every screen showing a secret (TOTP code, password, recovery
+  code). A TOTP code is only valid 30 s anyway, so the delay is about
+  hiding what stays on the e-paper, not about the code's validity. If the
+  idle-sleep timeout is shorter, sleep comes first and the sleep screen
+  already hides the secret.
 
 ### F-05b — Recovery code management
 - Entries: label (service) + list of one-time codes provided at 2FA activation.

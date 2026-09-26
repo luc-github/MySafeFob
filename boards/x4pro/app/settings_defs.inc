@@ -35,7 +35,10 @@
  * SETTINGS_DEF(id, nvs_key, type, default_value)
  *   id            -> becomes SETTINGS_ID_<id> in the settings_id_t enum
  *   nvs_key       -> NVS storage key, max 15 chars (NVS limit)
- *   type          -> BOOL or U32 (settings_type_t, settings_store.c)
+ *   type          -> BOOL, U32 or I32 (settings_type_t, settings_store.c).
+ *                    I32 is stored with nvs_(get|set)_u32 too (same 32-bit
+ *                    pattern, so switching a U32 to I32 needs no migration);
+ *                    the type only tells the console how to print/parse it
  *   default_value -> returned whenever the key isn't set yet (or NVS
  *                    failed to open) — never touches flash to read a
  *                    default
@@ -51,17 +54,14 @@ SETTINGS_DEF(FrontlightColor,     "fl_color",   U32,  0)   /* 0-100 warm<->cool 
 SETTINGS_DEF(FrontlightIntensity, "fl_intens",  U32,  60)
 /* Touch calibration (touch.c's per-unit correction, ui_screen_touch_diag.cpp) --
  * scale is x1000 fixed-point (1000 = 1.000x); offset is a signed pixel
- * delta stored via its raw 32-bit bit pattern (nvs_(get|set)_u32 round-trip
- * two's complement bit-for-bit, no bias trick needed -- see
- * settings_store.h's touch cal accessors). */
+ * delta (I32). */
 SETTINGS_DEF(TouchCalScaleX,  "tc_scale_x", U32, 1000)
-SETTINGS_DEF(TouchCalOffsetX, "tc_off_x",   U32, 0)
+SETTINGS_DEF(TouchCalOffsetX, "tc_off_x",   I32, 0)
 SETTINGS_DEF(TouchCalScaleY,  "tc_scale_y", U32, 1000)
-SETTINGS_DEF(TouchCalOffsetY, "tc_off_y",   U32, 0)
-/* Local time zone as a fixed UTC offset in minutes (signed, stored via its
- * raw 32-bit pattern like the touch offsets). Display only: the RTC, the
- * system clock and TOTP are always UTC. */
-SETTINGS_DEF(TimeTzOffsetMin, "tz_off_min", U32, 0)
+SETTINGS_DEF(TouchCalOffsetY, "tc_off_y",   I32, 0)
+/* Local time zone as a fixed UTC offset in minutes (signed). Display only:
+ * the RTC, the system clock and TOTP are always UTC. */
+SETTINGS_DEF(TimeTzOffsetMin, "tz_off_min", I32, 0)
 /* Last 3 clock synchronisations, newest = index 0 (drift tracking, shown in
  * About): UTC epoch of the sync (0 = none), how far the clock was off just
  * before it (signed seconds, new minus old; INT32_MIN = unknown), and the
@@ -70,9 +70,17 @@ SETTINGS_DEF(TimeTzOffsetMin, "tz_off_min", U32, 0)
 SETTINGS_DEF(TimeSyncEpoch0,  "sync_e0", U32, 0)
 SETTINGS_DEF(TimeSyncEpoch1,  "sync_e1", U32, 0)
 SETTINGS_DEF(TimeSyncEpoch2,  "sync_e2", U32, 0)
-SETTINGS_DEF(TimeSyncDelta0,  "sync_d0", U32, 0x80000000u)
-SETTINGS_DEF(TimeSyncDelta1,  "sync_d1", U32, 0x80000000u)
-SETTINGS_DEF(TimeSyncDelta2,  "sync_d2", U32, 0x80000000u)
+SETTINGS_DEF(TimeSyncDelta0,  "sync_d0", I32, 0x80000000u)
+SETTINGS_DEF(TimeSyncDelta1,  "sync_d1", I32, 0x80000000u)
+SETTINGS_DEF(TimeSyncDelta2,  "sync_d2", I32, 0x80000000u)
 SETTINGS_DEF(TimeSyncSource0, "sync_s0", U32, 0)
 SETTINGS_DEF(TimeSyncSource1, "sync_s1", U32, 0)
 SETTINGS_DEF(TimeSyncSource2, "sync_s2", U32, 0)
+/* Age of the last sync (seconds) above which HOME raises the "time sync is
+ * old" alert (ADR-018). Default 90 days; 0 = alert disabled. Seconds so
+ * tests can use minutes (console: `setting set TimeSyncMaxAgeS 5m`). */
+SETTINGS_DEF(TimeSyncMaxAgeS, "sync_maxage_s", U32, 90u * 24u * 3600u)
+/* F-05 auto-clear: seconds a secret (TOTP code, password, recovery code)
+ * stays on screen without interaction before returning to a neutral
+ * screen. Default 5 min (decided 2026-09-26). */
+SETTINGS_DEF(SecretAutoClearS, "secret_clr_s", U32, 300)

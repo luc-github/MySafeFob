@@ -27,6 +27,7 @@
  * sequences a caller might do around them.
  */
 #include "settings_store.h"
+#include <strings.h>
 
 #include "nvs.h"
 #include "esp_log.h"
@@ -39,6 +40,7 @@ static const char *TAG = "settings_store";
 typedef enum {
     SETTING_TYPE_BOOL,   /* stored as nvs_(get|set)_u8, 0/1 */
     SETTING_TYPE_U32,
+    SETTING_TYPE_I32,    /* stored as nvs_(get|set)_u32, same bit pattern */
 } settings_type_t;
 
 /* One id per settings_defs.inc line — internal only, never exposed
@@ -51,13 +53,14 @@ typedef enum {
 } settings_id_t;
 
 typedef struct {
+    const char *name;         /* the X-macro id, e.g. "IdleTimeoutS" (console) */
     const char *nvs_key;
     settings_type_t type;
     uint32_t default_value;   /* bool 0/1 or the raw u32 default */
 } settings_desc_t;
 
 #define SETTINGS_DEF(id, key, type, def) \
-    [SETTINGS_ID_##id] = { key, SETTING_TYPE_##type, (uint32_t)(def) },
+    [SETTINGS_ID_##id] = { #id, key, SETTING_TYPE_##type, (uint32_t)(def) },
 static const settings_desc_t kSettingsTable[SETTINGS_ID_COUNT] = {
 #include "settings_defs.inc"
 };
@@ -113,11 +116,11 @@ static uint32_t settings_get_u32(settings_id_t id)
     return v;
 }
 
-static void settings_set_u32(settings_id_t id, uint32_t value)
+static esp_err_t settings_set_u32(settings_id_t id, uint32_t value)
 {
     const settings_desc_t *desc = &kSettingsTable[id];
     if (!s_open) {
-        return;
+        return ESP_ERR_INVALID_STATE;
     }
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
@@ -132,6 +135,7 @@ static void settings_set_u32(settings_id_t id, uint32_t value)
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "set '%s' FAILED (%s)", desc->nvs_key, esp_err_to_name(err));
     }
+    return err;
 }
 
 bool settings_store_get_power_short_confirm(void)
@@ -264,3 +268,70 @@ void settings_store_push_time_sync(uint32_t epoch, int32_t delta_s, uint32_t sou
     settings_set_u32(kSyncSourceIds[0], source);
 }
 
+uint32_t settings_store_get_time_sync_max_age_s(void)
+{
+    return settings_get_u32(SETTINGS_ID_TimeSyncMaxAgeS);
+}
+
+uint32_t settings_store_get_secret_auto_clear_s(void)
+{
+    return settings_get_u32(SETTINGS_ID_SecretAutoClearS);
+}
+
+/* Generic access by table index (console `setting` command, ADR-018). */
+
+int settings_store_count(void)
+{
+    return SETTINGS_ID_COUNT;
+}
+
+bool settings_store_describe(int index, settings_info_t *info)
+{
+    if (index < 0 || index >= SETTINGS_ID_COUNT || !info) return false;
+    const settings_desc_t *desc = &kSettingsTable[index];
+    info->name = desc->name;
+    info->nvs_key = desc->nvs_key;
+    info->kind = desc->type == SETTING_TYPE_BOOL  ? SETTINGS_KIND_BOOL
+                 : desc->type == SETTING_TYPE_I32 ? SETTINGS_KIND_I32
+                                                  : SETTINGS_KIND_U32;
+    info->default_value = desc->default_value;
+    return true;
+}
+
+int settings_store_find(const char *name)
+{
+    for (int i = 0; i < SETTINGS_ID_COUNT; i++) {
+        if (strcasecmp(name, kSettingsTable[i].name) == 0 || strcasecmp(name, kSettingsTable[i].nvs_key) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+uint32_t settings_store_get_raw(int index)
+{
+    if (index < 0 || index >= SETTINGS_ID_COUNT) return 0;
+    return settings_get_u32((settings_id_t)index);
+}
+
+esp_err_t settings_store_set_raw(int index, uint32_t value)
+{
+    if (index < 0 || index >= SETTINGS_ID_COUNT) return ESP_ERR_INVALID_ARG;
+    if (kSettingsTable[index].type == SETTING_TYPE_BOOL) value = value ? 1 : 0;
+    return settings_set_u32((settings_id_t)index, value);
+}
+
+esp_err_t settings_store_reset(int index)
+{
+    if (index < 0 || index >= SETTINGS_ID_COUNT) return ESP_ERR_INVALID_ARG;
+    if (!s_open) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    esp_err_t err = nvs_erase_key(s_handle, kSettingsTable[index].nvs_key);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        err = ESP_OK;   /* already at its default */
+    } else if (err == ESP_OK) {
+        err = nvs_commit(s_handle);
+    }
+    xSemaphoreGive(s_mutex);
+    return err;
+}
