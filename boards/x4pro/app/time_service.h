@@ -82,6 +82,21 @@ void time_service_set_system_precise(time_t utc, int usec, int32_t *delta_s, boo
  */
 bool time_service_commit_system_time(int32_t delta_s, bool delta_valid, time_sync_source_t source);
 
+typedef enum {
+    TIME_SYNC_DUE_DISABLED,      /* TimeSyncMaxAgeS = 0: no staleness alert */
+    TIME_SYNC_DUE_NEVER_SYNCED,  /* no sync recorded */
+    TIME_SYNC_DUE_OK,            /* next sync due in the future */
+    TIME_SYNC_DUE_OVERDUE,       /* due date reached (or the clock is not valid) */
+} time_sync_due_t;
+
+/**
+ * @brief When the next time sync is due: last sync + TimeSyncMaxAgeS
+ *        (ADR-018). Single source of truth for Settings > About and HOME's
+ *        "time sync is old" alert, so both always agree.
+ * @param due_utc set to the due date (UTC epoch) for OK/OVERDUE, else 0.
+ */
+time_sync_due_t time_service_next_sync_due(time_t *due_utc);
+
 /** @brief Validates a calendar date/time (year 2024-2099). */
 bool time_service_dt_is_valid(const time_service_dt_t *dt);
 

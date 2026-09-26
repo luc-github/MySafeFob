@@ -122,7 +122,7 @@ then start the TOTP core (8.1/8.2). Order below is the working order.
 
 | # | Item | Depends on | Status |
 |---|------|------------|--------|
-| P1 | Alert indicator + Alerts screen + sync-age threshold setting (ADR-018) | — | ⏳ |
+| P1 | Alert indicator + Alerts screen + sync-age threshold setting (ADR-018) — `alerts.c`, `ui_screen_alerts.cpp`, HOME button; evaluation logged (`alerts:`/`home:` tags); About shows "next sync" from the same `time_service_next_sync_due()` | — | 🔄 built 2026-09-26, hardware test pending |
 | P2 | Generic `setting` console command (list/get/set/reset, ADR-018) — `main/cmd_setting.c`; settings table gained an I32 type (signed values print correctly) and `TimeSyncMaxAgeS` (90 d) + `SecretAutoClearS` (300 s) | — | 🔄 built 2026-09-26, hardware test pending |
 | P3 | String setting type in `settings_store` + Owner info screen + owner line on the sleep screen (F-19, UI-SPECS §2.17) | — | ⏳ |
 | P4 | Serial time sync: `settime` console command (ADR-006 serial channel, new sync source `serial`) | — | ⏳ |

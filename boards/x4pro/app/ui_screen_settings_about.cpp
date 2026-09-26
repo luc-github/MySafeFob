@@ -84,11 +84,42 @@ static void update_about_text(void)
             first = false;
         }
     }
-    char buf[420];
+    /* Next sync due (last sync + TimeSyncMaxAgeS, ADR-018): same function
+     * HOME's alert uses, so the date shown here is exactly when the alert
+     * appears. Minutes are shown because tests use short thresholds. */
+    char next_text[64];
+    time_t due;
+    switch (time_service_next_sync_due(&due)) {
+    case TIME_SYNC_DUE_DISABLED:
+        snprintf(next_text, sizeof(next_text), "alert off");
+        break;
+    case TIME_SYNC_DUE_NEVER_SYNCED:
+        snprintf(next_text, sizeof(next_text), "now (never synced)");
+        break;
+    default: {
+        time_service_dt_t dd;
+        time_service_epoch_to_dt(due, &dd);
+        int n = snprintf(next_text, sizeof(next_text), "%04d-%02d-%02d %02d:%02d", dd.year, dd.month, dd.day,
+                         dd.hour, dd.minute);
+        long left = static_cast<long>(due - time_service_get_utc());
+        if (left <= 0) {
+            snprintf(next_text + n, sizeof(next_text) - n, " overdue");
+        } else if (left >= 86400) {
+            snprintf(next_text + n, sizeof(next_text) - n, " (in %ld d)", left / 86400);
+        } else if (left >= 3600) {
+            snprintf(next_text + n, sizeof(next_text) - n, " (in %ld h)", left / 3600);
+        } else {
+            snprintf(next_text + n, sizeof(next_text) - n, " (in %ld min)", (left + 59) / 60);
+        }
+        break;
+    }
+    }
+    char buf[500];
     snprintf(buf, sizeof(buf),
-             "MySafeFob\nboard: x4pro\nversion: %s\nbuilt: %s %s\nRAM: %u/%u KB free\nUTC: %s\nlast sync: %s",
+             "MySafeFob\nboard: x4pro\nversion: %s\nbuilt: %s %s\nRAM: %u/%u KB free\nUTC: %s\nlast sync: %s\n"
+             "next sync: %s",
              app_desc->version, app_desc->date, app_desc->time, static_cast<unsigned>(ram_free / 1024),
-             static_cast<unsigned>(ram_total / 1024), time_text, sync_text);
+             static_cast<unsigned>(ram_total / 1024), time_text, sync_text, next_text);
     lv_label_set_text(s_label, buf);
 }
 

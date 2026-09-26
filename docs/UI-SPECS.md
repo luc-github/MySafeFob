@@ -938,6 +938,14 @@ Static info screen, same content as the current REPL `about` command
 (F-20 — the REPL stays permanent and independent; this is just the
 on-screen equivalent for when USB isn't connected).
 
+> **Amendment (2026-09-26) — as built**: version, build date, free RAM, UTC
+> time, last sync (date, source, offset) + drift per day, and **next sync**:
+> last sync + `TimeSyncMaxAgeS` with the time left ("in 89 d", "in 3 min",
+> "overdue", "alert off" when the threshold is 0, "now (never synced)").
+> Computed by `time_service_next_sync_due()`, the same function HOME's
+> alert will use (ADR-018), so the date shown is exactly when the alert
+> appears — handy to check a `setting set TimeSyncMaxAgeS …` took effect.
+
 ### 2.21 ALERTS (ADR-018, added 2026-09-26)
 
 ```
@@ -1007,7 +1015,9 @@ on-screen equivalent for when USB isn't connected).
       implemented at all yet) before that screen is real.
 - [ ] **Alerts (ADR-018)**: alert button + ALERTS screen + `alerts.c`
       registry + `TimeSyncMaxAgeS` setting + `setting` console command —
-      ROADMAP 8.0 P1/P2, not built yet.
+      ROADMAP 8.0 P1/P2, built 2026-09-26, hardware test pending. The
+      screen's content does not scroll yet (at most one time alert can
+      be active today); needed once more alerts exist.
 - [ ] **`ui_mgr`'s "return-to" slot** (§1.3.1): `INTERFACES.md` §4.4 needs
       a small addition — one remembered screen id, set when Settings is tapped
       and consumed by SETTINGS's top-level Back — not yet in that

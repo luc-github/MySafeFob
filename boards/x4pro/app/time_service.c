@@ -233,6 +233,19 @@ bool time_service_is_valid(void)
     return dt.year >= kMinValidYear;
 }
 
+time_sync_due_t time_service_next_sync_due(time_t *due_utc)
+{
+    *due_utc = 0;
+    uint32_t epoch, source;
+    int32_t delta;
+    if (!settings_store_get_time_sync(0, &epoch, &delta, &source)) return TIME_SYNC_DUE_NEVER_SYNCED;
+    uint32_t max_age = settings_store_get_time_sync_max_age_s();
+    if (max_age == 0) return TIME_SYNC_DUE_DISABLED;
+    *due_utc = (time_t)epoch + (time_t)max_age;
+    if (!time_service_is_valid() || time_service_get_utc() >= *due_utc) return TIME_SYNC_DUE_OVERDUE;
+    return TIME_SYNC_DUE_OK;
+}
+
 static void record_sync(time_t new_utc, int32_t delta, time_sync_source_t source)
 {
     settings_store_push_time_sync((uint32_t)new_utc, delta, (uint32_t)source);

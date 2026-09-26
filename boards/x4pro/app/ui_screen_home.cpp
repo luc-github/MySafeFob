@@ -23,6 +23,16 @@
 #include "ui_screens.h"
 #include "ui_widgets.h"
 #include "lv_port_indev.h"
+#include "alerts.h"
+
+#include "esp_log.h"
+#include "app_log_workaround.h"
+
+static const char *TAG = "home";
+
+/* ADR-018 warning button: created once, shown only while an alert is
+ * active (hidden objects are skipped by LVGL focus, so no empty stop). */
+static lv_obj_t *s_alert_btn;
 
 static void open_settings_deferred(void *user_data)
 {
@@ -34,6 +44,32 @@ static void open_settings_cb(lv_event_t *e)
 {
     (void)e;
     ui_defer(open_settings_deferred, nullptr);
+}
+
+static void open_alerts_deferred(void *user_data)
+{
+    (void)user_data;
+    switch_screen(Screen::Alerts);
+}
+
+static void open_alerts_cb(lv_event_t *e)
+{
+    (void)e;
+    ui_defer(open_alerts_deferred, nullptr);
+}
+
+/* Alerts are re-checked every time HOME is shown (boot, wake, Back), never
+ * from a timer (no refresh without an interaction). */
+static void screen_loaded_cb(lv_event_t *e)
+{
+    (void)e;
+    bool show = alerts_evaluate() > 0;
+    if (show) {
+        lv_obj_remove_flag(s_alert_btn, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_alert_btn, LV_OBJ_FLAG_HIDDEN);
+    }
+    ESP_LOGI(TAG, "alert button %s", show ? "shown" : "hidden");
 }
 
 static void sleep_now_deferred(void *user_data)
@@ -79,6 +115,16 @@ lv_obj_t *build_home(lv_group_t **group_out, lv_obj_t **battery_label_out)
     lv_obj_align(settings_btn, LV_ALIGN_TOP_LEFT, 16, kBackTopMargin);
     lv_obj_add_event_cb(settings_btn, open_settings_cb, LV_EVENT_CLICKED, nullptr);
     add_to_group(settings_btn, group);
+
+    /* Same size/row as Settings, on the right (ADR-018). Added to the group
+     * right after Settings so the focus order is Settings, alert, content. */
+    s_alert_btn = make_button(screen, LV_SYMBOL_WARNING);
+    lv_obj_set_style_min_width(s_alert_btn, kMinTouchTarget, 0);
+    lv_obj_align(s_alert_btn, LV_ALIGN_TOP_RIGHT, -16, kBackTopMargin);
+    lv_obj_add_event_cb(s_alert_btn, open_alerts_cb, LV_EVENT_CLICKED, nullptr);
+    add_to_group(s_alert_btn, group);
+    lv_obj_add_flag(s_alert_btn, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(screen, screen_loaded_cb, LV_EVENT_SCREEN_LOADED, nullptr);
 
     lv_obj_t *content = make_content(screen);
 
