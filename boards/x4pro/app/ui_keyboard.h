@@ -20,8 +20,10 @@
  * @file ui_keyboard.h
  * @brief MySafeFob App — on-screen alphanumeric keyboard (lowercase,
  *        uppercase, digits/symbols, more symbols), used for Wi-Fi and BLE
- *        passwords. One instance at a time. Callbacks run synchronously in
- *        the LVGL task, in tap order (lv_async_call would reorder fast taps).
+ *        passwords and the owner contact info. Several instances can exist
+ *        (one per screen, all built at startup); each keeps its own state.
+ *        Callbacks run synchronously in the LVGL task, in tap order
+ *        (lv_async_call would reorder fast taps).
  */
 #pragma once
 

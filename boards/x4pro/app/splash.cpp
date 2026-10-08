@@ -34,9 +34,18 @@
  * first (LVGL is not thread-safe: this stops board_ui_nav_task's own loop
  * from touching it concurrently with the blit below), then blits the sleep
  * bitmap the same way board_splash_show() blits the boot splash.
+ *
+ * F-19 owner contact info (Settings > Owner info, opt-in): when enabled,
+ * draw_owner_info() writes it in white over the bitmap's black top band,
+ * above the shield. Glyphs come straight from LVGL's built-in font data
+ * (lv_font_montserrat_24, a plain fmt_txt font): only the font tables are
+ * read, no LVGL object or draw call, so this stays safe with LVGL
+ * suspended.
  */
 #include "splash.h"
 #include "ui_nav.h"
+#include "settings_store.h"
+#include "lvgl.h"
 
 extern "C" {
 #include "eink.h"
@@ -119,6 +128,114 @@ static void blit_sleep_to_fb(uint8_t *fb)
             *byte &= static_cast<uint8_t>(~(0x80 >> (fb_x & 7)));
         }
     }
+}
+
+/* Portrait pixel (ux, uy) to white, same transpose as the blits above.
+ * Out-of-screen pixels are ignored. */
+static void set_white(uint8_t *fb, int ux, int uy)
+{
+    if (ux < 0 || ux >= SLEEP_W || uy < 0 || uy >= SLEEP_H) {
+        return;
+    }
+    const int fb_x = uy;
+    const int fb_y = SLEEP_W - 1 - ux;
+    fb[fb_y * EINK_WB + (fb_x >> 3)] |= static_cast<uint8_t>(0x80 >> (fb_x & 7));
+}
+
+/* Draws one glyph in white with its line's top-left at (pen_x, top_y),
+ * returns its advance width. Anti-aliased coverage is thresholded at 50%. */
+static int draw_glyph_white(uint8_t *fb, const lv_font_t *font, char c, int pen_x, int top_y)
+{
+    lv_font_glyph_dsc_t g = {};
+    if (!lv_font_get_glyph_dsc(font, &g, static_cast<uint8_t>(c), 0)) {
+        return 0;
+    }
+    const lv_font_t *rf = g.resolved_font;
+    if (fb && rf && rf->get_glyph_bitmap == lv_font_get_bitmap_fmt_txt) {
+        const lv_font_fmt_txt_dsc_t *fdsc = static_cast<const lv_font_fmt_txt_dsc_t *>(rf->dsc);
+        if (fdsc->bitmap_format == LV_FONT_FMT_TXT_PLAIN && g.gid.index != 0) {
+            const uint8_t *bmp = &fdsc->glyph_bitmap[fdsc->glyph_dsc[g.gid.index].bitmap_index];
+            const int bpp = fdsc->bpp;
+            const int max = (1 << bpp) - 1;
+            const int glyph_top = top_y + (rf->line_height - rf->base_line) - g.box_h - g.ofs_y;
+            for (int y = 0; y < g.box_h; y++) {
+                for (int x = 0; x < g.box_w; x++) {
+                    const int bit = (y * g.box_w + x) * bpp;
+                    const int v = (bmp[bit >> 3] >> (8 - bpp - (bit & 7))) & max;
+                    if (v * 2 > max) {
+                        set_white(fb, pen_x + g.ofs_x + x, glyph_top + y);
+                    }
+                }
+            }
+        }
+    }
+    return g.adv_w;
+}
+
+/* fb == nullptr only measures. */
+static int draw_text_white(uint8_t *fb, const lv_font_t *font, const char *text, int len, int x, int top_y)
+{
+    for (int i = 0; i < len; i++) {
+        x += draw_glyph_white(fb, font, text[i], x, top_y);
+    }
+    return x;
+}
+
+static int text_width(const lv_font_t *font, const char *text, int len)
+{
+    return draw_text_white(nullptr, font, text, len, 0, 0);
+}
+
+static void draw_centered_white(uint8_t *fb, const lv_font_t *font, const char *text, int len, int top_y)
+{
+    draw_text_white(fb, font, text, len, (SLEEP_W - text_width(font, text, len)) / 2, top_y);
+}
+
+/* Black band above the shield in sleep.png (rows 0..~140), leaving a margin
+ * on both sides. */
+static constexpr int kOwnerTop = 24;
+static constexpr int kOwnerMaxLines = 3;
+static constexpr int kOwnerMaxWidth = SLEEP_W - 40;
+
+/* F-19: "If found, please contact:" + the owner text, wrapped at the last
+ * space that fits (or mid-word for a long email), at most kOwnerMaxLines
+ * lines under the heading. Nothing is drawn if disabled or empty. */
+static void draw_owner_info(uint8_t *fb)
+{
+    if (!settings_store_get_owner_info_show()) {
+        return;
+    }
+    char text[SETTINGS_OWNER_INFO_MAX + 1];
+    settings_store_get_owner_info(text, sizeof(text));
+    const char *p = text;
+    while (*p == ' ') p++;
+    if (*p == '\0') {
+        return;
+    }
+
+    const lv_font_t *font = &lv_font_montserrat_24;
+    const int line_h = font->line_height;
+    static const char kHeading[] = "If found, please contact:";
+    draw_centered_white(fb, font, kHeading, sizeof(kHeading) - 1, kOwnerTop);
+
+    int top = kOwnerTop + line_h + 6;
+    for (int line = 0; line < kOwnerMaxLines && *p; line++) {
+        int remaining = static_cast<int>(strlen(p));
+        int fit = 0;
+        while (fit < remaining && text_width(font, p, fit + 1) <= kOwnerMaxWidth) fit++;
+        int len = fit;
+        if (fit < remaining) {
+            int space = fit;
+            while (space > 0 && p[space] != ' ') space--;
+            if (space > 0) len = space;
+        }
+        if (len == 0) len = 1;   /* a single glyph wider than the line: draw it anyway */
+        draw_centered_white(fb, font, p, len, top);
+        p += len;
+        while (*p == ' ') p++;
+        top += line_h;
+    }
+    ESP_LOGI(TAG, "owner info drawn on sleep screen");
 }
 
 static void rails_for_splash(void)
@@ -233,6 +350,7 @@ extern "C" void board_sleep_screen_show(void)
      * eink_power_off()/rails_hold_for_sleep() right after, unchanged. */
     memset(s_fb, 0xFF, sizeof(s_fb));
     blit_sleep_to_fb(s_fb);
+    draw_owner_info(s_fb);
     if (eink_display_fb(s_fb) != ESP_OK) {
         ESP_LOGE(TAG, "e-ink refresh FAILED (sleep screen)");
     }

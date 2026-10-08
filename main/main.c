@@ -51,6 +51,7 @@
 #include "ui_nav.h"
 #include "settings_store.h"
 #include "cmd_setting.h"
+#include "cmd_battery.h"
 
 static bool s_wake_from_sleep = false;
 
@@ -287,6 +288,7 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_console_cmd_register(&selftest_cmd));
     ESP_ERROR_CHECK(esp_console_cmd_register(&sleep_cmd));
     ESP_ERROR_CHECK(cmd_setting_register());
+    ESP_ERROR_CHECK(cmd_battery_register());
     /* BUGFIX 2026-09-16: previous comment was wrong — esp_console_new_repl_*()
      * does create the REPL task, but it stays parked in the
      * CONSOLE_REPL_STATE_INIT state (read loop never executed) until

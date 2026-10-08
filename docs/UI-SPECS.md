@@ -529,6 +529,24 @@ and frontlight.
 > Backup (SD) and Owner info — ROADMAP 8.0 P11. Security currently holds
 > only the PIN keypad UI test (nothing stored).
 
+> **Amendment (2026-10-01) — two-level menu, no scrolling**: a flat list
+> stopped fitting on one screen once Owner info was added (Backup would
+> make 8 rows). Scrolling is ruled out on e-paper: every scroll step is a
+> slow refresh, so it feels unresponsive and invites mis-taps. Settings
+> becomes a two-level menu, each level at **5 rows or fewer** (add a
+> group rather than a sixth row):
+>
+> ```
+> Settings
+>   > Device           -> Controls, Display, Touch Calibration
+>   > Time             (direct)
+>   > Security & Data  -> Security, Backup (SD, P11), Owner info
+>   > About            (direct)
+> ```
+>
+> Each leaf screen's `< Back` returns to its sub-menu, and each sub-menu's
+> `< Back` to Settings. Built in `ui_screen_settings.cpp` (2026-10-01).
+
 ### 2.12 SETTINGS_CONTROLS (added 2026-09-17, see
 `docs/touch-calibration-notes.md`)
 
@@ -851,16 +869,20 @@ FEATURES.md's stated defaults: off by default, 30 s auto-off.
 └──────────────────────────────────────┘
 ```
 
-Storage needs a **string setting type**, which `settings_store` does not
-have yet (BOOL/U32 only) — ROADMAP 8.0 P3.
+Storage: `OwnerInfoShow` (BOOL) and `OwnerInfo` (string setting type,
+max 48 characters) — ROADMAP 8.0 P3, built 2026-10-01. The text is saved
+on Enter and when leaving the screen; both are also settable from the
+console (`setting set OwnerInfo <text>`).
 
 Directly implements F-19's "optional owner contact info ... configurable
 in Settings, disabled by default". The text field is only reachable/
 editable when the toggle above is On — this info is shown on the sleep
 screen (F-19), which is visible to anyone who finds a lost/stolen device,
 so it must stay opt-in rather than defaulting to "on" with a blank field.
-Feeds `board_sleep_screen_show()` (`splash.cpp`) — currently a hardcoded
-absence of this line; this screen is the missing UI for it.
+Feeds `board_sleep_screen_show()` (`splash.cpp`): when enabled and not
+empty, "If found, please contact:" plus the text (word-wrapped, up to 3
+lines) is drawn in white in the sleep image's black top band, above the
+shield.
 
 ### 2.18 Destructive-action confirmation (shared pattern, not a top-level
 screen)

@@ -501,9 +501,9 @@ static void cal_timeout_timer_cb(lv_timer_t *timer)
         return;
     }
     if (esp_timer_get_time() - s_cal_last_progress_us >= kCalIdleTimeoutUs) {
-        ESP_LOGW(TAG, "no calibration progress for %lds -- leaving back to Settings",
+        ESP_LOGW(TAG, "no calibration progress for %lds -- leaving back to Device settings",
                  (long)(kCalIdleTimeoutUs / 1000000));
-        switch_screen(Screen::Settings);
+        switch_screen(Screen::SettingsDevice);
     }
 }
 
@@ -554,7 +554,7 @@ lv_obj_t *build_touch_diag(lv_group_t **group_out, lv_obj_t **battery_label_out)
     /* "< Back" is added to `group` first, inside add_back_header() -- see
      * the file header comment: this makes it the escape hatch's default
      * focus, before Restart (added further below) joins the same group. */
-    add_back_header(screen, "Calibration", Screen::Settings, group, battery_label_out);
+    add_back_header(screen, "Calibration", Screen::SettingsDevice, group, battery_label_out);
 
     /* Restart sits in the header band, mirroring "< Back" on the right,
      * NOT inside the content/grid area (2026-09-23 hardware bug: after a

@@ -122,9 +122,9 @@ then start the TOTP core (8.1/8.2). Order below is the working order.
 
 | # | Item | Depends on | Status |
 |---|------|------------|--------|
-| P1 | Alert indicator + Alerts screen + sync-age threshold setting (ADR-018) — `alerts.c`, `ui_screen_alerts.cpp`, HOME button; evaluation logged (`alerts:`/`home:` tags); About shows "next sync" from the same `time_service_next_sync_due()` | — | 🔄 built 2026-09-26, hardware test pending |
-| P2 | Generic `setting` console command (list/get/set/reset, ADR-018) — `main/cmd_setting.c`; settings table gained an I32 type (signed values print correctly) and `TimeSyncMaxAgeS` (90 d) + `SecretAutoClearS` (300 s) | — | 🔄 built 2026-09-26, hardware test pending |
-| P3 | String setting type in `settings_store` + Owner info screen + owner line on the sleep screen (F-19, UI-SPECS §2.17) | — | ⏳ |
+| P1 | Alert indicator + Alerts screen + sync-age threshold setting (ADR-018) — `alerts.c`, `ui_screen_alerts.cpp`, HOME button; evaluation logged (`alerts:`/`home:` tags); About shows "next sync" from the same `time_service_next_sync_due()` | — | ✅ hardware-tested 2026-10-01 |
+| P2 | Generic `setting` console command (list/get/set/reset, ADR-018) — `main/cmd_setting.c`; settings table gained an I32 type (signed values print correctly) and `TimeSyncMaxAgeS` (90 d) + `SecretAutoClearS` (300 s) | — | 🔄 hardware-tested 2026-10-01 except negative (I32) values — open |
+| P3 | String setting type in `settings_store` (`SETTINGS_STR_DEF`, NVS string, max length, `setting set` takes the rest of the line) + Owner info screen (`ui_screen_owner.cpp`, toggle + text field + keyboard, now multi-instance) + owner text on the sleep screen (`splash.cpp`, white text in the top band, drawn from LVGL's font tables) (F-19, UI-SPECS §2.17). Also: Settings became a two-level menu, no scrolling (Device / Time / Security & Data / About, UI-SPECS §2.11 amendment 2026-10-01); Owner info lives under Security & Data | — | 🔄 built 2026-10-01, hardware test pending |
 | P4 | Serial time sync: `settime` console command (ADR-006 serial channel, new sync source `serial`) | — | ⏳ |
 | P5 | BLE time: confirmation step before applying (device name, proposed time, offset; mandatory above ~60 s) | — | ⏳ |
 | P6 | Shared destructive-action confirmation dialog (UI-SPECS §2.18) | — | ⏳ |
@@ -132,7 +132,7 @@ then start the TOTP core (8.1/8.2). Order below is the working order.
 | P8 | Generic entry list screen (TOTP/PWD/RCV lists), dummy data | — | ⏳ |
 | P9 | TOTP_CODE prototype with a fake code: countdown + e-ink refresh strategy under the ghost budget | — | ⏳ |
 | P10 | UNLOCK screen: shuffled (anti-trace) keypad + back-off display, fake counter | — | ⏳ |
-| P11 | Settings menu gains Backup (SD detection/listing only, no crypto) and Owner info rows | P3 | ⏳ |
+| P11 | Security & Data menu gains a Backup row (SD detection/listing only, no crypto); the Owner info row came with P3 | P3 | ⏳ |
 
 Decided 2026-09-26: F-05's auto-clear delay (secret shown → neutral
 screen) is a setting, `SecretAutoClearS`, default **5 min** (300 s),
@@ -2486,7 +2486,13 @@ alert needs a generic home rather than a one-off label.
      negative numbers accepted (stored as their 32-bit pattern, like
      `tz_off_min`), optional suffix `s`/`m`/`h`/`d` for durations
      (`setting set TimeSyncMaxAgeS 5m`);
-   - `setting reset <id>` — back to the default (erases the NVS key).
+   - `setting reset <id>` — back to the default (erases the NVS key);
+     `setting reset all` resets every setting at once (erases the whole
+     namespace, added 2026-10-01); `setting reset settings|calibration|time`
+     resets one group only (group column in `settings_defs.inc`, added
+     2026-10-03): `calibration` = touch calibration, `time` = every Time*
+     setting (time zone, sync history, sync-age threshold), `settings` =
+     everything else.
    It also makes alert tests easy without reflashing, e.g. age the last
    sync by writing an old epoch: `setting set TimeSyncEpoch0 1700000000`.
    Runtime consumers read settings on use (existing no-cached-state

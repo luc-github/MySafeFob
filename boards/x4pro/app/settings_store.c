@@ -27,6 +27,7 @@
  * sequences a caller might do around them.
  */
 #include "settings_store.h"
+#include <string.h>
 #include <strings.h>
 
 #include "nvs.h"
@@ -41,13 +42,16 @@ typedef enum {
     SETTING_TYPE_BOOL,   /* stored as nvs_(get|set)_u8, 0/1 */
     SETTING_TYPE_U32,
     SETTING_TYPE_I32,    /* stored as nvs_(get|set)_u32, same bit pattern */
+    SETTING_TYPE_STR,    /* stored as nvs_(get|set)_str, at most max_len chars */
 } settings_type_t;
 
 /* One id per settings_defs.inc line — internal only, never exposed
  * outside this file (callers use the named accessors in settings_store.h). */
 typedef enum {
-#define SETTINGS_DEF(id, key, type, def) SETTINGS_ID_##id,
+#define SETTINGS_DEF(id, key, type, def, group) SETTINGS_ID_##id,
+#define SETTINGS_STR_DEF(id, key, max_len, def, group) SETTINGS_ID_##id,
 #include "settings_defs.inc"
+#undef SETTINGS_STR_DEF
 #undef SETTINGS_DEF
     SETTINGS_ID_COUNT,
 } settings_id_t;
@@ -56,14 +60,27 @@ typedef struct {
     const char *name;         /* the X-macro id, e.g. "IdleTimeoutS" (console) */
     const char *nvs_key;
     settings_type_t type;
-    uint32_t default_value;   /* bool 0/1 or the raw u32 default */
+    uint32_t default_value;   /* bool 0/1 or the raw u32 default (0 for STR) */
+    uint32_t max_len;         /* STR only: max characters, NUL excluded */
+    const char *default_str;  /* STR only */
+    settings_group_t group;
 } settings_desc_t;
 
-#define SETTINGS_DEF(id, key, type, def) \
-    [SETTINGS_ID_##id] = { #id, key, SETTING_TYPE_##type, (uint32_t)(def) },
+#define SETTINGS_DEF(id, key, type, def, group) \
+    [SETTINGS_ID_##id] = { #id, key, SETTING_TYPE_##type, (uint32_t)(def), 0, NULL, SETTINGS_GROUP_##group },
+#define SETTINGS_STR_DEF(id, key, max_len, def, group) \
+    [SETTINGS_ID_##id] = { #id, key, SETTING_TYPE_STR, 0, (max_len), (def), SETTINGS_GROUP_##group },
 static const settings_desc_t kSettingsTable[SETTINGS_ID_COUNT] = {
 #include "settings_defs.inc"
 };
+#undef SETTINGS_STR_DEF
+#undef SETTINGS_DEF
+
+#define SETTINGS_DEF(id, key, type, def, group)
+#define SETTINGS_STR_DEF(id, key, max_len, def, group) \
+    _Static_assert((max_len) <= SETTINGS_STR_MAX, #id " max_len exceeds SETTINGS_STR_MAX");
+#include "settings_defs.inc"
+#undef SETTINGS_STR_DEF
 #undef SETTINGS_DEF
 
 static nvs_handle_t s_handle = 0;
@@ -93,7 +110,7 @@ esp_err_t settings_store_init(void)
 static uint32_t settings_get_u32(settings_id_t id)
 {
     const settings_desc_t *desc = &kSettingsTable[id];
-    if (!s_open) {
+    if (!s_open || desc->type == SETTING_TYPE_STR) {
         return desc->default_value;
     }
 
@@ -119,6 +136,9 @@ static uint32_t settings_get_u32(settings_id_t id)
 static esp_err_t settings_set_u32(settings_id_t id, uint32_t value)
 {
     const settings_desc_t *desc = &kSettingsTable[id];
+    if (desc->type == SETTING_TYPE_STR) {
+        return ESP_ERR_INVALID_ARG;
+    }
     if (!s_open) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -127,6 +147,54 @@ static esp_err_t settings_set_u32(settings_id_t id, uint32_t value)
     esp_err_t err = (desc->type == SETTING_TYPE_BOOL)
                         ? nvs_set_u8(s_handle, desc->nvs_key, (uint8_t)value)
                         : nvs_set_u32(s_handle, desc->nvs_key, value);
+    if (err == ESP_OK) {
+        err = nvs_commit(s_handle);
+    }
+    xSemaphoreGive(s_mutex);
+
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "set '%s' FAILED (%s)", desc->nvs_key, esp_err_to_name(err));
+    }
+    return err;
+}
+
+/* STR counterparts of the two functions above. A stored value longer than
+ * max_len (limit lowered after it was written) reads as the default. */
+static void settings_get_str(settings_id_t id, char *buf, size_t len)
+{
+    const settings_desc_t *desc = &kSettingsTable[id];
+    if (len == 0) {
+        return;
+    }
+    char value[SETTINGS_STR_MAX + 1];
+    size_t size = sizeof(value);
+    esp_err_t err = ESP_ERR_NVS_NOT_FOUND;
+    if (s_open && desc->type == SETTING_TYPE_STR) {
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        err = nvs_get_str(s_handle, desc->nvs_key, value, &size);
+        xSemaphoreGive(s_mutex);
+        if (err == ESP_OK && strlen(value) > desc->max_len) {
+            err = ESP_ERR_INVALID_SIZE;
+        }
+        if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGW(TAG, "get '%s' FAILED (%s), defaulting", desc->nvs_key, esp_err_to_name(err));
+        }
+    }
+    strlcpy(buf, err == ESP_OK ? value : (desc->default_str ? desc->default_str : ""), len);
+}
+
+static esp_err_t settings_set_str(settings_id_t id, const char *value)
+{
+    const settings_desc_t *desc = &kSettingsTable[id];
+    if (desc->type != SETTING_TYPE_STR || !value || strlen(value) > desc->max_len) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!s_open) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    esp_err_t err = nvs_set_str(s_handle, desc->nvs_key, value);
     if (err == ESP_OK) {
         err = nvs_commit(s_handle);
     }
@@ -278,6 +346,26 @@ uint32_t settings_store_get_secret_auto_clear_s(void)
     return settings_get_u32(SETTINGS_ID_SecretAutoClearS);
 }
 
+bool settings_store_get_owner_info_show(void)
+{
+    return settings_get_u32(SETTINGS_ID_OwnerInfoShow) != 0;
+}
+
+void settings_store_set_owner_info_show(bool on)
+{
+    settings_set_u32(SETTINGS_ID_OwnerInfoShow, on ? 1 : 0);
+}
+
+void settings_store_get_owner_info(char *buf, size_t len)
+{
+    settings_get_str(SETTINGS_ID_OwnerInfo, buf, len);
+}
+
+esp_err_t settings_store_set_owner_info(const char *text)
+{
+    return settings_set_str(SETTINGS_ID_OwnerInfo, text);
+}
+
 /* Generic access by table index (console `setting` command, ADR-018). */
 
 int settings_store_count(void)
@@ -293,8 +381,12 @@ bool settings_store_describe(int index, settings_info_t *info)
     info->nvs_key = desc->nvs_key;
     info->kind = desc->type == SETTING_TYPE_BOOL  ? SETTINGS_KIND_BOOL
                  : desc->type == SETTING_TYPE_I32 ? SETTINGS_KIND_I32
+                 : desc->type == SETTING_TYPE_STR ? SETTINGS_KIND_STR
                                                   : SETTINGS_KIND_U32;
     info->default_value = desc->default_value;
+    info->max_len = desc->max_len;
+    info->default_str = desc->default_str;
+    info->group = desc->group;
     return true;
 }
 
@@ -321,6 +413,21 @@ esp_err_t settings_store_set_raw(int index, uint32_t value)
     return settings_set_u32((settings_id_t)index, value);
 }
 
+void settings_store_get_str(int index, char *buf, size_t len)
+{
+    if (index < 0 || index >= SETTINGS_ID_COUNT) {
+        if (len) buf[0] = '\0';
+        return;
+    }
+    settings_get_str((settings_id_t)index, buf, len);
+}
+
+esp_err_t settings_store_set_str(int index, const char *value)
+{
+    if (index < 0 || index >= SETTINGS_ID_COUNT) return ESP_ERR_INVALID_ARG;
+    return settings_set_str((settings_id_t)index, value);
+}
+
 esp_err_t settings_store_reset(int index)
 {
     if (index < 0 || index >= SETTINGS_ID_COUNT) return ESP_ERR_INVALID_ARG;
@@ -333,5 +440,43 @@ esp_err_t settings_store_reset(int index)
         err = nvs_commit(s_handle);
     }
     xSemaphoreGive(s_mutex);
+    return err;
+}
+
+esp_err_t settings_store_reset_group(settings_group_t group)
+{
+    if (!s_open) return ESP_ERR_INVALID_STATE;
+    esp_err_t err = ESP_OK;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    for (int i = 0; i < SETTINGS_ID_COUNT && err == ESP_OK; i++) {
+        if (kSettingsTable[i].group != group) continue;
+        err = nvs_erase_key(s_handle, kSettingsTable[i].nvs_key);
+        if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;   /* already at its default */
+    }
+    if (err == ESP_OK) {
+        err = nvs_commit(s_handle);
+    }
+    xSemaphoreGive(s_mutex);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "reset group %d FAILED (%s)", (int)group, esp_err_to_name(err));
+    }
+    return err;
+}
+
+/* The namespace holds nothing but this table, so erasing it all at once is
+ * the same as resetting each setting -- and also drops keys left behind by
+ * settings since removed from settings_defs.inc. */
+esp_err_t settings_store_reset_all(void)
+{
+    if (!s_open) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    esp_err_t err = nvs_erase_all(s_handle);
+    if (err == ESP_OK) {
+        err = nvs_commit(s_handle);
+    }
+    xSemaphoreGive(s_mutex);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "reset all FAILED (%s)", esp_err_to_name(err));
+    }
     return err;
 }

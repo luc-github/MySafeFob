@@ -18,8 +18,10 @@
 */
 /**
  * @file ui_screen_settings.cpp
- * @brief MySafeFob App — Settings menu (Controls / Display / About /
- *        Touch Calibration).
+ * @brief MySafeFob App — Settings menus: top level (Device / Time /
+ *        Security & Data / About) and its two sub-menus, Device (Controls /
+ *        Display / Touch Calibration) and Security & Data (Security /
+ *        Owner info).
  */
 #include "ui_screens.h"
 #include "ui_widgets.h"
@@ -59,22 +61,58 @@ static lv_obj_t *add_menu_button(lv_obj_t *parent, const char *label_text, Scree
     return btn;
 }
 
-lv_obj_t *build_settings(lv_group_t **group_out, lv_obj_t **battery_label_out)
+/* Builds an empty menu screen titled `title` whose Back returns to
+ * `back_target`; the caller adds its rows to the returned *content_out. */
+static lv_obj_t *make_menu_screen(const char *title, Screen back_target, lv_group_t **group_out,
+                                  lv_obj_t **battery_label_out, lv_obj_t **content_out)
 {
     lv_group_t *group = lv_port_indev_new_group();
     *group_out = group;
 
     lv_obj_t *screen = make_screen();
-    add_back_header(screen, "Settings", Screen::Home, group, battery_label_out);
+    add_back_header(screen, title, back_target, group, battery_label_out);
     lv_obj_t *content = make_content(screen);
     lv_obj_set_style_pad_row(content, kMenuButtonRowGap, 0);
+    *content_out = content;
+    return screen;
+}
 
-    add_menu_button(content, "Controls", Screen::SettingsControls, group);
-    add_menu_button(content, "Display", Screen::SettingsDisplay, group);
-    add_menu_button(content, "Time", Screen::Time, group);
-    add_menu_button(content, "Security", Screen::Security, group);
-    add_menu_button(content, "Touch Calibration", Screen::TouchDiag, group);
-    add_menu_button(content, "About", Screen::SettingsAbout, group);
+/* Settings is a two-level menu (2026-10-01): every level must fit on one
+ * screen, since scrolling on e-paper is slow and error-prone. Keep each
+ * menu at 5 rows or fewer; add a group rather than a sixth row. */
+lv_obj_t *build_settings(lv_group_t **group_out, lv_obj_t **battery_label_out)
+{
+    lv_obj_t *content;
+    lv_obj_t *screen = make_menu_screen("Settings", Screen::Home, group_out, battery_label_out, &content);
+
+    add_menu_button(content, "Device", Screen::SettingsDevice, *group_out);
+    add_menu_button(content, "Time", Screen::Time, *group_out);
+    add_menu_button(content, "Security & Data", Screen::SettingsSecurityData, *group_out);
+    add_menu_button(content, "About", Screen::SettingsAbout, *group_out);
+
+    return screen;
+}
+
+lv_obj_t *build_settings_device(lv_group_t **group_out, lv_obj_t **battery_label_out)
+{
+    lv_obj_t *content;
+    lv_obj_t *screen = make_menu_screen("Device", Screen::Settings, group_out, battery_label_out, &content);
+
+    add_menu_button(content, "Controls", Screen::SettingsControls, *group_out);
+    add_menu_button(content, "Display", Screen::SettingsDisplay, *group_out);
+    add_menu_button(content, "Touch Calibration", Screen::TouchDiag, *group_out);
+
+    return screen;
+}
+
+/* Backup (SD) joins this menu with ROADMAP 8.0 P11. */
+lv_obj_t *build_settings_security_data(lv_group_t **group_out, lv_obj_t **battery_label_out)
+{
+    lv_obj_t *content;
+    lv_obj_t *screen = make_menu_screen("Security & Data", Screen::Settings, group_out, battery_label_out, &content);
+
+    add_menu_button(content, "Security", Screen::Security, *group_out);
+    add_menu_button(content, "Owner info", Screen::OwnerInfo, *group_out);
 
     return screen;
 }

@@ -161,7 +161,7 @@ lv_obj_t *build_security(lv_group_t **group_out, lv_obj_t **battery_label_out)
     *group_out = group;
 
     lv_obj_t *screen = make_screen();
-    add_back_header(screen, "Security", Screen::Settings, group, battery_label_out);
+    add_back_header(screen, "Security", Screen::SettingsSecurityData, group, battery_label_out);
     lv_obj_t *content = make_content(screen);
 
     lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);

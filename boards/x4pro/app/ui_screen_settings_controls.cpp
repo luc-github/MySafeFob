@@ -71,7 +71,7 @@ lv_obj_t *build_settings_controls(lv_group_t **group_out, lv_obj_t **battery_lab
     *group_out = group;
 
     lv_obj_t *screen = make_screen();
-    add_back_header(screen, "Controls", Screen::Settings, group, battery_label_out);
+    add_back_header(screen, "Controls", Screen::SettingsDevice, group, battery_label_out);
     lv_obj_t *content = make_content(screen);
 
     make_round_toggle_row(content, group, "Power short press",

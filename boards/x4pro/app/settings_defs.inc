@@ -32,7 +32,8 @@
  * from-scratch, much smaller implementation of the same table-driven
  * principle.
  *
- * SETTINGS_DEF(id, nvs_key, type, default_value)
+ * SETTINGS_DEF(id, nvs_key, type, default_value, group)
+ * SETTINGS_STR_DEF(id, nvs_key, max_len, default_string, group)
  *   id            -> becomes SETTINGS_ID_<id> in the settings_id_t enum
  *   nvs_key       -> NVS storage key, max 15 chars (NVS limit)
  *   type          -> BOOL, U32 or I32 (settings_type_t, settings_store.c).
@@ -42,45 +43,59 @@
  *   default_value -> returned whenever the key isn't set yet (or NVS
  *                    failed to open) — never touches flash to read a
  *                    default
+ *   max_len       -> (STR only) maximum length in characters, terminating
+ *                    NUL excluded; stored with nvs_(get|set)_str
+ *   default_string -> (STR only) returned whenever the key isn't set yet
+ *   group         -> GENERAL, CALIBRATION or TIME (settings_group_t,
+ *                    settings_store.h): what `setting reset settings|
+ *                    calibration|time` resets. CALIBRATION = touch
+ *                    calibration, TIME = every Time* setting (time zone,
+ *                    sync history, sync-age threshold), GENERAL = the rest
  *
  * #include this file only from inside settings_store.c's X-macro blocks
- * (SETTINGS_DEF defined before, #undef'd after) — never on its own.
+ * (SETTINGS_DEF and SETTINGS_STR_DEF defined before, #undef'd after) —
+ * never on its own.
  */
 
-SETTINGS_DEF(PowerShortConfirm, "pwr_shortcfm", BOOL, 1)
-SETTINGS_DEF(IdleTimeoutS,      "idle_to_s",    U32,  0)
-SETTINGS_DEF(FrontlightOn,        "fl_on",      BOOL, 0)
-SETTINGS_DEF(FrontlightColor,     "fl_color",   U32,  0)   /* 0-100 warm<->cool mix, 0=warm */
-SETTINGS_DEF(FrontlightIntensity, "fl_intens",  U32,  60)
+SETTINGS_DEF(PowerShortConfirm, "pwr_shortcfm", BOOL, 1, GENERAL)
+SETTINGS_DEF(IdleTimeoutS,      "idle_to_s",    U32,  0, GENERAL)
+SETTINGS_DEF(FrontlightOn,        "fl_on",      BOOL, 0, GENERAL)
+SETTINGS_DEF(FrontlightColor,     "fl_color",   U32,  0, GENERAL)   /* 0-100 warm<->cool mix, 0=warm */
+SETTINGS_DEF(FrontlightIntensity, "fl_intens",  U32,  60, GENERAL)
 /* Touch calibration (touch.c's per-unit correction, ui_screen_touch_diag.cpp) --
  * scale is x1000 fixed-point (1000 = 1.000x); offset is a signed pixel
  * delta (I32). */
-SETTINGS_DEF(TouchCalScaleX,  "tc_scale_x", U32, 1000)
-SETTINGS_DEF(TouchCalOffsetX, "tc_off_x",   I32, 0)
-SETTINGS_DEF(TouchCalScaleY,  "tc_scale_y", U32, 1000)
-SETTINGS_DEF(TouchCalOffsetY, "tc_off_y",   I32, 0)
+SETTINGS_DEF(TouchCalScaleX,  "tc_scale_x", U32, 1000, CALIBRATION)
+SETTINGS_DEF(TouchCalOffsetX, "tc_off_x",   I32, 0, CALIBRATION)
+SETTINGS_DEF(TouchCalScaleY,  "tc_scale_y", U32, 1000, CALIBRATION)
+SETTINGS_DEF(TouchCalOffsetY, "tc_off_y",   I32, 0, CALIBRATION)
 /* Local time zone as a fixed UTC offset in minutes (signed). Display only:
  * the RTC, the system clock and TOTP are always UTC. */
-SETTINGS_DEF(TimeTzOffsetMin, "tz_off_min", I32, 0)
+SETTINGS_DEF(TimeTzOffsetMin, "tz_off_min", I32, 0, TIME)
 /* Last 3 clock synchronisations, newest = index 0 (drift tracking, shown in
  * About): UTC epoch of the sync (0 = none), how far the clock was off just
  * before it (signed seconds, new minus old; INT32_MIN = unknown), and the
  * source (0 manual, 1 Wi-Fi, 2 BLE). settings_store_push_time_sync() shifts
  * the records down. */
-SETTINGS_DEF(TimeSyncEpoch0,  "sync_e0", U32, 0)
-SETTINGS_DEF(TimeSyncEpoch1,  "sync_e1", U32, 0)
-SETTINGS_DEF(TimeSyncEpoch2,  "sync_e2", U32, 0)
-SETTINGS_DEF(TimeSyncDelta0,  "sync_d0", I32, 0x80000000u)
-SETTINGS_DEF(TimeSyncDelta1,  "sync_d1", I32, 0x80000000u)
-SETTINGS_DEF(TimeSyncDelta2,  "sync_d2", I32, 0x80000000u)
-SETTINGS_DEF(TimeSyncSource0, "sync_s0", U32, 0)
-SETTINGS_DEF(TimeSyncSource1, "sync_s1", U32, 0)
-SETTINGS_DEF(TimeSyncSource2, "sync_s2", U32, 0)
+SETTINGS_DEF(TimeSyncEpoch0,  "sync_e0", U32, 0, TIME)
+SETTINGS_DEF(TimeSyncEpoch1,  "sync_e1", U32, 0, TIME)
+SETTINGS_DEF(TimeSyncEpoch2,  "sync_e2", U32, 0, TIME)
+SETTINGS_DEF(TimeSyncDelta0,  "sync_d0", I32, 0x80000000u, TIME)
+SETTINGS_DEF(TimeSyncDelta1,  "sync_d1", I32, 0x80000000u, TIME)
+SETTINGS_DEF(TimeSyncDelta2,  "sync_d2", I32, 0x80000000u, TIME)
+SETTINGS_DEF(TimeSyncSource0, "sync_s0", U32, 0, TIME)
+SETTINGS_DEF(TimeSyncSource1, "sync_s1", U32, 0, TIME)
+SETTINGS_DEF(TimeSyncSource2, "sync_s2", U32, 0, TIME)
 /* Age of the last sync (seconds) above which HOME raises the "time sync is
  * old" alert (ADR-018). Default 90 days; 0 = alert disabled. Seconds so
  * tests can use minutes (console: `setting set TimeSyncMaxAgeS 5m`). */
-SETTINGS_DEF(TimeSyncMaxAgeS, "sync_maxage_s", U32, 90u * 24u * 3600u)
+SETTINGS_DEF(TimeSyncMaxAgeS, "sync_maxage_s", U32, 90u * 24u * 3600u, TIME)
 /* F-05 auto-clear: seconds a secret (TOTP code, password, recovery code)
  * stays on screen without interaction before returning to a neutral
  * screen. Default 5 min (decided 2026-09-26). */
-SETTINGS_DEF(SecretAutoClearS, "secret_clr_s", U32, 300)
+SETTINGS_DEF(SecretAutoClearS, "secret_clr_s", U32, 300, GENERAL)
+/* F-19 owner contact info (Settings > Owner info, UI-SPECS §2.17): drawn on
+ * the sleep screen only while OwnerInfoShow is on. Opt-in: off and empty by
+ * default, since the sleep screen is visible to whoever finds the device. */
+SETTINGS_DEF(OwnerInfoShow, "owner_show", BOOL, 0, GENERAL)
+SETTINGS_STR_DEF(OwnerInfo, "owner_info", SETTINGS_OWNER_INFO_MAX, "", GENERAL)

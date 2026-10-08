@@ -27,7 +27,6 @@
 #include "ui_keyboard.h"
 #include "ui_widgets.h"
 
-#include <cstring>
 
 static constexpr int kCharRows = 4;
 static constexpr int kMaxRowKeys = 7;
@@ -59,64 +58,74 @@ static const char *const kLayers[kLayerCount][kCharRows] = {
 };
 static const char *const kLayerKeyText[kLayerCount] = {"123", "123", "#+=", "abc"};
 
-static ui_keyboard_cb_t s_cb;
-static int s_layer;
-static lv_obj_t *s_char_keys[kCharRows][kMaxRowKeys];
-static lv_obj_t *s_shift_label;
-static lv_obj_t *s_layer_label;
+/* Per-instance state, owned by the keyboard container (freed on its
+ * LV_EVENT_DELETE) and passed to every key callback as event user data. */
+struct KeyboardState {
+    ui_keyboard_cb_t cb;
+    int layer;
+    lv_obj_t *char_keys[kCharRows][kMaxRowKeys];
+    lv_obj_t *shift_label;
+    lv_obj_t *layer_label;
+};
 
 int32_t ui_keyboard_height(void)
 {
     return kRowCount * kKeyH + (kRowCount - 1) * kRowGap + 2 * kFocusOutlineSlack;
 }
 
-static void apply_layer(void)
+static void apply_layer(KeyboardState *kb)
 {
     for (int r = 0; r < kCharRows; r++) {
-        const char *chars = kLayers[s_layer][r];
+        const char *chars = kLayers[kb->layer][r];
         for (int c = 0; c < kRowKeyCount[r]; c++) {
-            lv_obj_t *key = s_char_keys[r][c];
+            lv_obj_t *key = kb->char_keys[r][c];
             char text[2] = {chars[c], '\0'};
             lv_label_set_text(lv_obj_get_child(key, 0), text);
             lv_obj_set_user_data(key, reinterpret_cast<void *>(static_cast<intptr_t>(chars[c])));
         }
     }
-    lv_label_set_text(s_shift_label, s_layer == kLayerUpper ? "abc" : "ABC");
-    lv_label_set_text(s_layer_label, kLayerKeyText[s_layer]);
+    lv_label_set_text(kb->shift_label, kb->layer == kLayerUpper ? "abc" : "ABC");
+    lv_label_set_text(kb->layer_label, kLayerKeyText[kb->layer]);
 }
 
 static void key_cb(lv_event_t *e)
 {
+    KeyboardState *kb = static_cast<KeyboardState *>(lv_event_get_user_data(e));
     lv_obj_t *key = static_cast<lv_obj_t *>(lv_event_get_target(e));
     int code = static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(key)));
     switch (code) {
     case kKeyShift:
-        s_layer = (s_layer == kLayerLower) ? kLayerUpper : kLayerLower;
-        apply_layer();
+        kb->layer = (kb->layer == kLayerLower) ? kLayerUpper : kLayerLower;
+        apply_layer(kb);
         break;
     case kKeyLayer:
-        s_layer = (s_layer == kLayerSym1) ? kLayerSym2 : (s_layer == kLayerSym2) ? kLayerLower : kLayerSym1;
-        apply_layer();
+        kb->layer = (kb->layer == kLayerSym1) ? kLayerSym2 : (kb->layer == kLayerSym2) ? kLayerLower : kLayerSym1;
+        apply_layer(kb);
         break;
     case kKeyBackspace:
-        if (s_cb.on_backspace) s_cb.on_backspace(s_cb.ctx);
+        if (kb->cb.on_backspace) kb->cb.on_backspace(kb->cb.ctx);
         break;
     case kKeyEnter:
-        if (s_cb.on_enter) s_cb.on_enter(s_cb.ctx);
+        if (kb->cb.on_enter) kb->cb.on_enter(kb->cb.ctx);
         break;
     default:
-        if (s_cb.on_char) s_cb.on_char(static_cast<char>(code), s_cb.ctx);
+        if (kb->cb.on_char) kb->cb.on_char(static_cast<char>(code), kb->cb.ctx);
         /* One-shot shift: back to lowercase after a capital. */
-        if (s_layer == kLayerUpper) {
-            s_layer = kLayerLower;
-            apply_layer();
+        if (kb->layer == kLayerUpper) {
+            kb->layer = kLayerLower;
+            apply_layer(kb);
         }
         break;
     }
 }
 
-static lv_obj_t *add_key(lv_obj_t *row, lv_group_t *group, const char *text, int code, int32_t width,
-                         const lv_font_t *font)
+static void keyboard_delete_cb(lv_event_t *e)
+{
+    delete static_cast<KeyboardState *>(lv_event_get_user_data(e));
+}
+
+static lv_obj_t *add_key(KeyboardState *kb, lv_obj_t *row, lv_group_t *group, const char *text, int code,
+                         int32_t width, const lv_font_t *font)
 {
     lv_obj_t *key = make_button(row, text);
     lv_obj_set_style_min_width(key, 0, 0);
@@ -125,7 +134,7 @@ static lv_obj_t *add_key(lv_obj_t *row, lv_group_t *group, const char *text, int
     lv_obj_set_ext_click_area(key, 0);
     if (font) lv_obj_set_style_text_font(lv_obj_get_child(key, 0), font, 0);
     lv_obj_set_user_data(key, reinterpret_cast<void *>(static_cast<intptr_t>(code)));
-    lv_obj_add_event_cb(key, key_cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(key, key_cb, LV_EVENT_CLICKED, kb);
     add_to_group(key, group);
     return key;
 }
@@ -143,36 +152,37 @@ static lv_obj_t *make_key_row(lv_obj_t *parent)
 
 lv_obj_t *ui_keyboard_create(lv_obj_t *parent, lv_group_t *group, const ui_keyboard_cb_t *cb)
 {
-    s_cb = *cb;
-    s_layer = kLayerLower;
-    memset(s_char_keys, 0, sizeof(s_char_keys));
+    KeyboardState *kb = new KeyboardState();
+    kb->cb = *cb;
+    kb->layer = kLayerLower;
 
-    lv_obj_t *kb = lv_obj_create(parent);
-    lv_obj_remove_style_all(kb);
-    lv_obj_set_size(kb, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(kb, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(kb, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_all(kb, kFocusOutlineSlack, 0);
-    lv_obj_set_style_pad_row(kb, kRowGap, 0);
+    lv_obj_t *cont = lv_obj_create(parent);
+    lv_obj_remove_style_all(cont);
+    lv_obj_set_size(cont, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(cont, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_all(cont, kFocusOutlineSlack, 0);
+    lv_obj_set_style_pad_row(cont, kRowGap, 0);
+    lv_obj_add_event_cb(cont, keyboard_delete_cb, LV_EVENT_DELETE, kb);
 
     for (int r = 0; r < kCharRows; r++) {
-        lv_obj_t *row = make_key_row(kb);
+        lv_obj_t *row = make_key_row(cont);
         for (int c = 0; c < kRowKeyCount[r]; c++) {
-            s_char_keys[r][c] = add_key(row, group, "a", 'a', kKeyW, nullptr);
+            kb->char_keys[r][c] = add_key(kb, row, group, "a", 'a', kKeyW, nullptr);
         }
         if (r == kCharRows - 1) {
-            add_key(row, group, LV_SYMBOL_BACKSPACE, kKeyBackspace, kKeyW, &lv_font_montserrat_32);
+            add_key(kb, row, group, LV_SYMBOL_BACKSPACE, kKeyBackspace, kKeyW, &lv_font_montserrat_32);
         }
     }
 
-    lv_obj_t *ctrl = make_key_row(kb);
-    lv_obj_t *shift = add_key(ctrl, group, "ABC", kKeyShift, kCtrlKeyW, nullptr);
-    s_shift_label = lv_obj_get_child(shift, 0);
-    lv_obj_t *layer = add_key(ctrl, group, "123", kKeyLayer, kCtrlKeyW, nullptr);
-    s_layer_label = lv_obj_get_child(layer, 0);
-    add_key(ctrl, group, "space", kKeySpace, kSpaceKeyW, nullptr);
-    add_key(ctrl, group, LV_SYMBOL_NEW_LINE, kKeyEnter, kCtrlKeyW, &lv_font_montserrat_32);
+    lv_obj_t *ctrl = make_key_row(cont);
+    lv_obj_t *shift = add_key(kb, ctrl, group, "ABC", kKeyShift, kCtrlKeyW, nullptr);
+    kb->shift_label = lv_obj_get_child(shift, 0);
+    lv_obj_t *layer = add_key(kb, ctrl, group, "123", kKeyLayer, kCtrlKeyW, nullptr);
+    kb->layer_label = lv_obj_get_child(layer, 0);
+    add_key(kb, ctrl, group, "space", kKeySpace, kSpaceKeyW, nullptr);
+    add_key(kb, ctrl, group, LV_SYMBOL_NEW_LINE, kKeyEnter, kCtrlKeyW, &lv_font_montserrat_32);
 
-    apply_layer();
-    return kb;
+    apply_layer(kb);
+    return cont;
 }

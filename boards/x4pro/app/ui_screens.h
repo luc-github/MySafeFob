@@ -40,7 +40,8 @@
 
 #ifdef __cplusplus
 
-enum class Screen { Home, Settings, SettingsControls, SettingsAbout, SettingsDisplay, TouchDiag, Security, Time, Alerts, kCount };
+enum class Screen { Home, Settings, SettingsControls, SettingsAbout, SettingsDisplay, TouchDiag, Security, Time, Alerts, OwnerInfo,
+                    SettingsDevice, SettingsSecurityData, kCount };
 
 /**
  * @brief Switches to screen `s`: refreshes its battery label, forces the
@@ -71,6 +72,8 @@ void apply_frontlight_from_settings(void);
 
 lv_obj_t *build_home(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_settings(lv_group_t **group_out, lv_obj_t **battery_label_out);
+lv_obj_t *build_settings_device(lv_group_t **group_out, lv_obj_t **battery_label_out);
+lv_obj_t *build_settings_security_data(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_settings_controls(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_settings_display(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_settings_about(lv_group_t **group_out, lv_obj_t **battery_label_out);
@@ -78,5 +81,6 @@ lv_obj_t *build_touch_diag(lv_group_t **group_out, lv_obj_t **battery_label_out)
 lv_obj_t *build_security(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_time(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_alerts(lv_group_t **group_out, lv_obj_t **battery_label_out);
+lv_obj_t *build_owner_info(lv_group_t **group_out, lv_obj_t **battery_label_out);
 
 #endif /* __cplusplus */

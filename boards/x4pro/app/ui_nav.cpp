@@ -219,6 +219,8 @@ static void build_screens(void)
 {
     build_screen(Screen::Home, build_home);
     build_screen(Screen::Settings, build_settings);
+    build_screen(Screen::SettingsDevice, build_settings_device);
+    build_screen(Screen::SettingsSecurityData, build_settings_security_data);
     build_screen(Screen::SettingsControls, build_settings_controls);
     build_screen(Screen::SettingsDisplay, build_settings_display);
     build_screen(Screen::SettingsAbout, build_settings_about);
@@ -226,6 +228,7 @@ static void build_screens(void)
     build_screen(Screen::Security, build_security);
     build_screen(Screen::Time, build_time);
     build_screen(Screen::Alerts, build_alerts);
+    build_screen(Screen::OwnerInfo, build_owner_info);
 }
 
 /* REMOVED 2026-09-24 (was: slip eink.c's mandatory ghost-budget full GC

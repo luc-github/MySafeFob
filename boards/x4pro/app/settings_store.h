@@ -33,6 +33,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include "esp_err.h"
 
@@ -144,31 +145,69 @@ uint32_t settings_store_get_time_sync_max_age_s(void);
  */
 uint32_t settings_store_get_secret_auto_clear_s(void);
 
+/**
+ * @brief F-19 owner contact info (Settings > Owner info, UI-SPECS §2.17),
+ *        drawn on the sleep screen only while the show flag is on. Both
+ *        default to off/empty. The text is at most SETTINGS_OWNER_INFO_MAX
+ *        characters; set returns ESP_ERR_INVALID_ARG if it is longer.
+ */
+#define SETTINGS_OWNER_INFO_MAX 48
+bool settings_store_get_owner_info_show(void);
+void settings_store_set_owner_info_show(bool on);
+void settings_store_get_owner_info(char *buf, size_t len);
+esp_err_t settings_store_set_owner_info(const char *text);
+
 /* ---- Generic access by table index (console `setting` command, ADR-018,
  * main/cmd_setting.c). Indexes run 0..settings_store_count()-1, in
  * settings_defs.inc order. Consumers read settings on use, so a value set
  * here applies at its next read (some are only read at boot, e.g. touch
  * calibration). ---- */
 
-typedef enum { SETTINGS_KIND_BOOL, SETTINGS_KIND_U32, SETTINGS_KIND_I32 } settings_kind_t;
+/** @brief Upper bound of every STR setting's max length (buffer sizing). */
+#define SETTINGS_STR_MAX 64
+
+/** @brief Reset groups (settings_defs.inc's last column). */
+typedef enum {
+    SETTINGS_GROUP_GENERAL,      /* everything not below */
+    SETTINGS_GROUP_CALIBRATION,  /* touch calibration */
+    SETTINGS_GROUP_TIME,         /* time zone, sync history, sync-age threshold */
+} settings_group_t;
+
+typedef enum { SETTINGS_KIND_BOOL, SETTINGS_KIND_U32, SETTINGS_KIND_I32, SETTINGS_KIND_STR } settings_kind_t;
 
 typedef struct {
     const char *name;        /* X-macro id, e.g. "IdleTimeoutS" */
     const char *nvs_key;
     settings_kind_t kind;
-    uint32_t default_value;  /* raw 32-bit pattern (I32: two's complement) */
+    uint32_t default_value;  /* raw 32-bit pattern (I32: two's complement); 0 for STR */
+    uint32_t max_len;        /* STR only: max characters, NUL excluded */
+    const char *default_str; /* STR only */
+    settings_group_t group;
 } settings_info_t;
 
 int settings_store_count(void);
 bool settings_store_describe(int index, settings_info_t *info);
 /** @brief Index of the setting named `name` (id or NVS key, case-insensitive), -1 if none. */
 int settings_store_find(const char *name);
-/** @brief Current value as its raw 32-bit pattern (default if unset). */
+/** @brief Current value as its raw 32-bit pattern (default if unset; 0 for STR). */
 uint32_t settings_store_get_raw(int index);
 /** @brief Persists a raw value (BOOL: any non-zero = 1). */
 esp_err_t settings_store_set_raw(int index, uint32_t value);
+/** @brief STR setting's current value (default if unset), truncated to `len`. */
+void settings_store_get_str(int index, char *buf, size_t len);
+/** @brief Persists a STR value; ESP_ERR_INVALID_ARG if not STR or too long. */
+esp_err_t settings_store_set_str(int index, const char *value);
 /** @brief Erases the NVS key, so the setting reads its default again. */
 esp_err_t settings_store_reset(int index);
+/**
+ * @brief Erases every setting (the whole NVS namespace), so all read their
+ *        defaults again. Includes touch calibration and the time sync
+ *        history; screens built at boot pick up the defaults when shown
+ *        again or after a reboot.
+ */
+esp_err_t settings_store_reset_all(void);
+/** @brief Resets only the settings of `group` (same effect as reset, per key). */
+esp_err_t settings_store_reset_group(settings_group_t group);
 
 #ifdef __cplusplus
 }
