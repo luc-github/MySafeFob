@@ -18,15 +18,17 @@
 */
 /**
  * @file ui_keyboard.cpp
- * @brief MySafeFob App — alphanumeric on-screen keyboard, see ui_keyboard.h.
- *        Four character rows (7/7/6/6 keys, the last one followed by the
- *        backspace key) plus a bottom control row: fewer keys per row than a
- *        classic 10-key QWERTY, so keys are wider and the gaps between them
- *        larger (touch precision).
+ * @brief MySafeFob App — on-screen keyboard, see ui_keyboard.h.
+ *        Full mode: four character rows (7/7/6/6 keys, the last one followed
+ *        by the backspace key) plus a bottom control row: fewer keys per row
+ *        than a classic 10-key QWERTY, so keys are wider and the gaps
+ *        between them larger (touch precision). Base32 and numeric modes
+ *        are fixed layouts (no layers) on the same 5-row grid.
  */
 #include "ui_keyboard.h"
 #include "ui_widgets.h"
 
+#include <cstring>
 
 static constexpr int kCharRows = 4;
 static constexpr int kMaxRowKeys = 7;
@@ -34,8 +36,13 @@ static constexpr int kRowKeyCount[kCharRows] = {7, 7, 6, 6};
 static constexpr int kRowCount = kCharRows + 1; /* + bottom control row */
 
 static constexpr int32_t kKeyW = 54;
-static constexpr int32_t kKeyH = 50;
+/* 56, not 50 (2026-10-09): make_button()'s min height (kMinTouchTarget)
+ * always won over the 50 set here, so the keys were 56px all along. The
+ * touch mapping was validated on that real 56px grid. */
+static constexpr int32_t kKeyH = 56;
 static constexpr int32_t kColGap = 10;
+/* Full row width (7 keys of kKeyW), used to size the wider fixed-layout keys. */
+static constexpr int32_t kRowWidth = kMaxRowKeys * kKeyW + (kMaxRowKeys - 1) * kColGap;
 static constexpr int32_t kRowGap = 10;
 static constexpr int32_t kCtrlKeyW = 80;
 static constexpr int32_t kSpaceKeyW = 170;
@@ -68,6 +75,11 @@ struct KeyboardState {
     lv_obj_t *layer_label;
 };
 
+/* Fixed layouts (Base32, numeric), one string per row: '\b' = backspace,
+ * '\n' = enter, any other byte = that character. */
+static const char *const kBase32Rows[kRowCount] = {"QWERTYU", "IOPASDF", "GHJKLZ", "XCVBNM\b", "234567\n"};
+static const char *const kNumericRows[kRowCount] = {"123", "456", "789", "0\b", "\n"};
+
 int32_t ui_keyboard_height(void)
 {
     return kRowCount * kKeyH + (kRowCount - 1) * kRowGap + 2 * kFocusOutlineSlack;
@@ -75,6 +87,7 @@ int32_t ui_keyboard_height(void)
 
 static void apply_layer(KeyboardState *kb)
 {
+    if (!kb->shift_label) return;   /* fixed layout: no layers */
     for (int r = 0; r < kCharRows; r++) {
         const char *chars = kLayers[kb->layer][r];
         for (int c = 0; c < kRowKeyCount[r]; c++) {
@@ -170,7 +183,31 @@ static lv_obj_t *make_key_row(lv_obj_t *parent)
     return row;
 }
 
-lv_obj_t *ui_keyboard_create(lv_obj_t *parent, lv_group_t *group, const ui_keyboard_cb_t *cb)
+/* Base32 / numeric: one key per byte of the row strings; Base32 keeps the
+ * full keyboard's key width (same columns), numeric widens its few keys to
+ * fill the row. */
+static void build_fixed(KeyboardState *kb, lv_obj_t *cont, lv_group_t *group, const char *const *rows, bool fill)
+{
+    for (int r = 0; r < kRowCount; r++) {
+        lv_obj_t *row = make_key_row(cont);
+        int n = static_cast<int>(strlen(rows[r]));
+        int32_t width = fill ? (kRowWidth - (n - 1) * kColGap) / n : kKeyW;
+        for (int c = 0; c < n; c++) {
+            char ch = rows[r][c];
+            if (ch == '\b') {
+                add_key(kb, row, group, LV_SYMBOL_BACKSPACE, kKeyBackspace, width, &lv_font_montserrat_32);
+            } else if (ch == '\n') {
+                add_key(kb, row, group, LV_SYMBOL_NEW_LINE, kKeyEnter, width, &lv_font_montserrat_32);
+            } else {
+                char text[2] = {ch, '\0'};
+                add_key(kb, row, group, text, ch, width, fill ? &lv_font_montserrat_32 : nullptr);
+            }
+        }
+    }
+}
+
+lv_obj_t *ui_keyboard_create(lv_obj_t *parent, lv_group_t *group, const ui_keyboard_cb_t *cb,
+                             ui_keyboard_mode_t mode)
 {
     KeyboardState *kb = new KeyboardState();
     kb->cb = *cb;
@@ -184,6 +221,12 @@ lv_obj_t *ui_keyboard_create(lv_obj_t *parent, lv_group_t *group, const ui_keybo
     lv_obj_set_style_pad_all(cont, kFocusOutlineSlack, 0);
     lv_obj_set_style_pad_row(cont, kRowGap, 0);
     lv_obj_add_event_cb(cont, keyboard_delete_cb, LV_EVENT_DELETE, kb);
+
+    if (mode != UI_KEYBOARD_FULL) {
+        build_fixed(kb, cont, group, mode == UI_KEYBOARD_BASE32 ? kBase32Rows : kNumericRows,
+                    mode == UI_KEYBOARD_NUMERIC);
+        return cont;
+    }
 
     for (int r = 0; r < kCharRows; r++) {
         lv_obj_t *row = make_key_row(cont);

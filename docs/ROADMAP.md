@@ -128,8 +128,8 @@ then start the TOTP core (8.1/8.2). Order below is the working order.
 | P4 | Serial time sync: `settime` console command (ADR-006 serial channel, new sync source `serial`) — `main/cmd_settime.c`: `settime` (status), `settime <epoch>[.f]`, `settime YYYY-MM-DDTHH:MM:SS[.f][Z]`, always UTC; same precise path as BLE (system clock to the µs, then aligned RTC write, sync recorded). PC script `tools/settime.py`: measures the offset (status line `Epoch <s>.<ms>`), sets, re-measures; `--check` only measures, to verify any other sync path (manual, BLE, Wi-Fi) | — | ✅ hardware-validated 2026-10-09: offset -0.408 s before, -0.034 s after a set (round trip 62 ms) |
 | P5 | ~~BLE time: confirmation step before applying~~ | — | ❌ Dropped 2026-10-09 (user decision, built then reverted): a pending confirmation delays applying the time, and even compensated (proposal + time elapsed since the read) it adds side effects for no real gain: a wrong time is only a temporary DoS (ADR-001), fixed by another sync, and `tools/settime.py --check` verifies any sync. The BLE time is applied at once, as before |
 | P6 | Shared destructive-action confirmation dialog (UI-SPECS §2.18) — `ui_confirm_show()` (`ui_widgets.cpp`): full-screen modal on `lv_layer_top()`, title + message + Cancel (focused by default) / action, taps outside absorbed, Left/Right and confirm pulses routed to its own group (`ui_nav_set_modal_group()`), full refresh on open/close. First user: Owner info's new "Clear" button | — | ✅ hardware-validated 2026-10-09 (touch and buttons, Cancel default focus, taps outside absorbed) |
-| P7 | Keyboard modes: Base32 (A-Z, 2-7) and numeric, on top of `ui_keyboard.cpp` | — | ⏳ |
-| P8 | Generic entry list screen (TOTP/PWD/RCV lists), dummy data | — | ⏳ |
+| P7 | Keyboard modes: Base32 (A-Z, 2-7) and numeric, on top of `ui_keyboard.cpp` — `ui_keyboard_create(..., mode)`: Base32 = `QWERTYU / IOPASDF / GHJKLZ / XCVBNM ⌫ / 234567 ↵` (one layer, uppercase, same key width as the full keyboard), numeric = `123 / 456 / 789 / 0 ⌫ / ↵` (wide keys). Every mode keeps the validated 5x56px bottom-anchored grid. Test screen Settings > Device > Keyboard test (to remove once the TOTP entry screen uses the modes) | — | ✅ hardware-validated 2026-10-09 (all three modes) |
+| P8 | **Rescoped by ADR-019 (2026-10-09)**: HOME alphabet grid (+ Power icon replacing "Sleep now"), names page, account page (TOTP code + Refresh, login, recovery count, Edit/Remove), dummy data. First version below (three flat lists) built and hardware-validated 2026-10-09, kept for its pagination/`touch_safe_y()` layout. Generic entry list screen (TOTP/PWD/RCV lists), dummy data — `ui_screen_entry_list.cpp`: pages of 6 rows (no scrolling), `<` `>` + page number, "+ Add"; rows at fixed y via `touch_safe_y()` (4 above the X4 Pro touch band, 2 below, status line in the gap); empty state. HOME gets TOTP Codes / Passwords / Recovery Codes. Dummy: 14 TOTP (3 pages), 4 passwords, 0 recovery codes. Selecting a row / Add only shows a status line until the target screens exist | — | 🔄 first version validated 2026-10-09; ADR-019 version to build |
 | P9 | TOTP_CODE prototype with a fake code: countdown + e-ink refresh strategy under the ghost budget | — | ⏳ |
 | P10 | UNLOCK screen: shuffled (anti-trace) keypad + back-off display, fake counter | — | ⏳ |
 | P11 | Security & Data menu gains a Backup row (SD detection/listing only, no crypto); the Owner info row came with P3 | P3 | ⏳ |
@@ -2542,6 +2542,54 @@ percent, 0 = off, ignored while charging or when the gauge read fails:
   Waking it while still critical shows HOME briefly, then sleeps again.
 Implemented in `battery_level()` (`battery.c`), `alerts.c`, `ui_nav.cpp`
 (`check_battery_critical()`), `splash.cpp`.
+
+---
+
+### ADR-019: One record per account, alphabetical access from HOME
+
+**Context**: FEATURES F-01 / F-05 / F-05b and UI-SPECS §2.2-2.10 described
+three separate entry types (TOTP, password, recovery codes), each with its
+own list reached from HOME. In practice the three belong to the same
+service (GitHub has a login, a TOTP secret and recovery codes): the label
+was typed three times and searched in three lists. The paginated flat list
+built for P8 (2026-10-09) also scales badly once there are many names
+(user review 2026-10-09). Every tap costs an e-paper refresh (~1 s), and
+reading a TOTP code is the most frequent action.
+
+**Decision (validated 2026-10-09)**:
+1. **One record per account**: a unique name (the service) plus, each one
+   optional, **one** TOTP secret, **one** login (username + password +
+   notes) and **one** set of recovery codes. Two accounts on the same
+   service are two records ("Google perso", "Google pro"). Names are unique
+   (case-insensitive) and sorted alphabetically (case-insensitive); the
+   index letter is the first character's letter A-Z, `#` for anything
+   else.
+2. **HOME is the alphabet**: a grid of letter buttons A-Z and `#` (letters
+   without any name disabled), plus `+ Add`. The header holds Settings
+   (top left, unchanged) and a **Power** icon (top right, mirror of
+   Settings) that replaces the "Sleep now" button; the alert button, when
+   active, sits just left of Power.
+3. **Names page**: the names of the chosen letter, pages of rows (no
+   scrolling, `touch_safe_y()` layout from P8), `+ Add` (name prefilled
+   with the letter).
+4. **Account page**: the TOTP code first, if the record has one, with the
+   time left when it was computed and a **Refresh** button (no countdown
+   redraw, ADR-009 "on demand"); then the login (password masked,
+   Reveal); then the recovery codes (count of unused codes, opens the
+   code list). `Edit` and `Remove` (behind the P6 confirmation). Edit adds
+   or removes any of the three parts.
+5. Reading a TOTP code takes **2 taps**: HOME letter -> name -> account
+   page shows the code (was HOME -> TOTP list -> code).
+
+**Consequences**: INTERFACES.md §1.2 (one ACCOUNT TLV record with optional
+OTP / LOGIN / RECOVERY sub-records replaces the three record types; ids
+become u16) and §4.2 (`secret_store` API per account); FEATURES F-01 /
+F-05 / F-05b (amended, the fields are unchanged); UI-SPECS §2.2-2.10
+(amendment at §2.2). Nothing was implemented in `secret_store` yet, so no
+data migration. P8's paginated list code is reused for the names page.
+
+**Status**: ✅ VALIDATED 2026-10-09 (design; implementation = ROADMAP 8.0
+P8, rescoped).
 
 ---
 

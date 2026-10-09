@@ -47,6 +47,22 @@ TLV format: `tag (1 byte) | length (2 bytes LE) | payload`. Strings = UTF-8
 without NUL (explicit length). All records carry a unique
 uint8 `id`, never reused after deletion (avoids UI collisions).
 
+> **Superseded by ADR-019 (2026-10-09)** for the entries: one ACCOUNT
+> record per account replaces the TOTP / PWD / RCV records below (not
+> implemented yet, so no migration). Ids become u16 (the budget allows
+> more than 255 records).
+>
+> ```
+> [0x30] ACCOUNT    : id u16 | name ≤48 (unique, case-insensitive) | created_epoch u32
+>                     | modified_epoch u32 | then 0..3 sub-records, each at most once:
+>   [0x31] OTP      : binary secret ≤64 (base32 DECODED) | digits (6/8) | period_s (30/60)
+>   [0x32] LOGIN    : username ≤64 | password ≤128 | notes ≤256
+>   [0x33] RECOVERY : nb_codes (≤32) | codes (nb × ≤16) | used_mask u32 (bit i = code i consumed)
+> ```
+>
+> Sorted by name, case-insensitive; index letter = first character's
+> letter A-Z, `#` otherwise.
+
 ```
 [0x01] HEADER    : magic "MSFS" (4 bytes) + version (1 byte)
 [0x10] TOTP rec  : id | label ≤48 | binary secret ≤64 (base32 DECODED)
@@ -176,9 +192,14 @@ esp_err_t totp_generate(uint64_t epoch_s, char *out_code,    /* 6/8 digits */
 esp_err_t store_unlock(const char *pin);        /* derives the key, opens the blob */
 void      store_lock(void);                     /* wipes the key from RAM */
 bool      store_is_unlocked(void);
-esp_err_t store_totp_add/update/delete/list(...);    /* filter type=TOTP */
-esp_err_t store_pwd_add/update/delete/get(...);
-esp_err_t store_rcv_mark_used(id, code_index);
+/* ADR-019 (2026-10-09): one API per account record, replacing
+   store_totp_* / store_pwd_* / store_rcv_*: */
+int       store_account_count(char letter);         /* 'A'-'Z', '#', 0 = all */
+esp_err_t store_account_list(char letter, int first, int max, ...);  /* names + ids, sorted */
+esp_err_t store_account_get(uint16_t id, ...);      /* name + present parts */
+esp_err_t store_account_add/update/delete(...);     /* name unique, case-insensitive */
+esp_err_t store_account_totp(uint16_t id, time_t utc, ...); /* code + seconds left */
+esp_err_t store_rcv_mark_used(uint16_t id, int code_index);
 esp_err_t store_export_to_sd(void);             /* F-06b */
 esp_err_t store_import_from_sd(void);           /* F-06b, explicit confirmation */
 /* Persistence: every mutation rewrites the entire blob (N is small, writes are rare,

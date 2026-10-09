@@ -41,7 +41,8 @@
 #ifdef __cplusplus
 
 enum class Screen { Home, Settings, SettingsControls, SettingsAbout, SettingsDisplay, TouchDiag, Security, Time, Alerts, OwnerInfo,
-                    SettingsDevice, SettingsSecurityData, kCount };
+                    SettingsDevice, SettingsSecurityData, KeyboardTest, TotpList, PwdList, RcvList,
+                    kCount };
 
 /**
  * @brief Switches to screen `s`: refreshes its battery label, forces the
@@ -90,5 +91,9 @@ lv_obj_t *build_security(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_time(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_alerts(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_owner_info(lv_group_t **group_out, lv_obj_t **battery_label_out);
+lv_obj_t *build_keyboard_test(lv_group_t **group_out, lv_obj_t **battery_label_out);
+lv_obj_t *build_totp_list(lv_group_t **group_out, lv_obj_t **battery_label_out);
+lv_obj_t *build_pwd_list(lv_group_t **group_out, lv_obj_t **battery_label_out);
+lv_obj_t *build_rcv_list(lv_group_t **group_out, lv_obj_t **battery_label_out);
 
 #endif /* __cplusplus */

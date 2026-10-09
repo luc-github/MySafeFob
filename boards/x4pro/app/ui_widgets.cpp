@@ -563,3 +563,10 @@ bool ui_confirm_show(const ui_confirm_t *cfg)
     lv_port_disp_request_full_refresh();
     return true;
 }
+
+int32_t touch_safe_y(int32_t y, int32_t h)
+{
+    auto inside = [](int32_t edge) { return edge > kTouchBandTop && edge < kTouchBandBottom; };
+    if (inside(y) || inside(y + h)) return kTouchBandBottom + 6;
+    return y;
+}

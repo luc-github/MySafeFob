@@ -294,6 +294,52 @@ screen.
 
 ### 2.2 HOME (F-07)
 
+> **Amendment (2026-10-09) — ADR-019, one record per account, alphabetical
+> access.** Replaces the HOME below and the three lists §2.3 / §2.6 / §2.9;
+> the detail rules of §2.4 (code display), §2.5 / §2.8 (editing), §2.7
+> (masked password, Reveal, auto-clear) and §2.10 (recovery codes) still
+> apply, now inside one account page.
+>
+> ```
+> HOME                                   NAMES (letter G)
+> [⚙]      MySafeFob        [⚠] [⏻]     < Back            G
+> ────────────────────────────────       ──────────────────────
+>  [A] [B] [C] [D] [E]                   [ GitHub            > ]
+>  [F] [G] [H] [I] [J]                   [ GitLab            > ]
+>  [K] [L] [M] [N] [O]                   [ Google perso      > ]
+>  [P] [Q] [R] [S] [T]                   [ Google pro        > ]
+>                                         (status line)
+>  [U] [V] [W] [X] [Y]                   ...
+>  [Z] [#]     [   + Add   ]             [<] 1 / 2 [>]   [ + Add ]
+> ```
+>
+> - HOME: letters without any name are disabled (not focusable). `+ Add`
+>   creates a record without choosing a letter. ⏻ = sleep now (was the
+>   "Sleep now" button), mirror of ⚙; ⚠ only while an alert is active.
+>   Grid rows placed with `touch_safe_y()` (no edge in the X4 Pro touch
+>   band y~490-554): 4 rows above it, 2 below.
+> - NAMES: the P8 paginated list (6 rows, `<` `>`, status line in the
+>   band gap); `+ Add` prefills the name with the letter.
+>
+> ```
+> ACCOUNT
+> < Back          GitHub
+> ──────────────────────────────
+>  TOTP      123 456     (18 s)
+>                      [Refresh]
+>  Login     octocat
+>  Password  ●●●●●●●●  [Reveal]
+>  Recovery  9 / 10 unused   [>]
+>
+>        [ Edit ]   [ Remove ]
+> ```
+>
+> - The TOTP code is computed when the page opens and on Refresh, with the
+>   seconds left at that instant; no countdown redraw (ADR-009). Parts the
+>   record does not have are not shown. `Remove` goes through the P6
+>   confirmation. `Edit` edits the name and adds, changes or removes any
+>   of the three parts (TOTP secret on the Base32 keyboard, P7).
+
 ```
 ┌──────────────────────────────────────┐
 │              MySafeFob          [i]  │
@@ -350,6 +396,14 @@ screen.
 - F-11 (search/filter, should-have) and F-12 (categories/tags,
   should-have) are explicitly deferred — this screen is a flat list for
   v1.0, per FEATURES.md §4.
+
+> **Built 2026-10-09 (ROADMAP 8.0 P8, dummy data)**, shared by TOTP_LIST,
+> PWD_LIST and RCV_LIST (`ui_screen_entry_list.cpp`). No scrolling
+> (e-paper): pages of 6 rows, `<` / `>` and "n / m" at the bottom left,
+> `+ Add` at the bottom right (not a list row). Rows sit at fixed y placed
+> with `touch_safe_y()`: 4 rows above the X4 Pro touch band (y~490-554),
+> 2 below, and a status line (not a target) in the gap. Empty state:
+> "No entries yet" with `+ Add` still reachable.
 
 ### 2.4 TOTP_CODE (F-01)
 
@@ -948,8 +1002,12 @@ path of least resistance through Left/Right+Home alone.
 - **Built 2026-09-24** as `ui_keyboard.cpp` (LVGL, 4 letter rows 7/7/6/6 +
   control row, layers lower/upper/digits+symbols, `time-sync-design.md`
   §3) — not the classic 10-key QWERTY drawn above. Used by the Wi-Fi
-  password today. **Still to add** (ROADMAP 8.0 P7): a Base32 mode (A-Z and
-  2-7 only, for TOTP secrets) and a numeric mode. Used by every text field
+  password today. **Base32 and numeric modes built 2026-10-09** (ROADMAP
+  8.0 P7, `ui_keyboard_create(..., UI_KEYBOARD_BASE32 / _NUMERIC)`): fixed
+  layouts on the same 5-row, 56px, bottom-anchored grid as the full
+  keyboard (the X4 Pro touch mapping was validated on that grid).
+  Base32: `QWERTYU / IOPASDF / GHJKLZ / XCVBNM ⌫ / 234567 ↵`, uppercase
+  only, no layers, no space. Numeric: `123 / 456 / 789 / 0 ⌫ / ↵`. Used by every text field
   in this document (TOTP label/secret, password fields, Wi-Fi SSID/pass,
   export passphrase). One shared implementation, not one per screen.
 - Left/Right cycling a full QWERTY key-by-key is slow but must remain

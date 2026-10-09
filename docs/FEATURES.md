@@ -28,6 +28,10 @@ updates only via SD.
 ## 3. Must Have (v1.0)
 
 ### F-01 — Multi-account TOTP
+> **ADR-019 (2026-10-09)**: TOTP, login (F-05) and recovery codes (F-05b)
+> are now optional parts of **one record per account** (unique name),
+> reached alphabetically from HOME; the TOTP code is shown first on the
+> account page, with a Refresh button. The fields below are unchanged.
 - Account list (label + Base32 secret + digits [6/8] + period [30/60 s]).
 - Add / edit / delete an entry via UI.
 - "One entry at a time" display: menu → selection → code screen.
@@ -70,6 +74,8 @@ updates only via SD.
 - TOTP secrets + passwords + recovery codes in the same encrypted container.
 
 ### F-05 — Password management
+> **ADR-019 (2026-10-09)**: the login is an optional part of an account
+> record (one login per record), see F-01's note.
 - Entries: label, username, password, optional notes.
 - One entry displayed at a time (sober, monochrome screen, no animation).
 - Add / edit / delete via UI.
@@ -87,6 +93,9 @@ updates only via SD.
   already hides the secret.
 
 ### F-05b — Recovery code management
+> **ADR-019 (2026-10-09)**: the recovery codes are an optional part of an
+> account record (one set per record), see F-01's note; no separate UI
+> section, the account page shows the unused count and opens the list.
 - Entries: label (service) + list of one-time codes provided at 2FA activation.
 - Stored in the same encrypted container; dedicated UI section.
 - **Usage**: display one code at a time, mark it "used" after actual use

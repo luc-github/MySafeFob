@@ -74,6 +74,23 @@ constexpr int32_t kBackTopMargin = 88;
 constexpr int32_t kHeaderReservedPct = 20;
 constexpr int32_t kHeaderContentPadTop = 8;
 
+/* X4 Pro touch quirk (touch.c kTouchYBreakpoints, touch-calibration-notes.md
+ * §11, 2026-10-09): every tap with a screen y between these two lines is
+ * reported ON one of them. A touch target with an edge strictly inside the
+ * band can therefore be missed or confused with its neighbour; screens
+ * that lay out targets at fixed y use touch_safe_y(). Measured on one unit
+ * whose GT911 runs our substitute config -- see the notes before relying
+ * on it for another unit or board. */
+constexpr int32_t kTouchBandTop = 490;
+constexpr int32_t kTouchBandBottom = 554;
+
+/**
+ * @brief y at which to place a touch target of height `h` wanted at `y`:
+ *        `y` itself, or just below the band (kTouchBandBottom + 6) if the
+ *        target would have its top or bottom edge strictly inside it.
+ */
+int32_t touch_safe_y(int32_t y, int32_t h);
+
 /* Adds `obj` to `group`, styling focus with an outline ring (2026-09-21
  * user request, matches the round toggle's own focus style) and pinning
  * its PRESSED border to the same width as NORMAL (kButtonBorderWidth) so a

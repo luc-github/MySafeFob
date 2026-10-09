@@ -101,6 +101,7 @@ lv_obj_t *build_settings_device(lv_group_t **group_out, lv_obj_t **battery_label
     add_menu_button(content, "Controls", Screen::SettingsControls, *group_out);
     add_menu_button(content, "Display", Screen::SettingsDisplay, *group_out);
     add_menu_button(content, "Touch Calibration", Screen::TouchDiag, *group_out);
+    add_menu_button(content, "Keyboard test", Screen::KeyboardTest, *group_out);
 
     return screen;
 }
