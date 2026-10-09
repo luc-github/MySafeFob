@@ -131,8 +131,8 @@ Files: `time_service.[ch]`, `wifi_time.[ch]`, `ble_time.[ch]`, `ui_keyboard.[ch]
 
 ## 6. Open items
 
-- Confirmation step before applying a BLE time (show device name, proposed time and
-  offset; mandatory above a threshold such as 60 s), and/or refuse absurd jumps.
+- ~~Confirmation step before applying a BLE time~~: dropped 2026-10-09 (ROADMAP 8.0 P5):
+  a pending confirmation delays applying the time, and even compensated (proposal + time elapsed since the read) it adds side effects for no real gain: a wrong time is only a temporary DoS (ADR-001), fixed by another sync, and `tools/settime.py --check` verifies any sync. Absurd dates are still refused (year outside 2024-2099).
 - ~~Reminder to resync after about 3 months~~: decided in ADR-018 (2026-09-26) —
   HOME alert button + Alerts screen, threshold setting `TimeSyncMaxAgeS`
   (default 90 days, changeable with the console `setting` command); also an alert

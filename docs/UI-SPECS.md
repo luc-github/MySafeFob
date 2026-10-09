@@ -838,7 +838,8 @@ FEATURES.md's stated defaults: off by default, 30 s auto-off.
 > - **Health line** ("Last sync… / drift…") is not on this screen: last
 >   sync and drift per day are in Settings > About, and the "too old"
 >   alert is the HOME alert button + ALERTS screen (§1.3, §2.21, ADR-018).
-> - **BLE confirmation** before applying the received time (ROADMAP 8.0 P5).
+> - ~~**BLE confirmation** before applying the received time~~: dropped
+>   2026-10-09 (ROADMAP 8.0 P5), the BLE time is applied at once.
 
 ### 2.16 SETTINGS_BACKUP (F-06b)
 
