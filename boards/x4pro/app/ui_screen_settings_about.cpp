@@ -61,11 +61,10 @@ static void update_about_text(void)
     uint32_t epoch, src;
     int32_t delta;
     if (settings_store_get_time_sync(0, &epoch, &delta, &src)) {
-        static const char *const kSources[] = {"manual", "Wi-Fi", "BLE"};
         time_service_dt_t sd;
         time_service_epoch_to_dt(static_cast<time_t>(epoch), &sd);
         int n = snprintf(sync_text, sizeof(sync_text), "%04d-%02d-%02d %s", sd.year, sd.month, sd.day,
-                         src < 3 ? kSources[src] : "?");
+                         time_service_source_name(src));
         if (delta == TIME_SYNC_DELTA_UNKNOWN) {
             n += snprintf(sync_text + n, sizeof(sync_text) - n, " offset ?");
         } else {

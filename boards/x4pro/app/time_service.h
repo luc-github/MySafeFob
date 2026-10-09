@@ -51,7 +51,15 @@ bool time_service_is_valid(void);
 /** @brief Current UTC epoch seconds (0 if the clock was never set). */
 time_t time_service_get_utc(void);
 
-typedef enum { TIME_SOURCE_MANUAL = 0, TIME_SOURCE_WIFI = 1, TIME_SOURCE_BLE = 2 } time_sync_source_t;
+typedef enum {
+    TIME_SOURCE_MANUAL = 0,
+    TIME_SOURCE_WIFI = 1,
+    TIME_SOURCE_BLE = 2,
+    TIME_SOURCE_SERIAL = 3,   /* console `settime` (ADR-006 serial channel) */
+} time_sync_source_t;
+
+/** @brief Short display name of a sync source ("manual", "Wi-Fi", "BLE", "serial", "?"). */
+const char *time_service_source_name(uint32_t source);
 
 /** @brief Marks "offset unknown" in the stored sync record (clock was not set before). */
 #define TIME_SYNC_DELTA_UNKNOWN ((int32_t)0x80000000)

@@ -41,12 +41,6 @@ static const char *const kTitles[ALERT_COUNT] = {
     [ALERT_BATTERY_LOW] = "Battery low",
 };
 
-static const char *source_name(uint32_t source)
-{
-    static const char *const kSources[] = {"manual", "Wi-Fi", "BLE"};
-    return source < 3 ? kSources[source] : "?";
-}
-
 /* "N d" / "N h" / "N min": tests use thresholds of a few minutes. */
 static void format_duration(long seconds, char *buf, size_t len)
 {
@@ -131,7 +125,7 @@ void alerts_describe(alert_id_t id, char *buf, size_t len)
         snprintf(buf, len,
                  "Last sync: %04d-%02d-%02d (%s), %s ago. The clock may have drifted; TOTP codes are "
                  "refused if it is off by more than about 15 s. Sync the time over Wi-Fi or BLE.",
-                 dt.year, dt.month, dt.day, source_name(source), age);
+                 dt.year, dt.month, dt.day, time_service_source_name(source), age);
         break;
     }
     case ALERT_BATTERY_LOW:

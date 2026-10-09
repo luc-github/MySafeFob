@@ -137,7 +137,9 @@ Files: `time_service.[ch]`, `wifi_time.[ch]`, `ble_time.[ch]`, `ui_keyboard.[ch]
   HOME alert button + Alerts screen, threshold setting `TimeSyncMaxAgeS`
   (default 90 days, changeable with the console `setting` command); also an alert
   when no sync was ever recorded. Not built yet (ROADMAP 8.0 P1/P2).
-- Serial (USB) sync: console command `settime` (ADR-006 serial channel), ROADMAP 8.0 P4.
+- Serial (USB) sync: console command `settime` (ADR-006 serial channel), ROADMAP 8.0 P4,
+  built 2026-10-09 (`main/cmd_settime.c`): UTC epoch with optional fraction, or ISO
+  `YYYY-MM-DDTHH:MM:SS[.f][Z]`; sync source `serial` (3).
 - An optional ppm compensation from the
   measured drift per day (the About screen shows it once 3 syncs exist; the first three
   records taken before fix 4 are unreliable).

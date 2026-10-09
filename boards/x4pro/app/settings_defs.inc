@@ -78,7 +78,7 @@ SETTINGS_DEF(TimeTzOffsetMin, "tz_off_min", I32, 0, TIME)
 /* Last 3 clock synchronisations, newest = index 0 (drift tracking, shown in
  * About): UTC epoch of the sync (0 = none), how far the clock was off just
  * before it (signed seconds, new minus old; INT32_MIN = unknown), and the
- * source (0 manual, 1 Wi-Fi, 2 BLE). settings_store_push_time_sync() shifts
+ * source (0 manual, 1 Wi-Fi, 2 BLE, 3 serial). settings_store_push_time_sync() shifts
  * the records down. */
 SETTINGS_DEF(TimeSyncEpoch0,  "sync_e0", U32, 0, TIME)
 SETTINGS_DEF(TimeSyncEpoch1,  "sync_e1", U32, 0, TIME)

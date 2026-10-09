@@ -246,6 +246,12 @@ time_sync_due_t time_service_next_sync_due(time_t *due_utc)
     return TIME_SYNC_DUE_OK;
 }
 
+const char *time_service_source_name(uint32_t source)
+{
+    static const char *const kSources[] = {"manual", "Wi-Fi", "BLE", "serial"};
+    return source < sizeof(kSources) / sizeof(kSources[0]) ? kSources[source] : "?";
+}
+
 static void record_sync(time_t new_utc, int32_t delta, time_sync_source_t source)
 {
     settings_store_push_time_sync((uint32_t)new_utc, delta, (uint32_t)source);
