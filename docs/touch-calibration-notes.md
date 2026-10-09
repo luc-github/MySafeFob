@@ -406,3 +406,57 @@ pt.y = touch_lerp_y(raw_x);
   (`docs/ROADMAP.md`, ADR-014's amendments). Revisit if it turns out to
   affect other files/tasks later — nothing else in the project has
   reported the same symptom so far.
+
+## 11. Bottom half re-measured on the keyboard (2026-10-09)
+
+Symptom: on the Owner info keyboard (bottom-anchored, keys 56px high, row
+centers y = 488 / 554 / 620 / 686 / 752), taps on the 2nd row registered
+the 1st row's key.
+
+Measured (one tap per key center, then 13 taps around the row 1 / row 2
+border):
+
+| Target (true y) | raw_x | Old mapping | New mapping |
+|---|---|---|---|
+| row 1 `r` (488) | 315-316 | 490 | 482-490 |
+| row 2 `a` (554) | 135-137 | 504-508 (wrong row) | 554-559 |
+| row 3 `k` (620) | 112 | 607 | 620 |
+| row 4 `b` (686) | 81-84 | 677 | 686-691 |
+| row 5 `space` (752) | 49-50 | 742 | 750-752 |
+
+- The jump in raw_x found on 2026-09-24 is real, but sits ~50px lower
+  than the `{138, 500}` point put it: raw ~137 is y~554, not 500.
+  `kTouchYBreakpoints` below y=490 replaced by `{137,554} {112,620}
+  {84,686} {49,752}`.
+- Between y~490 and y~554 the panel only ever reported raw ~315 or ~136,
+  nothing in between: a tap anywhere in that band snaps to one of those
+  two lines. **UI rule**: no touch-target edge inside y~495..550. Both
+  keyboards are bottom-anchored (`LV_ALIGN_BOTTOM_MID, 0, -10`) so the two
+  lines are the centers of rows 1 and 2; Time's keyboard used to sit at
+  y=414, where row 2 (490-546) straddled the band.
+- Likely root cause unchanged (§2): this unit's GT911 runs a substitute
+  config (`cfg version 0x00` at every boot, then host upload).
+- User feedback: the keys are small to aim at precisely. Not changed;
+  candidate for later (fewer keys per row, or taller keys if the layout
+  allows).
+
+### If touch is off on another unit or board (decision 2026-10-09)
+
+Where the corrections live: entirely in the board's own touch driver,
+`boards/x4pro/app/touch.c` (GT911 substitute config upload, raw -> screen
+mapping with `kTouchYBreakpoints`, then the per-unit `TouchCal*`
+scale/offset). Another board gets its own `touch.c` under
+`boards/<name>/`; the rest of the app only sees corrected screen
+coordinates.
+
+- **Another X4 Pro unit**: the Y table was measured on one unit whose
+  GT911 fails its config self-load (`self-load FAILED (cfg version 0x00)`
+  at boot) and runs our substitute config. The table is applied whatever
+  path `touch_init()` took. If a unit logs `self-load OK` and taps are
+  off, suspect this table first: that unit probably needs a plain linear
+  mapping (or its own table), chosen by the config path. Deliberately not
+  coded without such a unit to validate it on.
+- **Another board**: the "no touch-target edge in y~495..550" rule is this
+  unit's quirk, not a UI rule. Bottom-anchored keyboards are harmless
+  anywhere; if the UI moves to shared code, express the band as a board
+  property rather than hard-coding it in screens.

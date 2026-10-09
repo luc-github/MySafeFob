@@ -19,7 +19,7 @@
 /**
  * @file ui_screen_settings_controls.cpp
  * @brief MySafeFob App — Settings > Controls (Power short-press confirm,
- *        auto-sleep timeout).
+ *        auto-sleep timeout, stay awake on USB).
  */
 #include "ui_screens.h"
 #include "ui_widgets.h"
@@ -44,6 +44,17 @@ static void power_confirm_switch_cb(lv_event_t *e)
     lv_obj_t *sw = lv_event_get_target_obj(e);
     bool checked = lv_obj_has_state(sw, LV_STATE_CHECKED);
     ui_defer(power_confirm_deferred, reinterpret_cast<void *>(static_cast<intptr_t>(checked)));
+}
+
+static void usb_awake_deferred(void *user_data)
+{
+    settings_store_set_stay_awake_on_usb(static_cast<bool>(reinterpret_cast<intptr_t>(user_data)));
+}
+
+static void usb_awake_switch_cb(lv_event_t *e)
+{
+    bool checked = lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED);
+    ui_defer(usb_awake_deferred, reinterpret_cast<void *>(static_cast<intptr_t>(checked)));
 }
 
 static lv_obj_t *s_idle_value_label;
@@ -81,6 +92,9 @@ lv_obj_t *build_settings_controls(lv_group_t **group_out, lv_obj_t **battery_lab
     s_idle_index = nearest_preset_index(kAutoSleepPresets, kAutoSleepPresetCount,
                                         settings_store_get_idle_timeout_s());
     lv_label_set_text(s_idle_value_label, kAutoSleepLabels[s_idle_index]);
+
+    make_round_toggle_row(content, group, "Stay awake on USB",
+                          settings_store_get_stay_awake_on_usb(), usb_awake_switch_cb);
 
     return screen;
 }

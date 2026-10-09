@@ -652,10 +652,15 @@ lv_obj_t *build_time(lv_group_t **group_out, lv_obj_t **battery_label_out)
     build_ble_tab(s_panel[kTabBle], group);
     build_manual_tab(s_panel[kTabManual], group);
 
-    /* Screen-wide keyboard, anchored under the Wi-Fi panel. */
+    /* Screen-wide keyboard, bottom-anchored exactly like Owner info's
+     * (2026-10-09, was top at y=414): that position is the one validated
+     * on hardware. The touch panel's raw Y jumps between y~490 and y~554
+     * (touch.c, kTouchYBreakpoints), so taps in that band snap to one of
+     * those two lines; bottom-anchored, they are the centers of rows 1 and
+     * 2. At y=414 row 2 spanned 490-546 and a snapped tap could hit row 3. */
     static const ui_keyboard_cb_t kCb = {kb_char, kb_backspace, kb_enter, nullptr};
     s_keyboard = ui_keyboard_create(screen, group, &kCb);
-    lv_obj_align(s_keyboard, LV_ALIGN_TOP_MID, 0, 414);
+    lv_obj_align(s_keyboard, LV_ALIGN_BOTTOM_MID, 0, -10);
 
     s_digits_len = 0;
     memset(s_digits, 0, sizeof(s_digits));

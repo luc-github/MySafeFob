@@ -550,6 +550,16 @@ and frontlight.
 ### 2.12 SETTINGS_CONTROLS (added 2026-09-17, see
 `docs/touch-calibration-notes.md`)
 
+> **Amendment (2026-10-09) — "Stay awake on USB"** (setting
+> `StayAwakeOnUsb`, default Off, third row after Auto-sleep): while a USB
+> cable is plugged (USB power on GPIO21, or a host on the USB Serial/JTAG
+> port), the inactivity timeout never puts the device to sleep; the
+> countdown restarts instead, so unplugging gives a full timeout before
+> sleep. For long sessions on a cable. **Deep sleep only**: protection and
+> sleep are separate — the future PIN re-lock (§2.13) keeps its own timer
+> and is not affected. Manual sleep (Power long-press, "Sleep now") and
+> the battery-critical sleep still apply.
+
 > **Status (2026-09-19)**: built and hardware-validated, but simpler
 > than this section originally speced — see the callouts below each
 > mockup for what actually shipped vs. what's still just a design idea.

@@ -123,7 +123,7 @@ then start the TOTP core (8.1/8.2). Order below is the working order.
 | # | Item | Depends on | Status |
 |---|------|------------|--------|
 | P1 | Alert indicator + Alerts screen + sync-age threshold setting (ADR-018) — `alerts.c`, `ui_screen_alerts.cpp`, HOME button; evaluation logged (`alerts:`/`home:` tags); About shows "next sync" from the same `time_service_next_sync_due()` | — | ✅ hardware-tested 2026-10-01 |
-| P2 | Generic `setting` console command (list/get/set/reset, ADR-018) — `main/cmd_setting.c`; settings table gained an I32 type (signed values print correctly) and `TimeSyncMaxAgeS` (90 d) + `SecretAutoClearS` (300 s) | — | 🔄 hardware-tested 2026-10-01 except negative (I32) values — open |
+| P2 | Generic `setting` console command (list/get/set/reset, ADR-018) — `main/cmd_setting.c`; settings table gained an I32 type (signed values print correctly) and `TimeSyncMaxAgeS` (90 d) + `SecretAutoClearS` (300 s) | — | ✅ hardware-tested 2026-10-01, negative values 2026-10-09 |
 | P3 | String setting type in `settings_store` (`SETTINGS_STR_DEF`, NVS string, max length, `setting set` takes the rest of the line) + Owner info screen (`ui_screen_owner.cpp`, toggle + text field + keyboard, now multi-instance) + owner text on the sleep screen (`splash.cpp`, white text in the top band, drawn from LVGL's font tables) (F-19, UI-SPECS §2.17). Also: Settings became a two-level menu, no scrolling (Device / Time / Security & Data / About, UI-SPECS §2.11 amendment 2026-10-01); Owner info lives under Security & Data | — | 🔄 sleep-screen owner text hardware-validated 2026-10-08; rest of the screen pending (lower keyboard rows: see the open-items review below) |
 | P4 | Serial time sync: `settime` console command (ADR-006 serial channel, new sync source `serial`) | — | ⏳ |
 | P5 | BLE time: confirmation step before applying (device name, proposed time, offset; mandatory above ~60 s) | — | ⏳ |
@@ -154,8 +154,8 @@ not in NVS.
 | `ESP_LOG*` from `boards/x4pro/app` never reaches the console (`app_log_workaround.h`) | 👀 Keep watching: workaround in place, root cause unknown |
 | Occasional freeze on the app -> factory switch (ADR-009 open observation) | 👀 Keep watching: investigate only if it recurs with logs and a solid USB connection |
 | Frontlight off during deep sleep (`splash.cpp`) | ✅ Hardware-validated: off while asleep, restored on wake per its setting |
-| Keyboard taps on the lower rows sometimes register the key above | ⏳ Open: touch Y accuracy near the bottom of the panel (UI-SPECS §3 "direct-tap validation") |
-| Negative I32 values in `setting` (P2) | ⏳ Not tested yet |
+| Keyboard taps on the lower rows sometimes register the key above | ✅ Fixed and hardware-validated 2026-10-09: the bottom of `touch.c`'s Y table re-measured on the keyboard keys (the jump was placed ~50px too high); Time's keyboard bottom-anchored like Owner info's (`touch-calibration-notes.md` §11) |
+| Negative I32 values in `setting` (P2) | ✅ Hardware-validated 2026-10-09; duration suffix now uses the setting's own unit (ADR-018) |
 
 ---
 
@@ -2501,7 +2501,11 @@ alert needs a generic home rather than a one-off label.
    - `setting set <id> <value>` — BOOL: `0/1/on/off`; U32: decimal,
      negative numbers accepted (stored as their 32-bit pattern, like
      `tz_off_min`), optional suffix `s`/`m`/`h`/`d` for durations
-     (`setting set TimeSyncMaxAgeS 5m`);
+     (`setting set TimeSyncMaxAgeS 5m`). Amended 2026-10-09: the suffix
+     converts to the setting's own unit, taken from its id (`...S` =
+     seconds, `...Min` = minutes, so `TimeTzOffsetMin -1h` = -60); other
+     settings refuse a suffix. Negative I32 values hardware-validated the
+     same day;
    - `setting reset <id>` — back to the default (erases the NVS key);
      `setting reset all` resets every setting at once (erases the whole
      namespace, added 2026-10-01); `setting reset settings|calibration|time`

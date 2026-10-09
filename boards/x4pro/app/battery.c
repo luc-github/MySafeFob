@@ -31,6 +31,7 @@
 #include "settings_store.h"
 
 #include "driver/gpio.h"
+#include "driver/usb_serial_jtag.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -350,6 +351,11 @@ void battery_print_log(void)
 bool battery_last_read_ok(void)
 {
     return s_last_read_ok;
+}
+
+bool battery_usb_connected(void)
+{
+    return read_charging() || usb_serial_jtag_is_connected();
 }
 
 battery_level_t battery_level(uint8_t *soc_out)

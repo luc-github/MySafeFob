@@ -226,6 +226,16 @@ void settings_store_set_idle_timeout_s(uint32_t seconds)
     settings_set_u32(SETTINGS_ID_IdleTimeoutS, seconds);
 }
 
+bool settings_store_get_stay_awake_on_usb(void)
+{
+    return settings_get_u32(SETTINGS_ID_StayAwakeOnUsb) != 0;
+}
+
+void settings_store_set_stay_awake_on_usb(bool on)
+{
+    settings_set_u32(SETTINGS_ID_StayAwakeOnUsb, on ? 1 : 0);
+}
+
 bool settings_store_get_frontlight_on(void)
 {
     return settings_get_u32(SETTINGS_ID_FrontlightOn) != 0;

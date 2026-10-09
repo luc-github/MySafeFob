@@ -59,6 +59,9 @@
 
 SETTINGS_DEF(PowerShortConfirm, "pwr_shortcfm", BOOL, 1, GENERAL)
 SETTINGS_DEF(IdleTimeoutS,      "idle_to_s",    U32,  0, GENERAL)
+/* No auto-sleep while USB is connected (2026-10-09): long sessions on a
+ * cable. Only the inactivity sleep; never the PIN lock (separate timer). */
+SETTINGS_DEF(StayAwakeOnUsb,    "usb_awake",    BOOL, 0, GENERAL)
 SETTINGS_DEF(FrontlightOn,        "fl_on",      BOOL, 0, GENERAL)
 SETTINGS_DEF(FrontlightColor,     "fl_color",   U32,  0, GENERAL)   /* 0-100 warm<->cool mix, 0=warm */
 SETTINGS_DEF(FrontlightIntensity, "fl_intens",  U32,  60, GENERAL)

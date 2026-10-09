@@ -274,6 +274,13 @@ static void check_idle_timeout(void)
     int64_t now = esp_timer_get_time();
     int64_t last = s_last_activity_us.load(std::memory_order_relaxed);
     if (now - last >= static_cast<int64_t>(timeout_s) * 1000000) {
+        /* "Stay awake on USB": restart the countdown instead of sleeping,
+         * so after unplugging the device still gets a full timeout before
+         * it sleeps. Deep sleep only -- never the PIN lock. */
+        if (settings_store_get_stay_awake_on_usb() && battery_usb_connected()) {
+            board_activity_notify();
+            return;
+        }
         enter_sleep_from_idle_or_menu("idle timeout");
     }
 }

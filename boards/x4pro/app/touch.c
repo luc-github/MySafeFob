@@ -139,9 +139,29 @@ static const touch_y_breakpoint_t kTouchYBreakpoints[] = {
     { 415, 240 },   /* TOP (2026-09-18, unchanged; today's sweep read ~412) */
     { 322, 440 },   /* refined MID (was raw_x=334 in the original 2-segment fit) */
     { 315, 490 },   /* plateau end -- raw_x barely moved since the point above */
-    { 138, 500 },   /* post-jump -- raw_x dropped ~180 units over just 10px */
-    { 104, 640 },   /* BOTTOM (2026-09-18, unchanged -- still consistent with the new sweep) */
-    {  45, 750 },   /* extended range, beyond the original BOTTOM point */
+    /* Below the jump: re-measured 2026-10-09 on the keyboard (Owner info,
+     * key centers 554/620/686/752, keys 56px high). The 2026-09-24 points
+     * {138,500} {104,640} {45,750} put the jump ~50px too high: a tap on
+     * the 2nd keyboard row (raw ~137) mapped to y~505 and hit the row
+     * above. Validated the same day: every row correct, 13 taps around the
+     * row 1 / row 2 border all correct. Raw_x only ever read ~315 or
+     * ~136 there, never in between: a tap anywhere in y~490..554 snaps to
+     * one of those two lines. UI rule: no touch target edge inside that
+     * band (the keyboards are bottom-anchored so the two lines are row
+     * centers).
+     *
+     * IF TOUCH IS OFF ON ANOTHER X4 PRO UNIT: this whole table was measured
+     * on one unit whose GT911 fails its config self-load ("self-load FAILED
+     * (cfg version 0x00)" at boot) and runs our uploaded substitute config,
+     * the likely cause of the jump. It is applied whatever path touch_init()
+     * took. If a unit logs "self-load OK" instead, suspect this table first:
+     * that unit probably needs a plain linear mapping (or its own table),
+     * selected by the config path. Not coded blind (2026-10-09 decision):
+     * no such unit to validate it on. See touch-calibration-notes.md §11. */
+    { 137, 554 },
+    { 112, 620 },
+    {  84, 686 },
+    {  49, 752 },
 };
 #define TOUCH_Y_BREAKPOINT_COUNT \
     (int)(sizeof(kTouchYBreakpoints) / sizeof(kTouchYBreakpoints[0]))

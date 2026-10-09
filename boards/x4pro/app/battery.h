@@ -46,6 +46,13 @@
  */
 bool battery_read(uint8_t *soc_percent, bool *charging);
 
+/**
+ * @brief True while a USB cable is plugged: USB power on the charge pin
+ *        (GPIO21) or a host talking to the USB Serial/JTAG port (still
+ *        true once the cell is full and the charge pin may drop).
+ */
+bool battery_usb_connected(void);
+
 /** @brief Result of the last battery_read() (false before the first one). */
 bool battery_last_read_ok(void);
 

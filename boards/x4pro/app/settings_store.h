@@ -76,6 +76,16 @@ uint32_t settings_store_get_idle_timeout_s(void);
 void settings_store_set_idle_timeout_s(uint32_t seconds);
 
 /**
+ * @brief "Stay awake on USB" (2026-10-09): while USB is connected
+ *        (battery_usb_connected()), the inactivity timeout above never
+ *        puts the device to sleep. Default off. Affects deep sleep only:
+ *        the future PIN re-lock is a separate timer and stays active.
+ *        Manual sleep (Power long-press, "Sleep now") still works.
+ */
+bool settings_store_get_stay_awake_on_usb(void);
+void settings_store_set_stay_awake_on_usb(bool on);
+
+/**
  * @brief Frontlight preferences (UI-SPECS.md §2.14, SETTINGS_DISPLAY).
  *        Color is a 0-100 warm<->cool mix percentage (0=warm, 100=cool,
  *        50=neutral — see frontlight_apply()), amended 2026-09-20 from an

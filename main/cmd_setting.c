@@ -33,8 +33,10 @@
  *
  * <id> is the setting's name or NVS key, case-insensitive. Values: BOOL
  * accepts 0/1/on/off/true/false; U32/I32 accept a decimal number (or 0x
- * hex), negative for I32, with an optional duration suffix s/m/h/d
- * (multiplied into seconds: "5m" = 300). STR takes the rest of the line
+ * hex), negative for I32. Duration settings (id ending in "S" = seconds,
+ * "Min" = minutes) also take a suffix s/m/h/d, converted to the setting's
+ * unit: "5m" = 300 for IdleTimeoutS, "-1h" = -60 for TimeTzOffsetMin;
+ * other settings refuse a suffix. STR takes the rest of the line
  * (words joined by single spaces, or one "quoted" argument), up to the
  * setting's max length; `setting reset` empties it. Secrets never live in this table
  * (secret_store owns them), so nothing here can expose one.
@@ -72,8 +74,25 @@ static void format_value(settings_kind_t kind, uint32_t raw, char *buf, size_t l
     }
 }
 
-/* Parses `text` for a setting of `kind` into its raw 32-bit pattern. */
-static bool parse_value(settings_kind_t kind, const char *text, uint32_t *out)
+static bool ends_with(const char *s, const char *suffix)
+{
+    size_t ls = strlen(s), lx = strlen(suffix);
+    return ls >= lx && strcmp(s + ls - lx, suffix) == 0;
+}
+
+/* Seconds per unit of a duration setting, from the naming convention of
+ * settings_defs.inc ids: "...S" = seconds, "...Min" = minutes; 0 = not a
+ * duration (a s/m/h/d suffix is refused). 2026-10-09 fix: the suffix used
+ * to always produce seconds, so `TimeTzOffsetMin -1h` stored -3600 min. */
+static long long duration_unit_s(const char *name)
+{
+    if (ends_with(name, "Min")) return 60;
+    if (ends_with(name, "S")) return 1;
+    return 0;
+}
+
+/* Parses `text` for setting `name` of `kind` into its raw 32-bit pattern. */
+static bool parse_value(const char *name, settings_kind_t kind, const char *text, uint32_t *out)
 {
     if (kind == SETTINGS_KIND_BOOL) {
         if (!strcmp(text, "1") || !strcasecmp(text, "on") || !strcasecmp(text, "true")) {
@@ -94,8 +113,9 @@ static bool parse_value(settings_kind_t kind, const char *text, uint32_t *out)
     long long v = strtoll(text, &end, base);
     if (errno != 0 || end == text) return false;
 
-    long long mult = 1;
     if (*end != '\0') {
+        long long unit = duration_unit_s(name);
+        long long mult;
         switch (tolower((unsigned char)*end)) {
         case 's': mult = 1; break;
         case 'm': mult = 60; break;
@@ -103,9 +123,10 @@ static bool parse_value(settings_kind_t kind, const char *text, uint32_t *out)
         case 'd': mult = 86400; break;
         default:  return false;
         }
-        if (end[1] != '\0') return false;
+        if (end[1] != '\0' || unit == 0) return false;
+        if (mult % unit != 0) return false;   /* e.g. "30s" for a minutes setting */
+        v *= mult / unit;
     }
-    v *= mult;
 
     if (kind == SETTINGS_KIND_I32) {
         if (v < INT32_MIN || v > INT32_MAX) return false;
@@ -235,7 +256,7 @@ static int cmd_setting(int argc, char **argv)
         if (info.kind == SETTINGS_KIND_STR) return set_string(index, &info, argc - 3, &argv[3]);
         if (argc != 4) return usage();
         uint32_t raw;
-        if (!parse_value(info.kind, argv[3], &raw)) {
+        if (!parse_value(info.name, info.kind, argv[3], &raw)) {
             printf("Invalid %s value '%s'.\n", kind_name(info.kind), argv[3]);
             return 1;
         }
@@ -270,7 +291,7 @@ esp_err_t cmd_setting_register(void)
     const esp_console_cmd_t cmd = {
         .command = "setting",
         .help = "Settings table: list | get <id> | set <id> <value> | reset <id>|all|settings|calibration|time. "
-                "Values: bool on/off, numbers with optional s/m/h/d suffix (5m = 300). "
+                "Values: bool on/off, numbers; durations (ids ending in S or Min) take s/m/h/d (5m). "
                 "Applied at the setting's next read (some only at boot).",
         .func = &cmd_setting,
     };
