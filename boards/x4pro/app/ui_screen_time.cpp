@@ -266,9 +266,12 @@ static void build_manual_tab(lv_obj_t *panel, lv_group_t *group)
 
 /* ---- Wi-Fi tab (password entry UI; scan/connect/SNTP come next) --------- */
 
+/* Masked, the character count is appended (2026-10-09 bug report: "the
+ * keyboard does nothing"): past kPasswordShown masked characters the text
+ * stayed "<******************" whatever was typed, so keys looked dead. */
 static void show_password(void)
 {
-    char buf[kPasswordShown + 8];
+    char buf[kPasswordShown + 16];
     int shown = s_password_len < kPasswordShown ? s_password_len : kPasswordShown;
     int pos = 0;
     if (s_password_len > kPasswordShown) buf[pos++] = '<';
@@ -276,6 +279,9 @@ static void show_password(void)
         buf[pos++] = s_password_visible ? s_password[i] : '*';
     }
     buf[pos] = '\0';
+    if (pos && !s_password_visible) {
+        snprintf(buf + pos, sizeof(buf) - pos, " (%d)", s_password_len);
+    }
     set_label(s_password_label, pos ? buf : "(password)");
 }
 

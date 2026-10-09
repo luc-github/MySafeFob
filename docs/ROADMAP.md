@@ -155,6 +155,7 @@ not in NVS.
 | Occasional freeze on the app -> factory switch (ADR-009 open observation) | 👀 Keep watching: investigate only if it recurs with logs and a solid USB connection |
 | Frontlight off during deep sleep (`splash.cpp`) | ✅ Hardware-validated: off while asleep, restored on wake per its setting |
 | Keyboard taps on the lower rows sometimes register the key above | ✅ Fixed and hardware-validated 2026-10-09: the bottom of `touch.c`'s Y table re-measured on the keyboard keys (the jump was placed ~50px too high); Time's keyboard bottom-anchored like Owner info's (`touch-calibration-notes.md` §11) |
+| Time > Wi-Fi keyboard "does nothing" | ✅ Fixed and hardware-validated 2026-10-09: taps were received, but past 18 masked characters the password field never changed (count now shown, e.g. `****** (6)`), and the keyboard keys' focus ring was clipped by their rows (rows now declare room for it, `ui_keyboard.cpp`) |
 | Negative I32 values in `setting` (P2) | ✅ Hardware-validated 2026-10-09; duration suffix now uses the setting's own unit (ADR-018) |
 
 ---

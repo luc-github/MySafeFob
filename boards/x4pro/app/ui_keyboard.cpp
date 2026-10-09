@@ -139,6 +139,11 @@ static lv_obj_t *add_key(KeyboardState *kb, lv_obj_t *row, lv_group_t *group, co
     return key;
 }
 
+static void row_ext_draw_cb(lv_event_t *e)
+{
+    lv_event_set_ext_draw_size(e, kFocusOutlineSlack);
+}
+
 static lv_obj_t *make_key_row(lv_obj_t *parent)
 {
     lv_obj_t *row = lv_obj_create(parent);
@@ -147,6 +152,21 @@ static lv_obj_t *make_key_row(lv_obj_t *parent)
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(row, kColGap, 0);
+    /* Let a key's focus ring (7px past the key, add_to_group()) draw past
+     * the row's own box (2026-10-09 bug report: "the key does not show
+     * focus"). LVGL clips children to their parent and this row wraps its
+     * keys exactly, so only thin side slivers of the ring were left.
+     * Padding the row instead would make the keyboard taller and move the
+     * key positions validated against the touch mapping (touch.c); the
+     * 10px row gap is enough room for the ring.
+     * OVERFLOW_VISIBLE alone is not enough: LVGL only lets children draw up
+     * to the row's own ext draw size past its box (lv_refr.c,
+     * lv_obj_pos.c), which is 0 for a plain container -- the outer side of
+     * the first and last key's ring stayed clipped. row_ext_draw_cb()
+     * declares room for the ring. */
+    lv_obj_add_flag(row, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+    lv_obj_add_event_cb(row, row_ext_draw_cb, LV_EVENT_REFR_EXT_DRAW_SIZE, nullptr);
+    lv_obj_refresh_ext_draw_size(row);
     return row;
 }
 
