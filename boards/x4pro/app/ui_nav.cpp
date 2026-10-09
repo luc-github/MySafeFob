@@ -100,6 +100,11 @@ void board_activity_notify(void)
     s_last_activity_us.store(esp_timer_get_time(), std::memory_order_relaxed);
 }
 
+int64_t ui_nav_last_activity_us(void)
+{
+    return s_last_activity_us.load(std::memory_order_relaxed);
+}
+
 /* Counters, not flags (2026-09-22, same reasoning as lv_port_indev.c's
  * touch-edge queue): a single bool can only ever represent "one pending",
  * so two presses landing while board_ui_nav_task is busy (mid-flush) would
@@ -266,9 +271,8 @@ static void build_screens(void)
     build_screen(Screen::Alerts, build_alerts);
     build_screen(Screen::OwnerInfo, build_owner_info);
     build_screen(Screen::KeyboardTest, build_keyboard_test);
-    build_screen(Screen::TotpList, build_totp_list);
-    build_screen(Screen::PwdList, build_pwd_list);
-    build_screen(Screen::RcvList, build_rcv_list);
+    build_screen(Screen::Names, build_names);
+    build_screen(Screen::Account, build_account);
 }
 
 /* REMOVED 2026-09-24 (was: slip eink.c's mandatory ghost-budget full GC

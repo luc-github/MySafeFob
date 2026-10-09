@@ -41,8 +41,7 @@
 #ifdef __cplusplus
 
 enum class Screen { Home, Settings, SettingsControls, SettingsAbout, SettingsDisplay, TouchDiag, Security, Time, Alerts, OwnerInfo,
-                    SettingsDevice, SettingsSecurityData, KeyboardTest, TotpList, PwdList, RcvList,
-                    kCount };
+                    SettingsDevice, SettingsSecurityData, KeyboardTest, Names, Account, kCount };
 
 /**
  * @brief Switches to screen `s`: refreshes its battery label, forces the
@@ -92,8 +91,16 @@ lv_obj_t *build_time(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_alerts(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_owner_info(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_keyboard_test(lv_group_t **group_out, lv_obj_t **battery_label_out);
-lv_obj_t *build_totp_list(lv_group_t **group_out, lv_obj_t **battery_label_out);
-lv_obj_t *build_pwd_list(lv_group_t **group_out, lv_obj_t **battery_label_out);
-lv_obj_t *build_rcv_list(lv_group_t **group_out, lv_obj_t **battery_label_out);
+lv_obj_t *build_names(lv_group_t **group_out, lv_obj_t **battery_label_out);
+lv_obj_t *build_account(lv_group_t **group_out, lv_obj_t **battery_label_out);
+
+/** @brief Opens NAMES for `letter` ('A'-'Z' or '#'), ADR-019 (ui_screen_names.cpp). */
+void names_open(char letter);
+
+/** @brief Opens the ACCOUNT page of record `id`, ADR-019 (ui_screen_account.cpp). */
+void account_open(uint16_t id);
+
+/** @brief esp_timer time of the last user input (ADR-012 activity, ui_nav.cpp). */
+int64_t ui_nav_last_activity_us(void);
 
 #endif /* __cplusplus */

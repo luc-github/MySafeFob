@@ -302,13 +302,13 @@ screen.
 >
 > ```
 > HOME                                   NAMES (letter G)
-> [⚙]      MySafeFob        [⚠] [⏻]     < Back            G
+> [⚙]     22 entries       [⚠] [⏻]     < Back            G
 > ────────────────────────────────       ──────────────────────
 >  [A] [B] [C] [D] [E]                   [ GitHub            > ]
 >  [F] [G] [H] [I] [J]                   [ GitLab            > ]
 >  [K] [L] [M] [N] [O]                   [ Google perso      > ]
 >  [P] [Q] [R] [S] [T]                   [ Google pro        > ]
->                                         (status line)
+>      MySafeFob (large)                  (status line)
 >  [U] [V] [W] [X] [Y]                   ...
 >  [Z] [#]     [   + Add   ]             [<] 1 / 2 [>]   [ + Add ]
 > ```
@@ -317,7 +317,9 @@ screen.
 >   creates a record without choosing a letter. ⏻ = sleep now (was the
 >   "Sleep now" button), mirror of ⚙; ⚠ only while an alert is active.
 >   Grid rows placed with `touch_safe_y()` (no edge in the X4 Pro touch
->   band y~490-554): 4 rows above it, 2 below.
+>   band y~490-554): 4 rows above it, 2 below; the gap shows "MySafeFob"
+>   in the large font (not a target). The header shows "N entries" (the
+>   number of accounts, information only).
 > - NAMES: the P8 paginated list (6 rows, `<` `>`, status line in the
 >   band gap); `+ Add` prefills the name with the letter.
 >
