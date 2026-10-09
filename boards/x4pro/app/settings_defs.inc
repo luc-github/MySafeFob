@@ -97,5 +97,12 @@ SETTINGS_DEF(SecretAutoClearS, "secret_clr_s", U32, 300, GENERAL)
 /* F-19 owner contact info (Settings > Owner info, UI-SPECS §2.17): drawn on
  * the sleep screen only while OwnerInfoShow is on. Opt-in: off and empty by
  * default, since the sleep screen is visible to whoever finds the device. */
+/* Battery protection (ADR-018 amendment 2026-10-08), percent, 0 = off.
+ * Low: HOME alert + note on the sleep screen. Critical: the device puts
+ * itself to sleep, so a forgotten device never runs completely flat (which
+ * stops the RTC and erases the gauge's profile). Neither applies while
+ * charging. */
+SETTINGS_DEF(BatteryLowPct,      "bat_low_pct",  U32, 15, GENERAL)
+SETTINGS_DEF(BatteryCriticalPct, "bat_crit_pct", U32, 5,  GENERAL)
 SETTINGS_DEF(OwnerInfoShow, "owner_show", BOOL, 0, GENERAL)
 SETTINGS_STR_DEF(OwnerInfo, "owner_info", SETTINGS_OWNER_INFO_MAX, "", GENERAL)

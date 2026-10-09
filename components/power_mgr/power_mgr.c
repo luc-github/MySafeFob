@@ -115,11 +115,6 @@ bool power_mgr_wakeup_from_power(void)
     return esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1;
 }
 
-bool power_mgr_battery_critical(void)
-{
-    return false;   /* CW2017 in 8c */
-}
-
 void power_mgr_shutdown(void)
 {
     /* TODO 8c: e-ink POF + frontlight off + rails hold before sleep.

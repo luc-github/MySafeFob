@@ -346,6 +346,16 @@ uint32_t settings_store_get_secret_auto_clear_s(void)
     return settings_get_u32(SETTINGS_ID_SecretAutoClearS);
 }
 
+uint32_t settings_store_get_battery_low_pct(void)
+{
+    return settings_get_u32(SETTINGS_ID_BatteryLowPct);
+}
+
+uint32_t settings_store_get_battery_critical_pct(void)
+{
+    return settings_get_u32(SETTINGS_ID_BatteryCriticalPct);
+}
+
 bool settings_store_get_owner_info_show(void)
 {
     return settings_get_u32(SETTINGS_ID_OwnerInfoShow) != 0;

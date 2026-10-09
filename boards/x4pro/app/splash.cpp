@@ -48,6 +48,10 @@
 #include "lvgl.h"
 
 extern "C" {
+#include "battery.h"
+}
+
+extern "C" {
 #include "eink.h"
 #include "hw_config.h"
 #include "frontlight.h"
@@ -238,6 +242,21 @@ static void draw_owner_info(uint8_t *fb)
     ESP_LOGI(TAG, "owner info drawn on sleep screen");
 }
 
+/* Battery low (ADR-018 amendment 2026-10-08): a reminder in the black band
+ * under the "Z z z", visible while the device sleeps. */
+static void draw_battery_low(uint8_t *fb)
+{
+    uint8_t soc = 0;
+    if (battery_level(&soc) == BATTERY_LEVEL_OK) {
+        return;
+    }
+    char text[40];
+    snprintf(text, sizeof(text), "Battery low (%u%%), please charge", soc);
+    const lv_font_t *font = &lv_font_montserrat_24;
+    draw_centered_white(fb, font, text, static_cast<int>(strlen(text)), SLEEP_H - font->line_height - 24);
+    ESP_LOGI(TAG, "battery low note drawn on sleep screen");
+}
+
 static void rails_for_splash(void)
 {
     /* Undo any RTC hold left by rails_hold_for_sleep() from a previous
@@ -351,6 +370,7 @@ extern "C" void board_sleep_screen_show(void)
     memset(s_fb, 0xFF, sizeof(s_fb));
     blit_sleep_to_fb(s_fb);
     draw_owner_info(s_fb);
+    draw_battery_low(s_fb);
     if (eink_display_fb(s_fb) != ESP_OK) {
         ESP_LOGE(TAG, "e-ink refresh FAILED (sleep screen)");
     }

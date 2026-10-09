@@ -124,7 +124,7 @@ then start the TOTP core (8.1/8.2). Order below is the working order.
 |---|------|------------|--------|
 | P1 | Alert indicator + Alerts screen + sync-age threshold setting (ADR-018) — `alerts.c`, `ui_screen_alerts.cpp`, HOME button; evaluation logged (`alerts:`/`home:` tags); About shows "next sync" from the same `time_service_next_sync_due()` | — | ✅ hardware-tested 2026-10-01 |
 | P2 | Generic `setting` console command (list/get/set/reset, ADR-018) — `main/cmd_setting.c`; settings table gained an I32 type (signed values print correctly) and `TimeSyncMaxAgeS` (90 d) + `SecretAutoClearS` (300 s) | — | 🔄 hardware-tested 2026-10-01 except negative (I32) values — open |
-| P3 | String setting type in `settings_store` (`SETTINGS_STR_DEF`, NVS string, max length, `setting set` takes the rest of the line) + Owner info screen (`ui_screen_owner.cpp`, toggle + text field + keyboard, now multi-instance) + owner text on the sleep screen (`splash.cpp`, white text in the top band, drawn from LVGL's font tables) (F-19, UI-SPECS §2.17). Also: Settings became a two-level menu, no scrolling (Device / Time / Security & Data / About, UI-SPECS §2.11 amendment 2026-10-01); Owner info lives under Security & Data | — | 🔄 built 2026-10-01, hardware test pending |
+| P3 | String setting type in `settings_store` (`SETTINGS_STR_DEF`, NVS string, max length, `setting set` takes the rest of the line) + Owner info screen (`ui_screen_owner.cpp`, toggle + text field + keyboard, now multi-instance) + owner text on the sleep screen (`splash.cpp`, white text in the top band, drawn from LVGL's font tables) (F-19, UI-SPECS §2.17). Also: Settings became a two-level menu, no scrolling (Device / Time / Security & Data / About, UI-SPECS §2.11 amendment 2026-10-01); Owner info lives under Security & Data | — | 🔄 sleep-screen owner text hardware-validated 2026-10-08; rest of the screen pending (lower keyboard rows: see the open-items review below) |
 | P4 | Serial time sync: `settime` console command (ADR-006 serial channel, new sync source `serial`) | — | ⏳ |
 | P5 | BLE time: confirmation step before applying (device name, proposed time, offset; mandatory above ~60 s) | — | ⏳ |
 | P6 | Shared destructive-action confirmation dialog (UI-SPECS §2.18) | — | ⏳ |
@@ -142,6 +142,20 @@ delay only limits how long a secret stays on the e-paper. Used from P9.
 Already settled, not open: the PIN failure counter lives in a plaintext
 sector of the `secrets` partition, outside the blob (`INTERFACES.md` §1.3),
 not in NVS.
+
+#### Open-items review (2026-10-08)
+
+| Item | Decision |
+|------|----------|
+| CW2017 SoC stuck at 0% after a full drain (BATINFO profile lost) | ✅ Fixed and hardware-validated: profile upload in the app's and the factory's `battery.c`, console `battery` (`hardware-specs.md`) |
+| No low-battery protection (`power_mgr_battery_critical()` was a stub) | 🔄 Built 2026-10-08, hardware test pending: alert + sleep-screen note at `BatteryLowPct`, automatic sleep at `BatteryCriticalPct` (ADR-018 amendment). Stub removed from `power_mgr` |
+| Deep-sleep current with the rails held (ADR-009 task 8c) | Closed, cannot be measured directly: the casing cannot be opened. Indirect check 2026-10-09: 98% -> 97% over one night asleep (gauge resolution 1%, so at most ~2% of ~2300 mAh per night), consistent with weeks to months on a charge |
+| SoC shown as `--` after a wake (gauge NACKs) | ✅ Fixed and hardware-validated 2026-10-09 over many wakes: every gauge read retried up to 3 times (`hardware-specs.md`) |
+| `ESP_LOG*` from `boards/x4pro/app` never reaches the console (`app_log_workaround.h`) | 👀 Keep watching: workaround in place, root cause unknown |
+| Occasional freeze on the app -> factory switch (ADR-009 open observation) | 👀 Keep watching: investigate only if it recurs with logs and a solid USB connection |
+| Frontlight off during deep sleep (`splash.cpp`) | ✅ Hardware-validated: off while asleep, restored on wake per its setting |
+| Keyboard taps on the lower rows sometimes register the key above | ⏳ Open: touch Y accuracy near the bottom of the panel (UI-SPECS §3 "direct-tap validation") |
+| Negative I32 values in `setting` (P2) | ⏳ Not tested yet |
 
 ---
 
@@ -565,7 +579,9 @@ rail, defeating the point of turning it off first. `rails_hold_for_sleep()`
 `rtc_gpio_*` (RTC domain, stays powered through sleep); `rails_for_splash()`
 now starts with `rtc_gpio_hold_dis()` on the same three pins so the next
 boot's normal `gpio_config()` can actually take effect (the hold otherwise
-survives the deep-sleep reset). Build-verified only — the actual current
+survives the deep-sleep reset). **Closed 2026-10-08 without a measurement**:
+the casing cannot be opened, so the current cannot be measured; the
+hold stays as built. Original note: build-verified only — the actual current
 measurement (multimeter in series with the battery, comparing sleep
 consumption with and without this hold) is still to be done on hardware,
 which decides whether this strategy is kept as-is or needs to go further
@@ -2507,6 +2523,20 @@ tightened once the drift history of this unit is known.
 
 **Status**: ✅ VALIDATED 2026-09-26 (design; implementation = backlog
 P1/P2, Phase 8.0).
+
+**Amendment 2026-10-08 — battery protection**: a fully drained cell stops
+the RTC (time lost) and erases the CW2017's BATINFO profile (SoC stuck at
+0%, seen on hardware). Two thresholds, settings in the GENERAL group,
+percent, 0 = off, ignored while charging or when the gauge read fails:
+- `BatteryLowPct` (default 15): alert `ALERT_BATTERY_LOW` ("Battery low",
+  no action button, a charger is the fix) and "Battery low (N%), please
+  charge" at the bottom of the sleep screen.
+- `BatteryCriticalPct` (default 5): the device enters deep sleep by itself
+  (checked at startup and on every battery-label timer tick, on every
+  screen), so a forgotten device slows its drain to the sleep current.
+  Waking it while still critical shows HOME briefly, then sleeps again.
+Implemented in `battery_level()` (`battery.c`), `alerts.c`, `ui_nav.cpp`
+(`check_battery_critical()`), `splash.cpp`.
 
 ---
 

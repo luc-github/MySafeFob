@@ -25,6 +25,7 @@
  *   battery          read-only status
  *   battery reload   upload the BATINFO profile if missing, restart the gauge
  *   battery force    upload it even if it already matches, restart the gauge
+ *   battery log      gauge events since boot (in RAM, ms timestamps)
  */
 #include "cmd_battery.h"
 
@@ -49,6 +50,7 @@ static void print_status(void)
     printf("Mode      0x%02X (%s)\n", st.mode, st.mode == 0x00 ? "normal" : "not normal");
     printf("Profile   %s, update flag %s\n", st.profile_match ? "loaded" : "MISSING",
            st.update_flag ? "set" : "clear");
+    printf("I2C       %lu failed read attempts since boot (retried)\n", (unsigned long)st.i2c_errors);
     if (!st.profile_match) printf("SoC reads 0%% without the profile: try 'battery reload'.\n");
 }
 
@@ -59,6 +61,10 @@ static int cmd_battery(int argc, char **argv)
         print_status();
         return 0;
     }
+    if (argc == 2 && !strcmp(argv[1], "log")) {
+        battery_print_log();
+        return 0;
+    }
     if (argc == 2 && (!strcmp(argv[1], "reload") || !strcmp(argv[1], "force"))) {
         bool force = !strcmp(argv[1], "force");
         printf("Loading profile and restarting the gauge (up to ~4 s)...\n");
@@ -67,7 +73,7 @@ static int cmd_battery(int argc, char **argv)
         print_status();
         return ok ? 0 : 1;
     }
-    printf("Usage: battery [reload|force]\n");
+    printf("Usage: battery [reload|force|log]\n");
     return 1;
 }
 
@@ -76,7 +82,7 @@ esp_err_t cmd_battery_register(void)
     const esp_console_cmd_t cmd = {
         .command = "battery",
         .help = "Battery gauge status (SoC, voltage, charging, profile). "
-                "'battery reload' uploads the gauge profile if missing, 'battery force' always.",
+                "'battery reload' uploads the gauge profile if missing, 'battery force' always, 'battery log' gauge events since boot.",
         .func = &cmd_battery,
     };
     return esp_console_cmd_register(&cmd);

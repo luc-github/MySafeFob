@@ -46,6 +46,23 @@
  */
 bool battery_read(uint8_t *soc_percent, bool *charging);
 
+/** @brief Result of the last battery_read() (false before the first one). */
+bool battery_last_read_ok(void);
+
+typedef enum {
+    BATTERY_LEVEL_OK,        /* above the low threshold, charging, or unknown */
+    BATTERY_LEVEL_LOW,       /* <= BatteryLowPct and not charging */
+    BATTERY_LEVEL_CRITICAL,  /* <= BatteryCriticalPct and not charging */
+} battery_level_t;
+
+/**
+ * @brief Reads the gauge and classifies it against the settings thresholds
+ *        (BatteryLowPct / BatteryCriticalPct). A failed read is OK: never
+ *        put the device to sleep on a gauge error.
+ * @param soc_out optional, the percentage read (0 if the read failed).
+ */
+battery_level_t battery_level(uint8_t *soc_out);
+
 /** @brief Raw gauge state, for the `battery` console command. */
 typedef struct {
     bool i2c_ok;          /* gauge answered */
@@ -56,7 +73,16 @@ typedef struct {
     bool profile_match;   /* resident BATINFO equals the X4 Pro profile */
     uint8_t soc;          /* reg 0x04, % */
     uint16_t vcell_mv;    /* regs 0x02/0x03 */
+    uint32_t i2c_errors;  /* failed read attempts since boot (each read retried) */
 } battery_status_t;
+
+/**
+ * @brief Prints the in-RAM journal of gauge events since boot (init
+ *        attempts, I2C errors, first valid SoC), with ms timestamps. For
+ *        cases that cannot be watched live, e.g. on battery after a wake:
+ *        plug the cable afterwards and run `battery log`.
+ */
+void battery_print_log(void);
 
 /** @brief Reads every gauge register above without changing anything. */
 bool battery_get_status(battery_status_t *status);

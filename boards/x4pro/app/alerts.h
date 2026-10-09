@@ -36,6 +36,7 @@ extern "C" {
 typedef enum {
     ALERT_TIME_NEVER_SYNCED,  /* no time sync recorded */
     ALERT_TIME_SYNC_STALE,    /* last sync older than TimeSyncMaxAgeS */
+    ALERT_BATTERY_LOW,        /* SoC <= BatteryLowPct, not charging */
     ALERT_COUNT
 } alert_id_t;
 
@@ -44,6 +45,9 @@ int alerts_evaluate(void);
 
 /** @brief Result of the last alerts_evaluate(). */
 bool alerts_is_active(alert_id_t id);
+
+/** @brief True for the alerts fixed from Settings > Time. */
+bool alerts_is_time_alert(alert_id_t id);
 
 /** @brief Short title, e.g. "Time sync is old". */
 const char *alerts_title(alert_id_t id);

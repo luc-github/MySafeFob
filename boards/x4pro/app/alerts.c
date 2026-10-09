@@ -23,6 +23,7 @@
 #include "alerts.h"
 #include "time_service.h"
 #include "settings_store.h"
+#include "battery.h"
 
 #include "esp_log.h"
 #include "app_log_workaround.h"
@@ -32,10 +33,12 @@
 #define TAG "alerts"
 
 static bool s_active[ALERT_COUNT];
+static uint8_t s_soc;   /* SoC read by the last alerts_evaluate() */
 
 static const char *const kTitles[ALERT_COUNT] = {
     [ALERT_TIME_NEVER_SYNCED] = "Time never synced",
     [ALERT_TIME_SYNC_STALE] = "Time sync is old",
+    [ALERT_BATTERY_LOW] = "Battery low",
 };
 
 static const char *source_name(uint32_t source)
@@ -72,6 +75,10 @@ int alerts_evaluate(void)
              (unsigned long)settings_store_get_time_sync_max_age_s(), left,
              time_service_is_valid() ? "valid" : "NOT set");
 
+    battery_level_t level = battery_level(&s_soc);
+    s_active[ALERT_BATTERY_LOW] = level != BATTERY_LEVEL_OK;
+    ESP_LOGI(TAG, "battery: %u%%, %s", s_soc, level == BATTERY_LEVEL_OK ? "ok" : "low");
+
     int count = 0;
     for (int i = 0; i < ALERT_COUNT; i++) {
         if (s_active[i]) {
@@ -86,6 +93,11 @@ int alerts_evaluate(void)
 bool alerts_is_active(alert_id_t id)
 {
     return id < ALERT_COUNT && s_active[id];
+}
+
+bool alerts_is_time_alert(alert_id_t id)
+{
+    return id == ALERT_TIME_NEVER_SYNCED || id == ALERT_TIME_SYNC_STALE;
 }
 
 const char *alerts_title(alert_id_t id)
@@ -122,6 +134,13 @@ void alerts_describe(alert_id_t id, char *buf, size_t len)
                  dt.year, dt.month, dt.day, source_name(source), age);
         break;
     }
+    case ALERT_BATTERY_LOW:
+        snprintf(buf, len,
+                 "Battery at %u%%. Charge it soon. If it runs completely flat, the clock stops "
+                 "(the time must be synced again) and the battery gauge loses its calibration. "
+                 "At %lu%% the device goes to sleep by itself.",
+                 s_soc, (unsigned long)settings_store_get_battery_critical_pct());
+        break;
     default:
         buf[0] = '\0';
         break;

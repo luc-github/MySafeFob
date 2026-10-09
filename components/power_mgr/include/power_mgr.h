@@ -77,13 +77,6 @@ esp_err_t power_mgr_init(void);
 bool power_mgr_wakeup_from_power(void);
 
 /**
- * @brief Battery state from the power management side: true if the
- *        critical threshold is reached and an imminent shutdown is
- *        recommended. (Implemented with CW2017 in 8c; returns false by default.)
- */
-bool power_mgr_battery_critical(void);
-
-/**
  * @brief Puts the device into deep sleep. NEVER RETURNS
  *        (reboots on wake). Runs the board deinitializations
  *        (e-ink POF, frontlight, rails) before esp_deep_sleep_start().

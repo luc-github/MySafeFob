@@ -58,7 +58,9 @@ static void add_alert_block(alert_id_t id)
     lv_obj_set_width(body, LV_PCT(100));
     lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
 
-    /* Both current alerts are fixed from Settings > Time. */
+    /* The time alerts are fixed from Settings > Time; the battery alert just
+     * needs a charger. */
+    if (!alerts_is_time_alert(id)) return;
     lv_obj_t *btn = make_button(s_content, "Set the time");
     lv_obj_add_event_cb(btn, open_time_cb, LV_EVENT_CLICKED, nullptr);
     add_to_group(btn, s_group);

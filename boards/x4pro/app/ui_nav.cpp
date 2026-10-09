@@ -159,14 +159,37 @@ void enter_sleep_from_idle_or_menu(const char *reason)
     power_mgr_shutdown();        /* never returns on success */
 }
 
+/* ADR-018 amendment 2026-10-08: below BatteryCriticalPct (and not
+ * charging) the device puts itself to sleep, so it never runs completely
+ * flat. Checked at startup and on every battery timer tick, on every
+ * screen. Never returns once sleep is entered. */
+static void check_battery_critical(void)
+{
+    uint8_t soc = 0;
+    if (battery_level(&soc) == BATTERY_LEVEL_CRITICAL) {
+        ESP_LOGW(TAG, "battery critical (%u%%)", soc);
+        enter_sleep_from_idle_or_menu("battery critical");
+    }
+}
+
 /* 2026-09-21 request: 10s while charging (changes fast enough to be worth
  * seeing live), 30s otherwise (discharge is slow -- no need to spend an
  * e-paper refresh more often than that, "on economise en etant sur
- * batterie"). Runs continuously from board_ui_nav_task's init, independent
+ * batterie"). 2s while the gauge read fails (2026-10-08 bug report: "--"
+ * for up to 30 s after a wake, when the first gauge init after boot
+ * failed) -- no flush cost, the label only changes once a value comes
+ * back. Runs continuously from board_ui_nav_task's init, independent
  * of which screen is open -- refreshes whichever screen's battery label is
  * CURRENTLY visible (s_screen), same one switch_screen() already targets. */
+static uint32_t battery_timer_period_ms(bool charging)
+{
+    if (!battery_last_read_ok()) return 2000;
+    return charging ? 10000 : 30000;
+}
+
 static void battery_timer_cb(lv_timer_t *timer)
 {
+    check_battery_critical();
     /* No periodic label update on Touch Calibration (2026-09-24 user
      * request): an unrelated flush landing mid-run is exactly the kind of
      * surprise that screen's tap-counting is built to be robust against,
@@ -177,7 +200,7 @@ static void battery_timer_cb(lv_timer_t *timer)
         return;
     }
     bool charging = refresh_battery_label(s_battery_labels[static_cast<int>(s_screen)]);
-    lv_timer_set_period(timer, charging ? 10000 : 30000);
+    lv_timer_set_period(timer, battery_timer_period_ms(charging));
 }
 
 /* -----------------------------------------------------------------------
@@ -281,7 +304,8 @@ void board_ui_nav_task(void *arg)
     uint8_t initial_soc = 0;
     bool initial_charging = false;
     battery_read(&initial_soc, &initial_charging);
-    lv_timer_create(battery_timer_cb, initial_charging ? 10000 : 30000, nullptr);
+    lv_timer_create(battery_timer_cb, battery_timer_period_ms(initial_charging), nullptr);
+    check_battery_critical();
 
     while (1) {
         if (!s_lvgl_suspended.load(std::memory_order_relaxed)) {

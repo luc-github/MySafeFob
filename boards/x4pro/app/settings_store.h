@@ -146,6 +146,14 @@ uint32_t settings_store_get_time_sync_max_age_s(void);
 uint32_t settings_store_get_secret_auto_clear_s(void);
 
 /**
+ * @brief Battery protection thresholds in percent (0 = off), never applied
+ *        while charging. Low (default 15): HOME alert + a line on the sleep
+ *        screen. Critical (default 5): automatic deep sleep.
+ */
+uint32_t settings_store_get_battery_low_pct(void);
+uint32_t settings_store_get_battery_critical_pct(void);
+
+/**
  * @brief F-19 owner contact info (Settings > Owner info, UI-SPECS §2.17),
  *        drawn on the sleep screen only while the show flag is on. Both
  *        default to off/empty. The text is at most SETTINGS_OWNER_INFO_MAX
