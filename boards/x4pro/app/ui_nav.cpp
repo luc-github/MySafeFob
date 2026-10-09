@@ -71,6 +71,19 @@ static lv_obj_t *s_battery_labels[static_cast<int>(Screen::kCount)];
  * screen, set active in switch_screen() below. */
 static lv_group_t *s_groups[static_cast<int>(Screen::kCount)];
 static Screen s_screen = Screen::Home;
+/* While a modal is open (ui_confirm_show(), ui_widgets.cpp), Left/Right and
+ * the confirm pulses go to its own group instead of the screen's. */
+static lv_group_t *s_modal_group = nullptr;
+
+void ui_nav_set_modal_group(lv_group_t *group)
+{
+    s_modal_group = group;
+}
+
+static lv_group_t *active_group(void)
+{
+    return s_modal_group ? s_modal_group : s_groups[static_cast<int>(s_screen)];
+}
 
 /* Set right before any LVGL call made from a task OTHER than
  * board_ui_nav_task (main.c's power_button_task, on a Power long-press
@@ -335,7 +348,7 @@ void board_ui_nav_task(void *arg)
                  * directly is the simple, correct equivalent for a plain
                  * button/menu entry, which is all this confirm pulse is
                  * meant to activate. */
-                lv_obj_t *focused = lv_group_get_focused(s_groups[static_cast<int>(s_screen)]);
+                lv_obj_t *focused = lv_group_get_focused(active_group());
                 if (focused) {
                     lv_obj_send_event(focused, LV_EVENT_CLICKED, nullptr);
                 }
@@ -353,7 +366,7 @@ void board_ui_nav_task(void *arg)
                 if (suppress_touch_confirm) {
                     continue;
                 }
-                lv_obj_t *focused = lv_group_get_focused(s_groups[static_cast<int>(s_screen)]);
+                lv_obj_t *focused = lv_group_get_focused(active_group());
                 if (focused) {
                     lv_obj_send_event(focused, LV_EVENT_CLICKED, nullptr);
                 }
@@ -366,11 +379,11 @@ void board_ui_nav_task(void *arg)
              * press made navigation feel slow for no visual benefit. */
             int focus_prev_steps = s_focus_prev_pending.exchange(0, std::memory_order_relaxed);
             for (int i = 0; i < focus_prev_steps; i++) {
-                lv_group_focus_prev(s_groups[static_cast<int>(s_screen)]);
+                lv_group_focus_prev(active_group());
             }
             int focus_next_steps = s_focus_next_pending.exchange(0, std::memory_order_relaxed);
             for (int i = 0; i < focus_next_steps; i++) {
-                lv_group_focus_next(s_groups[static_cast<int>(s_screen)]);
+                lv_group_focus_next(active_group());
             }
 
             check_idle_timeout();

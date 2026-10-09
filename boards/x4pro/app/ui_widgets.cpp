@@ -23,6 +23,8 @@
  *        (docs/ROADMAP.md, one file per screen/component).
  */
 #include "ui_widgets.h"
+#include "lv_port_disp.h"
+#include "lv_port_indev.h"
 #include "ui_nav.h"
 
 extern "C" {
@@ -467,4 +469,97 @@ int nearest_preset_index(const uint32_t *presets, int count, uint32_t value)
         }
     }
     return best;
+}
+
+/* ---- Destructive-action confirmation (UI-SPECS.md §2.18, ROADMAP 8.0 P6) ----
+ * Full screen and opaque rather than a box over a dimmed screen: e-paper
+ * has no dimming, and a clean full redraw (requested on open and close)
+ * leaves no ghost of the screen underneath. */
+static lv_obj_t *s_confirm = nullptr;
+static lv_group_t *s_confirm_group = nullptr;
+static ui_confirm_t s_confirm_cfg;
+static char s_confirm_title[48];
+static char s_confirm_message[160];
+static char s_confirm_action[24];
+
+bool ui_confirm_is_open(void)
+{
+    return s_confirm != nullptr;
+}
+
+static void confirm_close(void)
+{
+    ui_nav_set_modal_group(nullptr);
+    lv_obj_delete(s_confirm);   /* its buttons leave the group on their own */
+    lv_group_delete(s_confirm_group);
+    s_confirm = nullptr;
+    s_confirm_group = nullptr;
+    lv_port_disp_request_full_refresh();
+}
+
+/* Deferred (ui_defer() rule): the button deletes itself through
+ * confirm_close(), which must not happen inside its own event. */
+static void confirm_answer_deferred(void *user_data)
+{
+    if (!s_confirm) return;   /* already answered (a double tap queued twice) */
+    bool action = static_cast<bool>(reinterpret_cast<intptr_t>(user_data));
+    ui_confirm_t cfg = s_confirm_cfg;
+    confirm_close();
+    if (action && cfg.on_action) cfg.on_action(cfg.ctx);
+    if (!action && cfg.on_cancel) cfg.on_cancel(cfg.ctx);
+}
+
+static void confirm_button_cb(lv_event_t *e)
+{
+    ui_defer(confirm_answer_deferred, lv_event_get_user_data(e));
+}
+
+bool ui_confirm_show(const ui_confirm_t *cfg)
+{
+    if (s_confirm) return false;
+    s_confirm_cfg = *cfg;
+    lv_snprintf(s_confirm_title, sizeof(s_confirm_title), "%s", cfg->title ? cfg->title : "");
+    lv_snprintf(s_confirm_message, sizeof(s_confirm_message), "%s", cfg->message ? cfg->message : "");
+    lv_snprintf(s_confirm_action, sizeof(s_confirm_action), "%s", cfg->action_text ? cfg->action_text : "OK");
+
+    s_confirm_group = lv_port_indev_new_group();
+    s_confirm = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_confirm);
+    lv_obj_set_size(s_confirm, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(s_confirm, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(s_confirm, LV_OPA_COVER, 0);
+    lv_obj_add_flag(s_confirm, LV_OBJ_FLAG_CLICKABLE);   /* absorbs taps outside the buttons */
+    lv_obj_remove_flag(s_confirm, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(s_confirm, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(s_confirm, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(s_confirm, 32, 0);
+
+    lv_obj_t *title = lv_label_create(s_confirm);
+    lv_label_set_text(title, s_confirm_title);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_32, 0);
+
+    lv_obj_t *message = lv_label_create(s_confirm);
+    lv_label_set_text(message, s_confirm_message);
+    lv_label_set_long_mode(message, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(message, LV_PCT(85));
+    lv_obj_set_style_text_align(message, LV_TEXT_ALIGN_CENTER, 0);
+
+    lv_obj_t *buttons = lv_obj_create(s_confirm);
+    lv_obj_remove_style_all(buttons);
+    lv_obj_set_size(buttons, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(buttons, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_all(buttons, kFocusOutlineSlack, 0);
+    lv_obj_set_style_pad_column(buttons, 2 * kExtClickMargin + 16, 0);   /* hit areas never overlap */
+
+    lv_obj_t *cancel = make_button(buttons, "Cancel");
+    lv_obj_add_event_cb(cancel, confirm_button_cb, LV_EVENT_CLICKED, reinterpret_cast<void *>(static_cast<intptr_t>(0)));
+    add_to_group(cancel, s_confirm_group);
+    lv_obj_t *action = make_button(buttons, s_confirm_action);
+    lv_obj_add_event_cb(action, confirm_button_cb, LV_EVENT_CLICKED, reinterpret_cast<void *>(static_cast<intptr_t>(1)));
+    add_to_group(action, s_confirm_group);
+    lv_group_focus_obj(cancel);
+
+    ui_nav_set_modal_group(s_confirm_group);
+    lv_port_disp_request_full_refresh();
+    return true;
 }

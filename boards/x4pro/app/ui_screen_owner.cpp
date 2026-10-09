@@ -42,7 +42,8 @@ static lv_obj_t *s_toggle;
 static lv_obj_t *s_edit_box;
 static lv_obj_t *s_keyboard;
 static lv_obj_t *s_field_label;
-static lv_obj_t *s_status_label;
+static lv_obj_t *s_caption_label;   /* "Phone / email  12/48" */
+static lv_obj_t *s_result_icon;     /* check = saved, cross = failed, hidden otherwise */
 
 static void show_text(void)
 {
@@ -51,16 +52,20 @@ static void show_text(void)
     lv_label_set_text(s_field_label, buf);
 }
 
-static void show_status(const char *text)
+/* Result of the last save as an icon (2026-10-09 request, the "Saved" text
+ * ran into the caption). Any edit hides it again (show_count()). */
+static void show_result(bool ok)
 {
-    if (strcmp(lv_label_get_text(s_status_label), text) != 0) lv_label_set_text(s_status_label, text);
+    lv_label_set_text(s_result_icon, ok ? LV_SYMBOL_OK : LV_SYMBOL_CLOSE);
+    lv_obj_remove_flag(s_result_icon, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void show_count(void)
 {
-    char buf[24];
-    snprintf(buf, sizeof(buf), "%d/%d", s_text_len, SETTINGS_OWNER_INFO_MAX);
-    show_status(buf);
+    char buf[40];
+    snprintf(buf, sizeof(buf), "Phone / email  %d/%d", s_text_len, SETTINGS_OWNER_INFO_MAX);
+    if (strcmp(lv_label_get_text(s_caption_label), buf) != 0) lv_label_set_text(s_caption_label, buf);
+    lv_obj_add_flag(s_result_icon, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void load_text(void)
@@ -75,12 +80,9 @@ static void load_text(void)
 static void save_text(void)
 {
     if (!s_dirty) return;
-    if (settings_store_set_owner_info(s_text) == ESP_OK) {
-        s_dirty = false;
-        show_status("Saved");
-    } else {
-        show_status("Save failed");
-    }
+    bool ok = settings_store_set_owner_info(s_text) == ESP_OK;
+    if (ok) s_dirty = false;
+    show_result(ok);
 }
 
 static void set_edit_visible(bool visible)
@@ -117,6 +119,33 @@ static void kb_enter(void *)
 {
     s_dirty = true;   /* explicit save, even if nothing changed */
     save_text();
+}
+
+/* Clear: irreversible (the saved text is erased), so behind the shared
+ * destructive-action confirmation (UI-SPECS.md §2.18, ROADMAP 8.0 P6). */
+static void clear_confirmed(void *)
+{
+    s_text[0] = '\0';
+    s_text_len = 0;
+    s_dirty = true;
+    show_text();
+    show_count();
+    save_text();
+}
+
+static void clear_deferred(void *)
+{
+    if (s_text_len == 0) return;   /* nothing to clear */
+    const ui_confirm_t cfg = {"Clear owner info?",
+                              "The contact text will be erased\nand no longer shown on the sleep screen.\n"
+                              "This cannot be undone.",
+                              "Clear", clear_confirmed, nullptr, nullptr};
+    ui_confirm_show(&cfg);
+}
+
+static void clear_cb(lv_event_t *)
+{
+    ui_defer(clear_deferred, nullptr);
 }
 
 /* Same pattern as Display's Frontlight toggle: showing/hiding a large
@@ -164,6 +193,7 @@ lv_obj_t *build_owner_info(lv_group_t **group_out, lv_obj_t **battery_label_out)
     lv_obj_t *screen = make_screen();
     add_back_header(screen, "Owner info", Screen::SettingsSecurityData, group, battery_label_out);
     lv_obj_t *content = make_content(screen);
+    lv_obj_set_style_pad_row(content, 4, 0);   /* everything must fit above the keyboard */
 
     bool on = settings_store_get_owner_info_show();
     lv_obj_t *row = make_round_toggle_row(content, group, "Show on sleep screen", on, show_toggle_cb);
@@ -175,15 +205,27 @@ lv_obj_t *build_owner_info(lv_group_t **group_out, lv_obj_t **battery_label_out)
     lv_obj_set_flex_flow(s_edit_box, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(s_edit_box, 8, 0);
 
+    /* "Phone / email  12/48"  [check]  [Clear] -- padded on every side so
+     * Clear's focus ring is not clipped (kFocusOutlineSlack): Clear sits
+     * against the row's right edge (2026-10-09, right side of the ring was
+     * cut). The caption grows, so the icon stays next to Clear. */
     lv_obj_t *caption_row = lv_obj_create(s_edit_box);
     lv_obj_remove_style_all(caption_row);
     lv_obj_set_size(caption_row, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_t *caption = lv_label_create(caption_row);
-    lv_label_set_text(caption, "Phone / email");
-    lv_obj_align(caption, LV_ALIGN_LEFT_MID, 0, 0);
-    s_status_label = lv_label_create(caption_row);
-    lv_label_set_text(s_status_label, "");
-    lv_obj_align(s_status_label, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_pad_all(caption_row, kFocusOutlineSlack, 0);
+    lv_obj_set_flex_flow(caption_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(caption_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(caption_row, 16, 0);
+    s_caption_label = lv_label_create(caption_row);
+    lv_label_set_text(s_caption_label, "Phone / email");
+    lv_obj_set_flex_grow(s_caption_label, 1);
+    s_result_icon = lv_label_create(caption_row);
+    lv_obj_set_style_text_font(s_result_icon, &lv_font_montserrat_32, 0);
+    lv_label_set_text(s_result_icon, LV_SYMBOL_OK);
+    lv_obj_add_flag(s_result_icon, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_t *clear = make_button(caption_row, "Clear");
+    lv_obj_add_event_cb(clear, clear_cb, LV_EVENT_CLICKED, nullptr);
+    add_to_group(clear, group);
 
     lv_obj_t *field = lv_obj_create(s_edit_box);
     lv_obj_remove_style_all(field);

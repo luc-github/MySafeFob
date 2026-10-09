@@ -61,6 +61,14 @@ void switch_screen(Screen s);
 void enter_sleep_from_idle_or_menu(const char *reason);
 
 /**
+ * @brief Routes Left/Right and the confirm pulses (Home pad, Power short
+ *        press) to `group` instead of the current screen's group, while a
+ *        modal is open; nullptr restores the screen's group. Defined in
+ *        ui_nav.cpp, used by ui_confirm_show() (ui_widgets.cpp).
+ */
+void ui_nav_set_modal_group(lv_group_t *group);
+
+/**
  * @brief Re-applies frontlight.h's PWM outputs from the current
  *        settings_store.h values. Defined in ui_screen_settings_display.cpp
  *        (owner of the Frontlight/Color/Intensity controls); also called

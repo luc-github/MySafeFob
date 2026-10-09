@@ -917,6 +917,14 @@ FreeInkUI `option-dialog.h` originally named here no longer exists in the
 app). Default focus on `Cancel` — a destructive action must never be the
 path of least resistance through Left/Right+Home alone.
 
+> **Built 2026-10-09** (ROADMAP 8.0 P6): `ui_confirm_show()` in
+> `ui_widgets.cpp`. Full screen and opaque rather than a box over a dimmed
+> screen (e-paper has no dimming; a full refresh on open and close leaves
+> no ghost of the screen underneath). While open, Left/Right and the
+> confirm pulses (Home pad, Power short press) go to the modal's own group
+> (`ui_nav_set_modal_group()`), and taps outside its two buttons are
+> absorbed. First user: Settings > Security & Data > Owner info "Clear".
+
 ### 2.19 Full-screen text entry (shared pattern, not a top-level screen)
 
 ```

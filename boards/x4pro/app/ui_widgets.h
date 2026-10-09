@@ -178,4 +178,29 @@ int nearest_preset_index(const uint32_t *presets, int count, uint32_t value);
  */
 void ui_defer(lv_async_cb_t fn, void *user_data);
 
+/**
+ * @brief Shared destructive-action confirmation (UI-SPECS.md §2.18,
+ *        ROADMAP 8.0 P6): a full-screen modal on lv_layer_top() with a
+ *        title, a message and two buttons, "Cancel" (left, focused by
+ *        default: a destructive action must never be the path of least
+ *        resistance through Left/Right+Home) and `action_text` (right).
+ *        Taps outside the buttons are absorbed. The strings are copied.
+ *        `on_action(ctx)` runs, deferred, only if the action button is
+ *        pressed, after the modal is closed; `on_cancel` (optional) runs on
+ *        Cancel. One modal at a time: a second call while one is open is
+ *        ignored (returns false).
+ */
+struct ui_confirm_t {
+    const char *title;        /* e.g. "Delete entry?" */
+    const char *message;      /* e.g. "\"GitHub\" will be removed.\nThis cannot be undone." */
+    const char *action_text;  /* e.g. "Delete" */
+    void (*on_action)(void *ctx);
+    void (*on_cancel)(void *ctx);
+    void *ctx;
+};
+bool ui_confirm_show(const ui_confirm_t *cfg);
+
+/** @brief true while the confirmation modal is open. */
+bool ui_confirm_is_open(void);
+
 #endif /* __cplusplus */
