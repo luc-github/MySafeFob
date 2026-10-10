@@ -56,7 +56,8 @@ uint8 `id`, never reused after deletion (avoids UI collisions).
 > [0x30] ACCOUNT    : id u16 | name ≤48 (unique, case-insensitive) | created_epoch u32
 >                     | modified_epoch u32 | then 0..3 sub-records, each at most once:
 >   [0x31] OTP      : binary secret ≤64 (base32 DECODED) | digits (6/8) | period_s (30/60)
->   [0x32] LOGIN    : username ≤64 | password ≤128 | notes ≤256
+>   [0x32] LOGIN    : username ≤64 | password ≤128 | pin ≤12 (digits) | note ≤64 (one line)
+>                     (ADR-019 amendment 2026-10-09: PIN added, notes reduced to one line)
 >   [0x33] RECOVERY : nb_codes (≤32) | codes (nb × ≤16) | used_mask u32 (bit i = code i consumed)
 > ```
 >

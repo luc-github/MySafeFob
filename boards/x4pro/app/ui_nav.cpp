@@ -273,6 +273,8 @@ static void build_screens(void)
     build_screen(Screen::KeyboardTest, build_keyboard_test);
     build_screen(Screen::Names, build_names);
     build_screen(Screen::Account, build_account);
+    build_screen(Screen::AccountEdit, build_account_edit);
+    build_screen(Screen::FieldEdit, build_field_edit);
 }
 
 /* REMOVED 2026-09-24 (was: slip eink.c's mandatory ghost-budget full GC

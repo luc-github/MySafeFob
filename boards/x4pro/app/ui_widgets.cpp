@@ -30,7 +30,9 @@
 extern "C" {
 #include "hw_config.h"
 #include "battery.h"
+#include "settings_store.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 }
 
 #include "app_log_workaround.h"
@@ -423,8 +425,8 @@ lv_obj_t *make_battery_label(lv_obj_t *parent)
  * Raised by 15px (2026-09-21, user request "remonter la ligne du header")
  * -- Back's own position (kBackTopMargin) is independent of this and
  * stays where the dead-zone measurement put it. */
-lv_obj_t *add_back_header(lv_obj_t *screen, const char *title, Screen back_target, lv_group_t *group,
-                          lv_obj_t **battery_label_out)
+lv_obj_t *add_back_header_cb(lv_obj_t *screen, const char *title, lv_event_cb_t back_cb, void *back_user_data,
+                             lv_group_t *group, lv_obj_t **battery_label_out)
 {
     lv_obj_t *bar = lv_obj_create(screen);
     lv_obj_remove_style_all(bar);
@@ -450,11 +452,17 @@ lv_obj_t *add_back_header(lv_obj_t *screen, const char *title, Screen back_targe
 
     lv_obj_t *back = make_button(screen, "< Back");
     lv_obj_align(back, LV_ALIGN_TOP_LEFT, 16, kBackTopMargin);
-    lv_obj_add_event_cb(back, back_event_cb, LV_EVENT_CLICKED,
-                         reinterpret_cast<void *>(static_cast<intptr_t>(back_target)));
+    lv_obj_add_event_cb(back, back_cb, LV_EVENT_CLICKED, back_user_data);
     add_to_group(back, group);
 
     return bar;
+}
+
+lv_obj_t *add_back_header(lv_obj_t *screen, const char *title, Screen back_target, lv_group_t *group,
+                          lv_obj_t **battery_label_out)
+{
+    return add_back_header_cb(screen, title, back_event_cb,
+                              reinterpret_cast<void *>(static_cast<intptr_t>(back_target)), group, battery_label_out);
 }
 
 int nearest_preset_index(const uint32_t *presets, int count, uint32_t value)
@@ -569,4 +577,40 @@ int32_t touch_safe_y(int32_t y, int32_t h)
     auto inside = [](int32_t edge) { return edge > kTouchBandTop && edge < kTouchBandBottom; };
     if (inside(y) || inside(y + h)) return kTouchBandBottom + 6;
     return y;
+}
+
+/* ---- F-05 auto-clear (shared by every screen showing a secret) ---------- */
+
+static constexpr uint32_t kAutoClearCheckMs = 5000;
+
+static void auto_clear_timer_cb(lv_timer_t *)
+{
+    uint32_t limit_s = settings_store_get_secret_auto_clear_s();
+    if (limit_s == 0 || ui_confirm_is_open()) return;
+    if (esp_timer_get_time() - ui_nav_last_activity_us() >= static_cast<int64_t>(limit_s) * 1000000) {
+        ESP_LOGI("auto_clear", "%lu s without input, back to HOME", static_cast<unsigned long>(limit_s));
+        switch_screen(Screen::Home);
+    }
+}
+
+static void auto_clear_loaded_cb(lv_event_t *e)
+{
+    lv_timer_t **timer = static_cast<lv_timer_t **>(lv_event_get_user_data(e));
+    if (!*timer) *timer = lv_timer_create(auto_clear_timer_cb, kAutoClearCheckMs, nullptr);
+}
+
+static void auto_clear_unloaded_cb(lv_event_t *e)
+{
+    lv_timer_t **timer = static_cast<lv_timer_t **>(lv_event_get_user_data(e));
+    if (*timer) {
+        lv_timer_delete(*timer);
+        *timer = nullptr;
+    }
+}
+
+void ui_auto_clear_attach(lv_obj_t *screen)
+{
+    lv_timer_t **timer = new lv_timer_t *(nullptr);   /* lives as long as the screen (all built once) */
+    lv_obj_add_event_cb(screen, auto_clear_loaded_cb, LV_EVENT_SCREEN_LOADED, timer);
+    lv_obj_add_event_cb(screen, auto_clear_unloaded_cb, LV_EVENT_SCREEN_UNLOADED, timer);
 }

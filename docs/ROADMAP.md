@@ -129,7 +129,7 @@ then start the TOTP core (8.1/8.2). Order below is the working order.
 | P5 | ~~BLE time: confirmation step before applying~~ | — | ❌ Dropped 2026-10-09 (user decision, built then reverted): a pending confirmation delays applying the time, and even compensated (proposal + time elapsed since the read) it adds side effects for no real gain: a wrong time is only a temporary DoS (ADR-001), fixed by another sync, and `tools/settime.py --check` verifies any sync. The BLE time is applied at once, as before |
 | P6 | Shared destructive-action confirmation dialog (UI-SPECS §2.18) — `ui_confirm_show()` (`ui_widgets.cpp`): full-screen modal on `lv_layer_top()`, title + message + Cancel (focused by default) / action, taps outside absorbed, Left/Right and confirm pulses routed to its own group (`ui_nav_set_modal_group()`), full refresh on open/close. First user: Owner info's new "Clear" button | — | ✅ hardware-validated 2026-10-09 (touch and buttons, Cancel default focus, taps outside absorbed) |
 | P7 | Keyboard modes: Base32 (A-Z, 2-7) and numeric, on top of `ui_keyboard.cpp` — `ui_keyboard_create(..., mode)`: Base32 = `QWERTYU / IOPASDF / GHJKLZ / XCVBNM ⌫ / 234567 ↵` (one layer, uppercase, same key width as the full keyboard), numeric = `123 / 456 / 789 / 0 ⌫ / ↵` (wide keys). Every mode keeps the validated 5x56px bottom-anchored grid. Test screen Settings > Device > Keyboard test (to remove once the TOTP entry screen uses the modes) | — | ✅ hardware-validated 2026-10-09 (all three modes) |
-| P8 | **Rescoped by ADR-019 (2026-10-09)**: HOME alphabet grid (+ Power icon replacing "Sleep now"), names page, account page (TOTP code + Refresh, login, recovery count, Edit/Remove), dummy data. First version below (three flat lists) built and hardware-validated 2026-10-09, kept for its pagination/`touch_safe_y()` layout. Generic entry list screen (TOTP/PWD/RCV lists), dummy data — `ui_screen_entry_list.cpp`: pages of 6 rows (no scrolling), `<` `>` + page number, "+ Add"; rows at fixed y via `touch_safe_y()` (4 above the X4 Pro touch band, 2 below, status line in the gap); empty state. HOME gets TOTP Codes / Passwords / Recovery Codes. Dummy: 14 TOTP (3 pages), 4 passwords, 0 recovery codes. Selecting a row / Add only shows a status line until the target screens exist. **ADR-019 version built 2026-10-09**: `ui_screen_home.cpp` (letter grid, Power icon), `ui_screen_names.cpp` (was `ui_screen_entry_list.cpp`), `ui_screen_account.cpp` (real TOTP codes from public test keys, Refresh, Reveal, Remove via P6, F-05 auto-clear), data through `accounts.h` served by `accounts_dummy.c` (22 sample accounts, 7 under G) until secret_store exists. Edit / Add / recovery code list: not built yet | — | 🔄 ADR-019 version built 2026-10-09, hardware test pending |
+| P8 | **Rescoped by ADR-019 (2026-10-09)**: HOME alphabet grid (+ Power icon replacing "Sleep now"), names page, account page (TOTP code + Refresh, login, recovery count, Edit/Remove), dummy data. First version below (three flat lists) built and hardware-validated 2026-10-09, kept for its pagination/`touch_safe_y()` layout. Generic entry list screen (TOTP/PWD/RCV lists), dummy data — `ui_screen_entry_list.cpp`: pages of 6 rows (no scrolling), `<` `>` + page number, "+ Add"; rows at fixed y via `touch_safe_y()` (4 above the X4 Pro touch band, 2 below, status line in the gap); empty state. HOME gets TOTP Codes / Passwords / Recovery Codes. Dummy: 14 TOTP (3 pages), 4 passwords, 0 recovery codes. Selecting a row / Add only shows a status line until the target screens exist. **ADR-019 version built 2026-10-09**: `ui_screen_home.cpp` (letter grid, Power icon), `ui_screen_names.cpp` (was `ui_screen_entry_list.cpp`), `ui_screen_account.cpp` (real TOTP codes from public test keys, Refresh, Reveal, Remove via P6, F-05 auto-clear), data through `accounts.h` served by `accounts_dummy.c` (22 sample accounts, 7 under G) until secret_store exists. Edit / Add / recovery code list: not built yet. **Edit / Add built 2026-10-10** (`ui_screen_account_edit.cpp`: EDIT on a copy, Save in the header, "Discard changes?", 7 field rows; FIELD entry with full / numeric / Base32 keyboard, prefilled value, Clear, TOTP 6/8 digits and 30/60 s, default 6/30; `add_back_header_cb()`, shared `ui_auto_clear_attach()`). Recovery code list editor: next | — | 🔄 built, hardware test pending |
 | P9 | TOTP_CODE prototype with a fake code: countdown + e-ink refresh strategy under the ghost budget | — | ⏳ |
 | P10 | UNLOCK screen: shuffled (anti-trace) keypad + back-off display, fake counter | — | ⏳ |
 | P11 | Security & Data menu gains a Backup row (SD detection/listing only, no crypto); the Owner info row came with P3 | P3 | ⏳ |
@@ -156,7 +156,7 @@ not in NVS.
 | Frontlight off during deep sleep (`splash.cpp`) | ✅ Hardware-validated: off while asleep, restored on wake per its setting |
 | Keyboard taps on the lower rows sometimes register the key above | ✅ Fixed and hardware-validated 2026-10-09: the bottom of `touch.c`'s Y table re-measured on the keyboard keys (the jump was placed ~50px too high); Time's keyboard bottom-anchored like Owner info's (`touch-calibration-notes.md` §11) |
 | Time > Wi-Fi keyboard "does nothing" | ✅ Fixed and hardware-validated 2026-10-09: taps were received, but past 18 masked characters the password field never changed (count now shown, e.g. `****** (6)`), and the keyboard keys' focus ring was clipped by their rows (rows now declare room for it, `ui_keyboard.cpp`) |
-| `base32_decode()` (`totp_engine.c`) writes its output with no size limit | ⏳ Open (found 2026-10-09): harmless with today's fixed test keys, must take the buffer size before the TOTP secret entry screen exists (a typed secret could overflow) |
+| `base32_decode()` (`totp_engine.c`) writes its output with no size limit | ✅ Fixed 2026-10-09: `*out_len` is now the buffer size in, decoded length out; `ESP_ERR_INVALID_SIZE` if it does not fit; self-test case added (`totpselftest`) |
 | Negative I32 values in `setting` (P2) | ✅ Hardware-validated 2026-10-09; duration suffix now uses the setting's own unit (ADR-018) |
 
 ---
@@ -2591,6 +2591,24 @@ data migration. P8's paginated list code is reused for the names page.
 
 **Status**: ✅ VALIDATED 2026-10-09 (design; implementation = ROADMAP 8.0
 P8, rescoped).
+
+**Amendment 2026-10-09 — account fields and editing** (user decisions):
+1. A record may hold a **PIN** (digits only, ≤12: bank card or any other
+   access code), masked on the account page and revealed together with
+   the password (one Reveal).
+2. The free notes become a **one-line note** (≤64 characters: website,
+   e-mail or short remark).
+3. **Edit** (also used by `+ Add`) works on a copy of the record: nothing
+   is written until **Save** (header, top right); Back with unsaved
+   changes asks "Discard changes?" (P6 confirmation). The page lists the
+   7 fields (Name, Login, Password, PIN, Note, TOTP, Recovery), 4 above
+   the X4 Pro touch band and 3 below; each opens an entry screen with the
+   right keyboard (P7: full, numeric for the PIN, Base32 for the TOTP key
+   plus 6/8 digits and 30/60 s) and a Clear button; Recovery opens a
+   paginated code list editor. Save checks: name not empty, unique
+   (case-insensitive), TOTP key valid Base32 of 1-64 bytes.
+4. `base32_decode()` now takes the output buffer size (`*out_len` in/out)
+   and refuses a secret that does not fit, with a self-test case.
 
 ---
 

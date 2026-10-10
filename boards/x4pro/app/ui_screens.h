@@ -41,7 +41,8 @@
 #ifdef __cplusplus
 
 enum class Screen { Home, Settings, SettingsControls, SettingsAbout, SettingsDisplay, TouchDiag, Security, Time, Alerts, OwnerInfo,
-                    SettingsDevice, SettingsSecurityData, KeyboardTest, Names, Account, kCount };
+                    SettingsDevice, SettingsSecurityData, KeyboardTest, Names, Account, AccountEdit,
+                    FieldEdit, kCount };
 
 /**
  * @brief Switches to screen `s`: refreshes its battery label, forces the
@@ -93,6 +94,18 @@ lv_obj_t *build_owner_info(lv_group_t **group_out, lv_obj_t **battery_label_out)
 lv_obj_t *build_keyboard_test(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_names(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_account(lv_group_t **group_out, lv_obj_t **battery_label_out);
+lv_obj_t *build_account_edit(lv_group_t **group_out, lv_obj_t **battery_label_out);
+lv_obj_t *build_field_edit(lv_group_t **group_out, lv_obj_t **battery_label_out);
+
+/** @brief Opens EDIT on a copy of account `id` (ui_screen_account_edit.cpp). */
+void account_edit_open(uint16_t id);
+
+/**
+ * @brief Opens EDIT for a new account; `letter` ('A'-'Z') prefills the name
+ *        and Back returns to that letter's NAMES ('#' too, without
+ *        prefill); 0 = from HOME.
+ */
+void account_edit_open_new(char letter);
 
 /** @brief Opens NAMES for `letter` ('A'-'Z' or '#'), ADR-019 (ui_screen_names.cpp). */
 void names_open(char letter);

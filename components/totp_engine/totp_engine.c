@@ -59,6 +59,7 @@ esp_err_t base32_decode(const char *secret_b32, uint8_t *out_secret, size_t *out
     }
 
     size_t in_len = strlen(secret_b32);
+    size_t capacity = *out_len;
     size_t out_pos = 0;
     uint32_t buffer = 0;
     int bits = 0;
@@ -75,11 +76,17 @@ esp_err_t base32_decode(const char *secret_b32, uint8_t *out_secret, size_t *out
         buffer = (buffer << 5) | (val - 1);
         bits += 5;
         if (bits >= 8) {
+            if (out_pos >= capacity) {
+                return ESP_ERR_INVALID_SIZE;
+            }
             bits -= 8;
             out_secret[out_pos++] = (buffer >> bits) & 0xFF;
         }
     }
 
+    if (out_pos == 0) {
+        return ESP_ERR_INVALID_ARG;   /* empty secret */
+    }
     *out_len = out_pos;
     return ESP_OK;
 }
@@ -235,13 +242,21 @@ static esp_err_t base32_self_test(void)
 
     for (int i = 0; i < total; i++) {
         uint8_t decoded[64];
-        size_t len;
+        size_t len = sizeof(decoded);
         esp_err_t err = base32_decode(tests[i].input, decoded, &len);
         bool ok = (err == ESP_OK && len == tests[i].expected_len &&
                    memcmp(decoded, tests[i].expected, len) == 0);
         ESP_LOGI(TAG, "  \"%s\" -> %s", tests[i].input, ok ? "PASS" : "FAIL");
         if (ok) passed++;
     }
+
+    /* Output bound (2026-10-09): 10 decoded bytes must not fit in 4. */
+    uint8_t small[4];
+    size_t small_len = sizeof(small);
+    bool bound_ok = base32_decode("GEZDGNBVGY3TQOJQ", small, &small_len) == ESP_ERR_INVALID_SIZE;
+    ESP_LOGI(TAG, "  output bound -> %s", bound_ok ? "PASS" : "FAIL");
+    total++;
+    if (bound_ok) passed++;
 
     ESP_LOGI(TAG, "Base32 test: %d/%d passed", passed, total);
     return (passed == total) ? ESP_OK : ESP_FAIL;

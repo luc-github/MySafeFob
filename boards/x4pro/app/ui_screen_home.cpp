@@ -68,8 +68,7 @@ static constexpr int32_t kGridLeft = (480 - (kCols * kCellW + (kCols - 1) * kCel
 
 static lv_obj_t *s_letter_btns[kLetterCount];
 /* Header line between Settings and the right-hand buttons: "N entries"
- * (accounts, information only); also used for the "+ Add" placeholder
- * message until a visit refreshes it. */
+ * (accounts, information only). */
 static lv_obj_t *s_info;
 
 static char letter_at(int i)
@@ -90,7 +89,7 @@ static void letter_cb(lv_event_t *e)
 
 static void add_deferred(void *)
 {
-    lv_label_set_text(s_info, "Add: not built yet");
+    account_edit_open_new(0);
 }
 
 static void add_cb(lv_event_t *)

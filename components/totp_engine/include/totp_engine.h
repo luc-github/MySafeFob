@@ -34,9 +34,14 @@ extern "C" {
 /**
  * @brief Decode a Base32-encoded secret
  * @param secret_b32 Null-terminated Base32 string
- * @param out_secret Output buffer (must be >= 64 bytes)
- * @param out_len Output: length of decoded secret
- * @return ESP_OK on success
+ * @param out_secret Output buffer
+ * @param out_len In: size of out_secret in bytes. Out: length of the
+ *                decoded secret. (2026-10-09: was output only, with no
+ *                bound on the bytes written -- a long typed secret could
+ *                overflow the caller's buffer.)
+ * @return ESP_OK on success, ESP_ERR_INVALID_ARG on a non-Base32 character
+ *         or an empty secret, ESP_ERR_INVALID_SIZE if the decoded secret
+ *         does not fit in *out_len bytes
  */
 esp_err_t base32_decode(const char *secret_b32, uint8_t *out_secret, size_t *out_len);
 

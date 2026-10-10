@@ -130,7 +130,7 @@ static void page_cb(lv_event_t *e)
 static void add_deferred(void *)
 {
     ESP_LOGI(TAG, "add requested (letter %c)", s_letter);
-    lv_label_set_text(s_status, "Add: not built yet");
+    account_edit_open_new(s_letter);
 }
 
 static void add_cb(lv_event_t *)

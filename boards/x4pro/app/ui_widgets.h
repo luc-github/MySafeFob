@@ -138,6 +138,23 @@ lv_obj_t *add_divider_below(lv_obj_t *screen, lv_obj_t *above);
 lv_obj_t *add_back_header(lv_obj_t *screen, const char *title, Screen back_target, lv_group_t *group,
                           lv_obj_t **battery_label_out);
 
+/**
+ * @brief Same header as add_back_header(), but "< Back" calls `back_cb`
+ *        (with `back_user_data`) instead of switching to a fixed screen:
+ *        for screens whose Back must first ask something (unsaved changes).
+ *        The callback runs inside the click event: defer real work.
+ */
+lv_obj_t *add_back_header_cb(lv_obj_t *screen, const char *title, lv_event_cb_t back_cb, void *back_user_data,
+                             lv_group_t *group, lv_obj_t **battery_label_out);
+
+/**
+ * @brief F-05 auto-clear for a screen that shows a secret: while `screen`
+ *        is shown, SecretAutoClearS seconds without any input (ADR-012
+ *        activity) switch to HOME, so the secret does not stay on the
+ *        e-paper. Paused while a confirmation is open. Call once, at build.
+ */
+void ui_auto_clear_attach(lv_obj_t *screen);
+
 /** @brief Creates a battery/charge label and populates it immediately. */
 lv_obj_t *make_battery_label(lv_obj_t *parent);
 

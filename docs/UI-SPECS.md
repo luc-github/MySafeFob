@@ -336,8 +336,11 @@ screen.
 >        [ Edit ]   [ Remove ]
 > ```
 >
-> - The TOTP code is computed when the page opens and on Refresh, with the
->   seconds left at that instant; no countdown redraw (ADR-009). Parts the
+> - The TOTP code shows a live countdown of its seconds left and changes by
+>   itself when its period ends (2026-10-10 user request: a 1 s timer on
+>   this page only, labels redrawn only when their text changes; the
+>   e-ink ghost budget turns that into a full refresh about every 30 s).
+>   Refresh recomputes at once, for a desync. Parts the
 >   record does not have are not shown. `Remove` goes through the P6
 >   confirmation. `Edit` edits the name and adds, changes or removes any
 >   of the three parts (TOTP secret on the Base32 keyboard, P7).
