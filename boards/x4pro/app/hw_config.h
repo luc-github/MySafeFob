@@ -22,8 +22,8 @@
  *
  * Source of truth: docs/hardware-specs.md (bring-up validated 2026-09-13).
  * Subset of factory/main/hw_config.h: rails + e-ink + touch + nav buttons +
- * the CW2017 gauge (fixed-zone battery %, ADR-014). SD/RTC pins still DO
- * NOT belong here — not needed by the app yet.
+ * the CW2017 gauge (fixed-zone battery %, ADR-014) + the SD card (backup,
+ * 2026-10-11). RTC pins still do not belong here (not needed by the app).
  */
 #pragma once
 
@@ -33,6 +33,11 @@
 #define RAIL_PERIPH_PIN     GPIO_NUM_1   /* peripheral rail, HIGH = ON, held HIGH */
 #define RAIL_TOUCH_PIN      GPIO_NUM_2   /* touch power-enable, ACTIVE-LOW (LOW = on) */
 #define RAIL_SD_PIN         GPIO_NUM_5   /* SD power-enable, ACTIVE-LOW (LOW = on) */
+
+/* ---- SD card, native SDMMC 1-bit, slot 1 (sdcard.c) ---- */
+#define SD_CLK_PIN          GPIO_NUM_41
+#define SD_CMD_PIN          GPIO_NUM_42
+#define SD_D0_PIN           GPIO_NUM_40
 
 /* ---- E-Ink UC8279 (SPI2, write-only, manual CS) ---- */
 #define EINK_HOST           SPI2_HOST

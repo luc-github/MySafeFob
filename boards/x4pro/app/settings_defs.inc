@@ -108,4 +108,8 @@ SETTINGS_DEF(SecretAutoClearS, "secret_clr_s", U32, 300, GENERAL)
 SETTINGS_DEF(BatteryLowPct,      "bat_low_pct",  U32, 15, GENERAL)
 SETTINGS_DEF(BatteryCriticalPct, "bat_crit_pct", U32, 5,  GENERAL)
 SETTINGS_DEF(OwnerInfoShow, "owner_show", BOOL, 0, GENERAL)
+/* Settings > Security "Symbol keypad" (2026-10-11): the PIN keys show a
+ * fixed picture per digit instead of the digit. Cosmetic only, the PIN is
+ * still digits; readable before unlock, so stored here, not in the vault. */
+SETTINGS_DEF(PinSymbols, "pin_symbols", BOOL, 0, GENERAL)
 SETTINGS_STR_DEF(OwnerInfo, "owner_info", SETTINGS_OWNER_INFO_MAX, "", GENERAL)

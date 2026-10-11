@@ -30,6 +30,7 @@
  */
 #include "ui_screens.h"
 #include "ui_widgets.h"
+#include "msf_symbols.h"
 #include "lv_port_disp.h"
 #include "lv_port_indev.h"
 
@@ -202,7 +203,7 @@ lv_obj_t *build_names(lv_group_t **group_out, lv_obj_t **battery_label_out)
     s_next = make_fixed_button(screen, LV_SYMBOL_RIGHT, kArrowW);
     lv_obj_align(s_next, LV_ALIGN_TOP_LEFT, kSideMargin + kArrowW + 96, kPagerY);
     lv_obj_add_event_cb(s_next, page_cb, LV_EVENT_CLICKED, reinterpret_cast<void *>(static_cast<intptr_t>(1)));
-    lv_obj_t *add = make_fixed_button(screen, "+ Add", 140);
+    lv_obj_t *add = make_fixed_button(screen, LV_SYMBOL_PLUS " Add", 140);
     lv_obj_align(add, LV_ALIGN_TOP_RIGHT, -kSideMargin, kPagerY);
     lv_obj_add_event_cb(add, add_cb, LV_EVENT_CLICKED, nullptr);
 

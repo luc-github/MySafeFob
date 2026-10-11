@@ -23,6 +23,7 @@
  *        (docs/ROADMAP.md, one file per screen/component).
  */
 #include "ui_widgets.h"
+#include "msf_symbols.h"
 #include "lv_port_disp.h"
 #include "lv_port_indev.h"
 #include "ui_nav.h"
@@ -183,6 +184,14 @@ static void toggle_confirm_click_cb(lv_event_t *e)
  * fire LV_EVENT_VALUE_CHANGED on a real tap release, the same generic
  * mechanism lv_switch/lv_checkbox build on (lv_obj.c's default event
  * handler) -- not specific to those widget classes. */
+static void toggle_state_cb(lv_event_t *e)
+{
+    lv_obj_t *toggle = lv_event_get_target_obj(e);
+    lv_obj_t *box = static_cast<lv_obj_t *>(lv_event_get_user_data(e));
+    const char *text = lv_obj_has_state(toggle, LV_STATE_CHECKED) ? MSF_SYMBOL_CHECK_SQUARE : MSF_SYMBOL_SQUARE;
+    if (strcmp(lv_label_get_text(box), text) != 0) lv_label_set_text(box, text);
+}
+
 lv_obj_t *make_round_toggle_row(lv_obj_t *parent, lv_group_t *group, const char *label_text,
                                 bool initial_checked, lv_event_cb_t value_changed_cb)
 {
@@ -190,7 +199,7 @@ lv_obj_t *make_round_toggle_row(lv_obj_t *parent, lv_group_t *group, const char 
 
     lv_obj_t *toggle = lv_obj_create(row);
     lv_obj_remove_style_all(toggle);
-    lv_obj_set_size(toggle, 36, 36);
+    lv_obj_set_size(toggle, 40, 40);
     /* 2026-09-21 user report: sat flush against the row's/screen's right
      * edge; later request: line its center up with the "Neutral"/"100%"
      * value-label center on the stepper rows below (Color/Intensity), for
@@ -208,13 +217,17 @@ lv_obj_t *make_round_toggle_row(lv_obj_t *parent, lv_group_t *group, const char 
      * shifting the value label (and next_btn) an extra kFocusOutlineSlack
      * left that this toggle doesn't share -- added back here to keep the
      * two centered on the same line. */
-    lv_obj_set_style_margin_right(toggle, 119 + kFocusOutlineSlack, 0);
-    lv_obj_set_style_radius(toggle, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(toggle, lv_color_white(), 0);
-    lv_obj_set_style_bg_opa(toggle, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(toggle, kButtonBorderWidth, 0);
-    lv_obj_set_style_border_color(toggle, lv_color_black(), 0);
-    lv_obj_set_style_bg_color(toggle, lv_color_black(), LV_STATE_CHECKED);
+    lv_obj_set_style_margin_right(toggle, 117 + kFocusOutlineSlack, 0);
+    lv_obj_set_style_radius(toggle, kButtonRadius, 0);   /* focus ring shape */
+    /* Check box icon (2026-10-11 request, was a filled circle): outline
+     * square (Font Awesome Regular, see gen_fonts.py) / solid check-square,
+     * kept in sync with LV_STATE_CHECKED by toggle_state_cb(), whatever
+     * changes the state (tap, confirm pulse, or a screen setting it). */
+    lv_obj_t *box = lv_label_create(toggle);
+    lv_obj_set_style_text_font(box, &msf_font_32, 0);
+    lv_obj_center(box);
+    lv_label_set_text(box, initial_checked ? MSF_SYMBOL_CHECK_SQUARE : MSF_SYMBOL_SQUARE);
+    lv_obj_add_event_cb(toggle, toggle_state_cb, LV_EVENT_STATE_CHANGED, box);
     lv_obj_add_flag(toggle, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(toggle, LV_OBJ_FLAG_CHECKABLE);
     lv_obj_set_ext_click_area(toggle, kExtClickMargin);
@@ -225,9 +238,7 @@ lv_obj_t *make_round_toggle_row(lv_obj_t *parent, lv_group_t *group, const char 
     lv_obj_add_event_cb(toggle, toggle_confirm_click_cb, LV_EVENT_CLICKED, nullptr);
 
     /* add_to_group() now styles focus with an outline ring too (2026-09-21
-     * user request), so it no longer collides with LV_STATE_CHECKED's bg
-     * fill the way its old invert style did -- this can just use it like
-     * every other focusable control now. */
+     * user request); the checked state is shown by the box icon only. */
     add_to_group(toggle, group);
 
     return row;
@@ -250,7 +261,7 @@ static lv_obj_t *make_stepper_button(lv_obj_t *parent, const char *label_text)
     lv_label_set_text(label, label_text);
     /* "+"/"-" read as too small at the default 24px (2026-09-21) -- a
      * bigger font just for this glyph, not the app-wide default. */
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_32, 0);
+    lv_obj_set_style_text_font(label, &msf_font_32, 0);
     lv_obj_center(label);
     return btn;
 }
@@ -261,7 +272,8 @@ static lv_obj_t *make_stepper_button(lv_obj_t *parent, const char *label_text)
  * right). *value_label_out receives the middle label to update from the
  * -/+ callbacks. */
 lv_obj_t *make_stepper_row(lv_obj_t *parent, lv_group_t *group, const char *label_text,
-                           lv_event_cb_t prev_cb, lv_event_cb_t next_cb, lv_obj_t **value_label_out)
+                           lv_event_cb_t prev_cb, lv_event_cb_t next_cb, lv_obj_t **value_label_out,
+                           const char *prev_text, const char *next_text, int32_t value_width)
 {
     lv_obj_t *row = make_row(parent, label_text);
 
@@ -285,15 +297,15 @@ lv_obj_t *make_stepper_row(lv_obj_t *parent, lv_group_t *group, const char *labe
      * to keep it lined up with the toggle above. */
     lv_obj_set_style_pad_all(controls, kFocusOutlineSlack, 0);
 
-    lv_obj_t *prev_btn = make_stepper_button(controls, "-");
+    lv_obj_t *prev_btn = make_stepper_button(controls, prev_text);
     lv_obj_add_event_cb(prev_btn, prev_cb, LV_EVENT_CLICKED, nullptr);
     add_to_group(prev_btn, group);
 
     lv_obj_t *value_label = lv_label_create(controls);
-    lv_obj_set_width(value_label, 130);
+    lv_obj_set_width(value_label, value_width);
     lv_obj_set_style_text_align(value_label, LV_TEXT_ALIGN_CENTER, 0);
 
-    lv_obj_t *next_btn = make_stepper_button(controls, "+");
+    lv_obj_t *next_btn = make_stepper_button(controls, next_text);
     lv_obj_add_event_cb(next_btn, next_cb, LV_EVENT_CLICKED, nullptr);
     add_to_group(next_btn, group);
 
@@ -450,7 +462,7 @@ lv_obj_t *add_back_header_cb(lv_obj_t *screen, const char *title, lv_event_cb_t 
 
     add_divider_below(screen, bar);
 
-    lv_obj_t *back = make_button(screen, "< Back");
+    lv_obj_t *back = make_button(screen, MSF_SYMBOL_BACK " Back");
     lv_obj_align(back, LV_ALIGN_TOP_LEFT, 16, kBackTopMargin);
     lv_obj_add_event_cb(back, back_cb, LV_EVENT_CLICKED, back_user_data);
     add_to_group(back, group);
@@ -526,7 +538,10 @@ bool ui_confirm_show(const ui_confirm_t *cfg)
 {
     if (s_confirm) return false;
     s_confirm_cfg = *cfg;
-    lv_snprintf(s_confirm_title, sizeof(s_confirm_title), "%s", cfg->title ? cfg->title : "");
+    /* Warning sign for an irreversible / destructive action, question
+     * mark otherwise (2026-10-11). */
+    lv_snprintf(s_confirm_title, sizeof(s_confirm_title), "%s %s",
+                cfg->critical ? LV_SYMBOL_WARNING : MSF_SYMBOL_QUESTION, cfg->title ? cfg->title : "");
     lv_snprintf(s_confirm_message, sizeof(s_confirm_message), "%s", cfg->message ? cfg->message : "");
     lv_snprintf(s_confirm_action, sizeof(s_confirm_action), "%s", cfg->action_text ? cfg->action_text : "OK");
 
@@ -544,7 +559,7 @@ bool ui_confirm_show(const ui_confirm_t *cfg)
 
     lv_obj_t *title = lv_label_create(s_confirm);
     lv_label_set_text(title, s_confirm_title);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_32, 0);
+    lv_obj_set_style_text_font(title, &msf_font_32, 0);
 
     lv_obj_t *message = lv_label_create(s_confirm);
     lv_label_set_text(message, s_confirm_message);
@@ -559,10 +574,12 @@ bool ui_confirm_show(const ui_confirm_t *cfg)
     lv_obj_set_style_pad_all(buttons, kFocusOutlineSlack, 0);
     lv_obj_set_style_pad_column(buttons, 2 * kExtClickMargin + 16, 0);   /* hit areas never overlap */
 
-    lv_obj_t *cancel = make_button(buttons, "Cancel");
+    lv_obj_t *cancel = make_button(buttons, LV_SYMBOL_CLOSE " Cancel");
     lv_obj_add_event_cb(cancel, confirm_button_cb, LV_EVENT_CLICKED, reinterpret_cast<void *>(static_cast<intptr_t>(0)));
     add_to_group(cancel, s_confirm_group);
-    lv_obj_t *action = make_button(buttons, s_confirm_action);
+    char action_text[sizeof(s_confirm_action) + 8];
+    lv_snprintf(action_text, sizeof(action_text), LV_SYMBOL_OK " %s", s_confirm_action);
+    lv_obj_t *action = make_button(buttons, action_text);
     lv_obj_add_event_cb(action, confirm_button_cb, LV_EVENT_CLICKED, reinterpret_cast<void *>(static_cast<intptr_t>(1)));
     add_to_group(action, s_confirm_group);
     lv_group_focus_obj(cancel);

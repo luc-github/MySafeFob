@@ -38,7 +38,7 @@
  * F-19 owner contact info (Settings > Owner info, opt-in): when enabled,
  * draw_owner_info() writes it in white over the bitmap's black top band,
  * above the shield. Glyphs come straight from LVGL's built-in font data
- * (lv_font_montserrat_24, a plain fmt_txt font): only the font tables are
+ * (msf_font_24, a plain fmt_txt font): only the font tables are
  * read, no LVGL object or draw call, so this stays safe with LVGL
  * suspended.
  */
@@ -49,6 +49,7 @@
 
 extern "C" {
 #include "battery.h"
+#include "accounts.h"
 }
 
 extern "C" {
@@ -217,7 +218,7 @@ static void draw_owner_info(uint8_t *fb)
         return;
     }
 
-    const lv_font_t *font = &lv_font_montserrat_24;
+    const lv_font_t *font = &msf_font_24;
     const int line_h = font->line_height;
     static const char kHeading[] = "If found, please contact:";
     draw_centered_white(fb, font, kHeading, sizeof(kHeading) - 1, kOwnerTop);
@@ -252,7 +253,7 @@ static void draw_battery_low(uint8_t *fb)
     }
     char text[40];
     snprintf(text, sizeof(text), "Battery low (%u%%), please charge", soc);
-    const lv_font_t *font = &lv_font_montserrat_24;
+    const lv_font_t *font = &msf_font_24;
     draw_centered_white(fb, font, text, static_cast<int>(strlen(text)), SLEEP_H - font->line_height - 24);
     ESP_LOGI(TAG, "battery low note drawn on sleep screen");
 }
@@ -353,6 +354,10 @@ extern "C" void board_sleep_screen_show(void)
      * path) must stop pumping lv_timer_handler() before anything else here
      * runs, LVGL is not thread-safe. */
     ui_nav_suspend_lvgl_for_sleep();
+
+    /* Lock before sleeping (ROADMAP 8.2 step B): wipe the decrypted
+     * accounts and the key now rather than rely on the RAM being lost. */
+    accounts_lock();
 
     rails_for_splash();
 

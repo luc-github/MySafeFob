@@ -28,6 +28,7 @@
 #include "ui_screens.h"
 #include "ui_widgets.h"
 #include "ui_keyboard.h"
+#include "msf_symbols.h"
 #include "lv_port_indev.h"
 #include "settings_store.h"
 #include "time_service.h"
@@ -199,7 +200,7 @@ static lv_obj_t *add_manual_key(lv_obj_t *parent, lv_group_t *group, const char 
     lv_obj_set_style_min_width(btn, 0, 0);
     lv_obj_set_size(btn, kKeyW, kKeyH);
     lv_obj_set_ext_click_area(btn, 0);
-    lv_obj_set_style_text_font(lv_obj_get_child(btn, 0), &lv_font_montserrat_32, 0);
+    lv_obj_set_style_text_font(lv_obj_get_child(btn, 0), &msf_font_32, 0);
     lv_obj_add_event_cb(btn, manual_key_cb, LV_EVENT_CLICKED, reinterpret_cast<void *>(static_cast<intptr_t>(key)));
     add_to_group(btn, group);
     return btn;
@@ -244,7 +245,7 @@ static void build_manual_tab(lv_obj_t *panel, lv_group_t *group)
 {
     s_now_label = lv_label_create(panel);
     s_entry_label = lv_label_create(panel);
-    lv_obj_set_style_text_font(s_entry_label, &lv_font_montserrat_32, 0);
+    lv_obj_set_style_text_font(s_entry_label, &msf_font_32, 0);
     s_manual_status = lv_label_create(panel);
     lv_label_set_text(s_manual_status, "Local date and time");
 
@@ -433,7 +434,7 @@ static void build_wifi_tab(lv_obj_t *panel, lv_group_t *group)
      * keyboard (never under it) so progress and results stay visible while
      * a password is being typed. */
     lv_obj_t *top = make_flex_row(panel, kKeyGap);
-    lv_obj_t *scan = make_button(top, LV_SYMBOL_WIFI " " LV_SYMBOL_REFRESH);
+    lv_obj_t *scan = make_button(top, LV_SYMBOL_WIFI " " MSF_SYMBOL_SEARCH);
     lv_obj_set_style_min_width(scan, 0, 0);
     lv_obj_set_size(scan, 120, kSmallBtn);
     lv_obj_set_ext_click_area(scan, 0);
@@ -465,7 +466,7 @@ static void build_wifi_tab(lv_obj_t *panel, lv_group_t *group)
     s_password_label = lv_label_create(row);
     lv_obj_t *eye = make_square_button(row, group, LV_SYMBOL_EYE_OPEN, wifi_eye_cb, 0);
     s_wifi_eye_label = lv_obj_get_child(eye, 0);
-    lv_obj_set_style_text_font(s_wifi_eye_label, &lv_font_montserrat_32, 0);
+    lv_obj_set_style_text_font(s_wifi_eye_label, &msf_font_32, 0);
 
     s_wifi_phase = kPhaseList;
     s_password_visible = false;
@@ -548,7 +549,7 @@ static void ble_dev_cb(lv_event_t *e)
 static void build_ble_tab(lv_obj_t *panel, lv_group_t *group)
 {
     lv_obj_t *top = make_flex_row(panel, kKeyGap);
-    lv_obj_t *scan = make_button(top, LV_SYMBOL_BLUETOOTH " " LV_SYMBOL_REFRESH);
+    lv_obj_t *scan = make_button(top, LV_SYMBOL_BLUETOOTH " " MSF_SYMBOL_SEARCH);
     lv_obj_set_style_min_width(scan, 0, 0);
     lv_obj_set_size(scan, 120, kSmallBtn);
     lv_obj_set_ext_click_area(scan, 0);
@@ -636,7 +637,7 @@ lv_obj_t *build_time(lv_group_t **group_out, lv_obj_t **battery_label_out)
     *group_out = group;
 
     lv_obj_t *screen = make_screen();
-    add_back_header(screen, "Time", Screen::Settings, group, battery_label_out);
+    add_back_header(screen, MSF_SYMBOL_CLOCK " Time", Screen::Settings, group, battery_label_out);
     lv_obj_t *content = make_content(screen);
     lv_obj_set_style_pad_row(content, 8, 0);
     lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -648,7 +649,7 @@ lv_obj_t *build_time(lv_group_t **group_out, lv_obj_t **battery_label_out)
         lv_obj_set_style_min_width(s_tab_btn[i], 0, 0);
         lv_obj_set_size(s_tab_btn[i], kTabWidth, kTabHeight);
         lv_obj_set_ext_click_area(s_tab_btn[i], 0);
-        lv_obj_set_style_text_font(lv_obj_get_child(s_tab_btn[i], 0), &lv_font_montserrat_32, 0);
+        lv_obj_set_style_text_font(lv_obj_get_child(s_tab_btn[i], 0), &msf_font_32, 0);
         lv_obj_add_event_cb(s_tab_btn[i], tab_cb, LV_EVENT_CLICKED, reinterpret_cast<void *>(static_cast<intptr_t>(i)));
         add_to_group(s_tab_btn[i], group);
     }

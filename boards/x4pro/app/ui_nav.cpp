@@ -43,6 +43,7 @@ extern "C" {
 #include "battery.h"
 #include "frontlight.h"
 #include "time_service.h"
+#include "accounts.h"
 #include "power_mgr.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -160,6 +161,14 @@ void board_ui_nav_focus_next(void)
 
 void switch_screen(Screen s)
 {
+    /* HOME only while the store is unlocked (ROADMAP 8.2 step B): boot,
+     * wake, auto-clear or any other way to HOME lands on the PIN screen
+     * instead (creation when there is no store yet). */
+    if (s == Screen::Home && !accounts_is_unlocked()) {
+        if (accounts_store_exists()) pin_open_unlock();
+        else pin_open_create();
+        return;
+    }
     ESP_LOGI(TAG, "screen: %d -> %d", static_cast<int>(s_screen), static_cast<int>(s));
     s_screen = s;
     refresh_battery_label(s_battery_labels[static_cast<int>(s)]);
@@ -261,20 +270,21 @@ static void build_screens(void)
     build_screen(Screen::Home, build_home);
     build_screen(Screen::Settings, build_settings);
     build_screen(Screen::SettingsDevice, build_settings_device);
-    build_screen(Screen::SettingsSecurityData, build_settings_security_data);
+    build_screen(Screen::SettingsSecurity, build_settings_security);
     build_screen(Screen::SettingsControls, build_settings_controls);
     build_screen(Screen::SettingsDisplay, build_settings_display);
     build_screen(Screen::SettingsAbout, build_settings_about);
     build_screen(Screen::TouchDiag, build_touch_diag);
-    build_screen(Screen::Security, build_security);
     build_screen(Screen::Time, build_time);
     build_screen(Screen::Alerts, build_alerts);
     build_screen(Screen::OwnerInfo, build_owner_info);
-    build_screen(Screen::KeyboardTest, build_keyboard_test);
     build_screen(Screen::Names, build_names);
     build_screen(Screen::Account, build_account);
     build_screen(Screen::AccountEdit, build_account_edit);
     build_screen(Screen::FieldEdit, build_field_edit);
+    build_screen(Screen::RecoveryView, build_recovery_view);
+    build_screen(Screen::RecoveryEdit, build_recovery_edit);
+    build_screen(Screen::Pin, build_pin);
 }
 
 /* REMOVED 2026-09-24 (was: slip eink.c's mandatory ghost-budget full GC
@@ -397,6 +407,13 @@ void board_ui_nav_task(void *arg)
             }
 
             check_idle_timeout();
+
+            /* Locked behind the UI's back (console `store lock`): back to
+             * the PIN screen, nothing decrypted stays on screen. */
+            static bool s_was_unlocked = false;
+            bool unlocked = accounts_is_unlocked();
+            if (s_was_unlocked && !unlocked && s_screen != Screen::Pin) pin_open_unlock();
+            s_was_unlocked = unlocked;
         }
         vTaskDelay(pdMS_TO_TICKS(20));
     }

@@ -46,6 +46,7 @@
  */
 #include "ui_screens.h"
 #include "ui_widgets.h"
+#include "msf_symbols.h"
 #include "lv_port_indev.h"
 #include "lv_port_disp.h"
 #include "ui_nav.h"
@@ -554,7 +555,7 @@ lv_obj_t *build_touch_diag(lv_group_t **group_out, lv_obj_t **battery_label_out)
     /* "< Back" is added to `group` first, inside add_back_header() -- see
      * the file header comment: this makes it the escape hatch's default
      * focus, before Restart (added further below) joins the same group. */
-    add_back_header(screen, "Calibration", Screen::SettingsDevice, group, battery_label_out);
+    add_back_header(screen, MSF_SYMBOL_CROSSHAIRS " Calibration", Screen::SettingsDevice, group, battery_label_out);
 
     /* Restart sits in the header band, mirroring "< Back" on the right,
      * NOT inside the content/grid area (2026-09-23 hardware bug: after a
@@ -565,7 +566,7 @@ lv_obj_t *build_touch_diag(lv_group_t **group_out, lv_obj_t **battery_label_out)
      * in the header band makes that impossible by construction: the grid
      * (kCalGridTop=500 and below) is nowhere near y=kBackTopMargin, no
      * matter how wrong a stale correction is. */
-    lv_obj_t *restart_btn = make_button(screen, "Restart");
+    lv_obj_t *restart_btn = make_button(screen, MSF_SYMBOL_ROTATE_LEFT " Restart");
     lv_obj_align(restart_btn, LV_ALIGN_TOP_RIGHT, -16, kBackTopMargin);
     lv_obj_add_event_cb(restart_btn, restart_cb, LV_EVENT_CLICKED, nullptr);
     add_to_group(restart_btn, group);

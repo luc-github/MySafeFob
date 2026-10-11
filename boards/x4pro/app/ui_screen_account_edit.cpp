@@ -36,10 +36,13 @@
  *        field, Back leaves the draft unchanged. Both screens show secrets:
  *        F-05 auto-clear (ui_auto_clear_attach()).
  *
- *        The recovery code list editor is not built yet (status line).
+ *        Recovery opens the code list editor (ui_screen_recovery.cpp),
+ *        which works on the same draft through account_edit_draft(); FIELD
+ *        also enters a new recovery code (account_edit_new_rcv_code()).
  */
 #include "ui_screens.h"
 #include "ui_widgets.h"
+#include "msf_symbols.h"
 #include "ui_keyboard.h"
 #include "lv_port_disp.h"
 #include "lv_port_indev.h"
@@ -58,9 +61,11 @@ static const char *TAG = "account_edit";
 
 /* ---- Shared state ------------------------------------------------------- */
 
-enum Field { kName, kLogin, kPassword, kPin, kNote, kTotp, kRecovery, kFieldCount };
+enum Field { kName, kLogin, kPassword, kPin, kNote, kTotp, kRecovery, kFieldCount, kRcvCode = kFieldCount };
 
-static const char *const kFieldText[kFieldCount] = {"Name", "Login", "Password", "PIN", "Note", "TOTP", "Recovery"};
+static const char *const kFieldText[kFieldCount] = {
+    MSF_SYMBOL_ID_CARD " Name", MSF_SYMBOL_USER " Login", MSF_SYMBOL_KEY " Password", MSF_SYMBOL_HASHTAG " PIN",
+    MSF_SYMBOL_NOTE " Note", MSF_SYMBOL_CLOCK " TOTP", MSF_SYMBOL_LIFE_RING " Recovery"};
 
 static account_t s_draft;
 static uint16_t s_edit_id;        /* 0 = adding a new account */
@@ -70,6 +75,7 @@ static char s_return_letter;      /* NAMES letter to return to */
 
 /* Field entry state */
 static Field s_field;
+static char s_new_code[ACCOUNTS_RCV_CODE_MAX + 1];   /* kRcvCode target */
 static char s_text[ACCOUNTS_TOTP_KEY_MAX + 1];   /* largest field */
 static int s_text_len;
 static uint8_t s_digits;
@@ -111,6 +117,7 @@ static char *field_buffer(Field f, size_t *max_len)
     case kPin: *max_len = ACCOUNTS_PIN_MAX; return s_draft.pin;
     case kNote: *max_len = ACCOUNTS_NOTE_MAX; return s_draft.note;
     case kTotp: *max_len = ACCOUNTS_TOTP_KEY_MAX; return s_draft.totp_key;
+    case kRcvCode: *max_len = ACCOUNTS_RCV_CODE_MAX; return s_new_code;
     default: *max_len = 0; return nullptr;
     }
 }
@@ -153,16 +160,32 @@ static void show_rows(void)
     if (s_draft.rcv_count) snprintf(buf, sizeof(buf), "%u codes", s_draft.rcv_count);
     else snprintf(buf, sizeof(buf), "(none)");
     lv_label_set_text(s_values[kRecovery], buf);
-    lv_label_set_text(s_title, s_edit_id ? "Edit" : "Add");
+    lv_label_set_text(s_title, s_edit_id ? LV_SYMBOL_EDIT " Edit" : LV_SYMBOL_PLUS " Add");
 }
 
 static void field_open(Field f);
+
+account_t *account_edit_draft(void)
+{
+    return &s_draft;
+}
+
+void account_edit_mark_dirty(void)
+{
+    s_dirty = true;
+}
+
+void account_edit_new_rcv_code(void)
+{
+    s_new_code[0] = '\0';
+    field_open(kRcvCode);
+}
 
 static void row_deferred(void *user_data)
 {
     Field f = static_cast<Field>(reinterpret_cast<intptr_t>(user_data));
     if (f == kRecovery) {
-        lv_label_set_text(s_status, "Recovery codes: next step");
+        switch_screen(Screen::RecoveryEdit);
         return;
     }
     field_open(f);
@@ -204,7 +227,7 @@ static void back_deferred(void *)
         return;
     }
     const ui_confirm_t cfg = {"Discard changes?", "The changes made to this account\nwill be lost.", "Discard",
-                              discard_confirmed, nullptr, nullptr};
+                              discard_confirmed, nullptr, nullptr, true};
     ui_confirm_show(&cfg);
 }
 
@@ -225,10 +248,10 @@ lv_obj_t *build_account_edit(lv_group_t **group_out, lv_obj_t **battery_label_ou
     *group_out = group;
 
     lv_obj_t *screen = make_screen();
-    lv_obj_t *bar = add_back_header_cb(screen, "Edit", back_cb, nullptr, group, battery_label_out);
+    lv_obj_t *bar = add_back_header_cb(screen, LV_SYMBOL_EDIT " Edit", back_cb, nullptr, group, battery_label_out);
     s_title = lv_obj_get_child(bar, 0);
 
-    lv_obj_t *save = make_button(screen, "Save");
+    lv_obj_t *save = make_button(screen, LV_SYMBOL_SAVE " Save");
     lv_obj_set_style_min_width(save, 120, 0);
     lv_obj_align(save, LV_ALIGN_TOP_RIGHT, -16, kBackTopMargin);
     lv_obj_add_event_cb(save, save_cb, LV_EVENT_CLICKED, nullptr);
@@ -248,8 +271,8 @@ lv_obj_t *build_account_edit(lv_group_t **group_out, lv_obj_t **battery_label_ou
         lv_obj_align(name, LV_ALIGN_LEFT_MID, 12, 0);
         s_values[f] = lv_label_create(row);
         lv_label_set_long_mode(s_values[f], LV_LABEL_LONG_DOT);
-        lv_obj_set_width(s_values[f], 220);
-        lv_obj_align(s_values[f], LV_ALIGN_LEFT_MID, 140, 0);
+        lv_obj_set_width(s_values[f], 170);   /* after the icon + field name */
+        lv_obj_align(s_values[f], LV_ALIGN_LEFT_MID, 190, 0);
         lv_obj_t *arrow = lv_label_create(row);
         lv_label_set_text(arrow, LV_SYMBOL_RIGHT);
         lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -12, 0);
@@ -333,9 +356,23 @@ static void kb_backspace(void *)
     }
 }
 
-/* Enter: validate into the draft and go back to EDIT. */
+/* Enter: validate into the draft and go back to EDIT (or to the recovery
+ * code list for a new code). */
 static void kb_enter(void *)
 {
+    if (s_field == kRcvCode) {
+        if (s_text_len == 0) {
+            lv_label_set_text(s_field_status, "Empty code");
+            return;
+        }
+        if (!accounts_rcv_append(&s_draft, s_text)) {
+            lv_label_set_text(s_field_status, "No room for more codes");
+            return;
+        }
+        s_dirty = true;
+        switch_screen(Screen::RecoveryEdit);
+        return;
+    }
     if (s_field == kTotp && s_text_len > 0 && !accounts_totp_key_valid(s_text)) {
         lv_label_set_text(s_field_status, "Invalid TOTP key (Base32, 1-64 bytes)");
         return;
@@ -379,7 +416,8 @@ static void option_cb(lv_event_t *e)
 
 static void field_back_deferred(void *)
 {
-    switch_screen(Screen::AccountEdit);   /* draft unchanged */
+    /* Draft unchanged. */
+    switch_screen(s_field == kRcvCode ? Screen::RecoveryEdit : Screen::AccountEdit);
 }
 
 static void field_back_cb(lv_event_t *)
@@ -389,7 +427,7 @@ static void field_back_cb(lv_event_t *)
 
 static void field_loaded_cb(lv_event_t *)
 {
-    lv_label_set_text(s_field_title, kFieldText[s_field]);
+    lv_label_set_text(s_field_title, s_field == kRcvCode ? MSF_SYMBOL_LIFE_RING " New recovery code" : kFieldText[s_field]);
     int mode = (s_field == kTotp) ? 1 : (s_field == kPin) ? 2 : 0;
     for (int i = 0; i < kModeCount; i++) {
         if (i == mode) lv_obj_remove_flag(s_keyboards[i], LV_OBJ_FLAG_HIDDEN);
@@ -424,7 +462,7 @@ lv_obj_t *build_field_edit(lv_group_t **group_out, lv_obj_t **battery_label_out)
     lv_obj_t *bar = add_back_header_cb(screen, "", field_back_cb, nullptr, group, battery_label_out);
     s_field_title = lv_obj_get_child(bar, 0);
 
-    lv_obj_t *clear = make_button(screen, "Clear");
+    lv_obj_t *clear = make_button(screen, MSF_SYMBOL_ERASER " Clear");
     lv_obj_set_style_min_width(clear, 120, 0);
     lv_obj_align(clear, LV_ALIGN_TOP_RIGHT, -16, kBackTopMargin);
     lv_obj_add_event_cb(clear, clear_cb, LV_EVENT_CLICKED, nullptr);

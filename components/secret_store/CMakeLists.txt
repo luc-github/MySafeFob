@@ -1,6 +1,7 @@
-# MySafeFob secret_store — Phase 8 stub
-# The Argon2id port (libsodium/monocypher) and AES-256-GCM encryption
-# of the blob arrive in task 8.2 (ADR-002 / ADR-004).
+# MySafeFob secret_store — encrypted account store (F-04, ADR-002/004/019):
+# AES-256-GCM (mbedtls), key = Argon2id(PIN) (Monocypher), raw `secrets`
+# partition with two alternating slots.
 idf_component_register(SRCS "secret_store.c"
                        INCLUDE_DIRS "include"
-                       REQUIRES mbedtls)
+                       REQUIRES esp_partition
+                       PRIV_REQUIRES mbedtls monocypher bootloader_support esp_timer esp_hw_support spi_flash)

@@ -27,6 +27,7 @@
  */
 #include "ui_screens.h"
 #include "ui_widgets.h"
+#include "msf_symbols.h"
 #include "ui_keyboard.h"
 #include "lv_port_disp.h"
 #include "lv_port_indev.h"
@@ -139,7 +140,7 @@ static void clear_deferred(void *)
     const ui_confirm_t cfg = {"Clear owner info?",
                               "The contact text will be erased\nand no longer shown on the sleep screen.\n"
                               "This cannot be undone.",
-                              "Clear", clear_confirmed, nullptr, nullptr};
+                              "Clear", clear_confirmed, nullptr, nullptr, true};
     ui_confirm_show(&cfg);
 }
 
@@ -191,13 +192,17 @@ lv_obj_t *build_owner_info(lv_group_t **group_out, lv_obj_t **battery_label_out)
     *group_out = group;
 
     lv_obj_t *screen = make_screen();
-    add_back_header(screen, "Owner info", Screen::SettingsSecurityData, group, battery_label_out);
+    add_back_header(screen, MSF_SYMBOL_USER_EDIT " Owner info", Screen::SettingsAbout, group, battery_label_out);
     lv_obj_t *content = make_content(screen);
     lv_obj_set_style_pad_row(content, 4, 0);   /* everything must fit above the keyboard */
 
     bool on = settings_store_get_owner_info_show();
-    lv_obj_t *row = make_round_toggle_row(content, group, "Show on sleep screen", on, show_toggle_cb);
+    lv_obj_t *row = make_round_toggle_row(content, group, LV_SYMBOL_EYE_OPEN " Show on sleep screen", on, show_toggle_cb);
     s_toggle = lv_obj_get_child(row, -1);
+    /* Against the right edge: the default margin lines toggles up with the
+     * stepper values of Controls/Display, but there is no stepper here and
+     * the label (with its icon, 2026-10-11) needs the width. */
+    lv_obj_set_style_margin_right(s_toggle, 0, 0);
 
     s_edit_box = lv_obj_create(content);
     lv_obj_remove_style_all(s_edit_box);
@@ -220,10 +225,10 @@ lv_obj_t *build_owner_info(lv_group_t **group_out, lv_obj_t **battery_label_out)
     lv_label_set_text(s_caption_label, "Phone / email");
     lv_obj_set_flex_grow(s_caption_label, 1);
     s_result_icon = lv_label_create(caption_row);
-    lv_obj_set_style_text_font(s_result_icon, &lv_font_montserrat_32, 0);
+    lv_obj_set_style_text_font(s_result_icon, &msf_font_32, 0);
     lv_label_set_text(s_result_icon, LV_SYMBOL_OK);
     lv_obj_add_flag(s_result_icon, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_t *clear = make_button(caption_row, "Clear");
+    lv_obj_t *clear = make_button(caption_row, MSF_SYMBOL_ERASER " Clear");
     lv_obj_add_event_cb(clear, clear_cb, LV_EVENT_CLICKED, nullptr);
     add_to_group(clear, group);
 

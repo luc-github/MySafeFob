@@ -86,6 +86,14 @@ bool settings_store_get_stay_awake_on_usb(void);
 void settings_store_set_stay_awake_on_usb(bool on);
 
 /**
+ * @brief "Symbol keypad" (2026-10-11): PIN keys show a fixed picture per
+ *        digit (star, eye, smile...) instead of the digit. Cosmetic, the
+ *        PIN itself is unchanged. Default off.
+ */
+bool settings_store_get_pin_symbols(void);
+void settings_store_set_pin_symbols(bool on);
+
+/**
  * @brief Frontlight preferences (UI-SPECS.md §2.14, SETTINGS_DISPLAY).
  *        Color is a 0-100 warm<->cool mix percentage (0=warm, 100=cool,
  *        50=neutral — see frontlight_apply()), amended 2026-09-20 from an

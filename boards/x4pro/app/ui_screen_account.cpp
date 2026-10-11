@@ -38,11 +38,12 @@
  *
  *        Targets sit at fixed y above the X4 Pro touch band, Edit/Remove
  *        below it (touch_safe_y(), ui_widgets.h). Edit opens EDIT
- *        (ui_screen_account_edit.cpp); the recovery code list is not built
- *        yet (status line only).
+ *        (ui_screen_account_edit.cpp), the recovery > button the code list
+ *        (ui_screen_recovery.cpp).
  */
 #include "ui_screens.h"
 #include "ui_widgets.h"
+#include "msf_symbols.h"
 #include "lv_port_disp.h"
 #include "lv_port_indev.h"
 
@@ -62,7 +63,7 @@ extern "C" {
 static const char *TAG = "account";
 
 static constexpr int32_t kLabelX = 24;
-static constexpr int32_t kValueX = 150;
+static constexpr int32_t kValueX = 72;   /* labels are icons only (2026-10-11) */
 /* Layout 2026-10-10 (user review): login below the countdown (which ends
  * at y~253), eye icon instead of Reveal/Hide text, every target above the
  * X4 Pro touch band (ends before y=490). */
@@ -204,10 +205,16 @@ static void show_account(void)
     set_part_hidden(s_recovery_part, s_account.rcv_count == 0);
     if (s_account.rcv_count) {
         char buf[32];
-        snprintf(buf, sizeof(buf), "%d / %u unused", accounts_rcv_unused(&s_account), s_account.rcv_count);
+        snprintf(buf, sizeof(buf), "%d / %u available", accounts_rcv_unused(&s_account), s_account.rcv_count);
         lv_label_set_text(s_recovery_label, buf);
     }
-    lv_label_set_text(s_note_label, s_account.note);
+    if (s_account.note[0]) {
+        char note[ACCOUNTS_NOTE_MAX + 8];
+        snprintf(note, sizeof(note), MSF_SYMBOL_NOTE "  %s", s_account.note);
+        lv_label_set_text(s_note_label, note);
+    } else {
+        lv_label_set_text(s_note_label, "");
+    }
     lv_label_set_text(s_status, "");
 }
 
@@ -234,14 +241,14 @@ static void reveal_cb(lv_event_t *)
     ui_defer(reveal_deferred, nullptr);
 }
 
-static void status_deferred(void *user_data)
+static void recovery_deferred(void *)
 {
-    lv_label_set_text(s_status, static_cast<const char *>(user_data));
+    recovery_open(s_id);
 }
 
 static void recovery_cb(lv_event_t *)
 {
-    ui_defer(status_deferred, const_cast<char *>("Recovery codes: not built yet"));
+    ui_defer(recovery_deferred, nullptr);
 }
 
 static void edit_deferred(void *)
@@ -267,7 +274,7 @@ static void remove_deferred(void *)
     static char message[ACCOUNTS_NAME_MAX + 96];
     snprintf(message, sizeof(message), "\"%s\" and all its data\n(TOTP, login, recovery codes)\nwill be removed.\n"
              "This cannot be undone.", s_account.name);
-    const ui_confirm_t cfg = {"Remove account?", message, "Remove", remove_confirmed, nullptr, nullptr};
+    const ui_confirm_t cfg = {"Remove account?", message, "Remove", remove_confirmed, nullptr, nullptr, true};
     ui_confirm_show(&cfg);
 }
 
@@ -332,27 +339,27 @@ lv_obj_t *build_account(lv_group_t **group_out, lv_obj_t **battery_label_out)
     lv_obj_set_width(s_title, 300);
 
     /* TOTP: label, big code, seconds left, Refresh. */
-    make_text(screen, &s_totp_part, "TOTP", kLabelX, kTotpY + 14);
-    s_code_label = make_text(screen, &s_totp_part, "", kValueX - 30, kTotpY + 8);
-    lv_obj_set_style_text_font(s_code_label, &lv_font_montserrat_32, 0);
-    s_left_label = make_text(screen, &s_totp_part, "", kValueX - 30, kTotpY + 50);
+    make_text(screen, &s_totp_part, MSF_SYMBOL_CLOCK, kLabelX, kTotpY + 14);
+    s_code_label = make_text(screen, &s_totp_part, "", kValueX, kTotpY + 8);
+    lv_obj_set_style_text_font(s_code_label, &msf_font_32, 0);
+    s_left_label = make_text(screen, &s_totp_part, "", kValueX, kTotpY + 50);
     s_refresh_btn = make_action(screen, &s_totp_part, group, LV_SYMBOL_REFRESH, kMinTouchTarget, LV_ALIGN_TOP_LEFT,
                                 kEyeX, kTotpY, refresh_cb);
 
     /* Login: username, password (masked) + eye, PIN (masked). */
-    make_text(screen, &s_login_part, "Login", kLabelX, kLoginY);
+    make_text(screen, &s_login_part, MSF_SYMBOL_USER, kLabelX, kLoginY);
     s_user_label = make_text(screen, &s_login_part, "", kValueX, kLoginY);
     lv_label_set_long_mode(s_user_label, LV_LABEL_LONG_DOT);
     lv_obj_set_width(s_user_label, 480 - kValueX - kLabelX);
-    make_text(screen, &s_login_part, "Password", kLabelX, kPasswordY + 14);
+    make_text(screen, &s_login_part, MSF_SYMBOL_KEY, kLabelX, kPasswordY + 14);
     s_password_label = make_text(screen, &s_login_part, "", kValueX, kPasswordY + 14);
     lv_label_set_long_mode(s_password_label, LV_LABEL_LONG_DOT);
     lv_obj_set_width(s_password_label, kEyeX - kValueX - 12);   /* never under the eye */
     lv_obj_t *eye = make_action(screen, &s_login_part, group, LV_SYMBOL_EYE_OPEN, kMinTouchTarget, LV_ALIGN_TOP_LEFT,
                                 kEyeX, kPasswordY, reveal_cb);
     s_eye_label = lv_obj_get_child(eye, 0);
-    lv_obj_set_style_text_font(s_eye_label, &lv_font_montserrat_32, 0);
-    make_text(screen, &s_pin_part, "PIN", kLabelX, kPinY);
+    lv_obj_set_style_text_font(s_eye_label, &msf_font_32, 0);
+    make_text(screen, &s_pin_part, MSF_SYMBOL_HASHTAG, kLabelX, kPinY);
     s_pin_label = make_text(screen, &s_pin_part, "", kValueX, kPinY);
 
     /* One-line note (website, e-mail...): plain text, not a target. */
@@ -361,7 +368,7 @@ lv_obj_t *build_account(lv_group_t **group_out, lv_obj_t **battery_label_out)
     lv_obj_set_width(s_note_label, 480 - 2 * kLabelX);
 
     /* Recovery codes: unused count + open. */
-    make_text(screen, &s_recovery_part, "Recovery", kLabelX, kRecoveryY + 14);
+    make_text(screen, &s_recovery_part, MSF_SYMBOL_LIFE_RING, kLabelX, kRecoveryY + 14);
     s_recovery_label = make_text(screen, &s_recovery_part, "", kValueX, kRecoveryY + 14);
     make_action(screen, &s_recovery_part, group, LV_SYMBOL_RIGHT, kMinTouchTarget, LV_ALIGN_TOP_LEFT, kEyeX,
                 kRecoveryY, recovery_cb);
@@ -371,8 +378,8 @@ lv_obj_t *build_account(lv_group_t **group_out, lv_obj_t **battery_label_out)
     lv_label_set_text(s_status, "");
     lv_obj_align(s_status, LV_ALIGN_TOP_MID, 0, kTouchBandTop + 10);
 
-    make_action(screen, nullptr, group, "Edit", 160, LV_ALIGN_TOP_LEFT, 48, kActionsY, edit_cb);
-    make_action(screen, nullptr, group, "Remove", 160, LV_ALIGN_TOP_RIGHT, -48, kActionsY, remove_cb);
+    make_action(screen, nullptr, group, LV_SYMBOL_EDIT " Edit", 160, LV_ALIGN_TOP_LEFT, 48, kActionsY, edit_cb);
+    make_action(screen, nullptr, group, LV_SYMBOL_TRASH " Remove", 160, LV_ALIGN_TOP_RIGHT, -48, kActionsY, remove_cb);
 
     lv_obj_add_event_cb(screen, screen_loaded_cb, LV_EVENT_SCREEN_LOADED, nullptr);
     lv_obj_add_event_cb(screen, screen_unloaded_cb, LV_EVENT_SCREEN_UNLOADED, nullptr);

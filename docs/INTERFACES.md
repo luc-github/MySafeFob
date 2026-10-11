@@ -17,21 +17,44 @@ not enabled in v1 — the barrier is application-level encryption).
 
 ### 1.1 Encrypted envelope (binary layout, little-endian)
 
+> **As implemented 2026-10-10** (`components/secret_store`, ROADMAP 8.2
+> step A) — supersedes the table below where they differ:
+>
+> - **Partition layout** (`secrets`): control sector at 0x00000 (plaintext
+>   `"MSFC"` | version | fail_count u32 | CRC32), **slot 0** at 0x10000 and
+>   **slot 1** at 0x30000 (128 KiB each). A save writes the slot that does
+>   not hold the newest blob, body first and header (with its magic) last:
+>   a power cut mid-write leaves the previous blob in use (atomic replace).
+>   Unlock tries the newest slot (highest `seq`), then the other.
+> - **Slot header** (46 bytes, authenticated as GCM additional data):
+>   `"MSF1"` | format_version=1 | kdf_algo=2 (Argon2id) | kdf_t | kdf_p |
+>   kdf_m_mib u16 | salt[16] | nonce[12] | **seq u32** | **ct_len u32**,
+>   then ciphertext[ct_len] | tag[16]. Nonce = 8 random bytes + seq (unique
+>   per write). Salt from the hardware RNG with its entropy source enabled;
+>   a new salt (and key) on PIN change, which writes both slots.
+> - **PIN failures** (§1.3): counter incremented *before* each check and
+>   reset on success; attempts 1-2 free, then 10 s, 30 s, 2 min, 10 min,
+>   then 1 h between attempts, counted from the last failure (or from boot
+>   after a restart). No automatic erase (user decision 2026-10-10).
+
 | Offset | Size | Field | Notes |
 |--------|--------|-------|-------|
 | 0      | 4      | magic `MSF1` | MySafeFob Blob, format v1 |
 | 4      | 1      | format_version | = 1 |
 | 5      | 1      | kdf_algo | 2 = Argon2id (ADR-004; 1 = PBKDF2 reserved, never written) |
-| 6      | 1      | kdf_t | Argon2id passes (target 4) |
+| 6      | 1      | kdf_t | Argon2id passes (1, ADR-004 decision 2026-10-10) |
 | 7      | 1      | kdf_p | parallelism (1) |
-| 8      | 2      | kdf_m_mib | memory in MiB (target 8 — PSRAM), uint16 LE |
+| 8      | 2      | kdf_m_mib | memory in MiB (2, ADR-004 decision 2026-10-10), uint16 LE |
 | 10     | 16     | salt | random (`esp_random()`), generated once at first commissioning, **stored in plaintext** |
 | 26     | 12     | nonce | random on every blob rewrite |
 | 38     | N      | ciphertext | AES-256-GCM of the internal plaintext (§1.2) |
 | 38+N   | 16     | tag | GCM authentication tag |
 
-- **Key**: `Argon2id(PIN_utf8, salt, m=8 MiB, t=4, p=1)` — port of
-  libsodium/monocypher, parameters recalibrated at implementation time for
+- **Key**: `Argon2id(PIN_utf8, salt, m, t, p=1)` with Monocypher 4.0.2.
+  **m = 2 MiB, t = 1** (ADR-004 decision 2026-10-10, measured ~1.0 s on
+  the S3 at 240 MHz; 8 MiB = the whole PSRAM, impossible); the m/t actually
+  used are stored in the envelope header (`kdf_*` fields), parameters
+  recalibrated at implementation time for
   **~0.5-1 s/attempt** on the S3 (offline memory-hard barrier, ADR-004:
   PBKDF2-SHA256, not memory-hard, falls in ~1-2 days on GPU despite a
   nominal "250 ms" cost).
@@ -63,6 +86,15 @@ uint8 `id`, never reused after deletion (avoids UI collisions).
 >
 > Sorted by name, case-insensitive; index letter = first character's
 > letter A-Z, `#` otherwise.
+>
+> **As implemented 2026-10-10** (simpler, forward compatible): plaintext =
+> `"MSFS"` | version=1 | records; record = `0x30` | len u16 | fields; field
+> = tag u8 | len u16 | bytes, empty fields omitted, unknown tags skipped.
+> Fields: 0x01 id u16, 0x02 name, 0x10 TOTP key (**Base32 text**, kept as
+> typed so editing round-trips; decoded only to compute a code), 0x11
+> digits, 0x12 period, 0x20 username, 0x21 password, 0x22 PIN, 0x23 note,
+> 0x40 recovery used mask u32, 0x41 one recovery code (repeated, in
+> order). No created/modified epochs.
 
 ```
 [0x01] HEADER    : magic "MSFS" (4 bytes) + version (1 byte)
@@ -153,25 +185,50 @@ final prerelease, anyone with the device + an SD card can flash arbitrary
 firmware. Accepted: the v1 threat model assumes an attacker *without*
 prolonged physical access (the PIN protects the data, not the firmware).
 
-**Data import/export (F-06b / ADR-005)**: file
-`/x4pro-export-YYYY-MM-DD.enc` — the SD never sees the plaintext and never
-knows the device's PIN:
+**Data import/export (F-06b / ADR-005 + amendment 2026-10-11), as
+implemented (ROADMAP 8.0 P11)**: `/MSF/MSF-YYYYMMDD-HHMM.msfx` on the SD
+card (local time; `MSF-NODATE` if the clock is not set; `-2`...`-9` added,
+never overwritten). The device reads and writes **only** this encrypted
+format; the readable JSON lives on the PC (`tools/msf_backup.py`).
 
 ```
-magic "MSFEX1" (8B, zero-padded) | version u16 | timestamp u64
-| entry_count u32 | salt 16B | nonce 12B
-| AES-256-GCM( Argon2id(export_passphrase, salt, m=8MiB, t=4, p=1), internal plaintext )
-| tag GCM 16B
+header (54 B, packed, little-endian, authenticated as GCM AAD):
+  magic "MSFX" | format_version u8 (1) | kdf_algo u8 (2 = Argon2id)
+  | kdf_t u8 (3) | kdf_p u8 (1) | kdf_m_mib u16 (2) | salt 16B | nonce 12B
+  | created i64 (UTC s, 0 = unknown) | count u16 | reserved u16 | ct_len u32
+AES-256-GCM( key = Argon2id(passphrase, salt, m, t, p), 32 B;
+             plaintext = the store's TLV serialization, §1.2 )
+tag 16B
 ```
 
-- **Dedicated export passphrase** (transfer mode, default) — a stolen SD
-  alone is worthless. The "same key as the device" backup (restorable on a
-  new device without an additional passphrase) remains available as an option.
-- Atomic write (temp file + rename), **never overwritten**
-  (date-based versioning in the filename).
-- Import: parse + verify magic/version/**GCM tag** BEFORE touching the
-  current keystore; bounded sizes, no unterminated strings; explicit
-  confirmation + overwrite warning.
+- **Dedicated passphrase**, 8 to 64 characters, never the PIN: a stolen
+  card alone is worthless, and so is a stolen device with its PIN.
+  Argon2id with 3 passes (~3 s on the S3): a backup is made rarely. Fresh
+  salt, so a fresh key, per file: the nonce is random.
+- Write: temp file `MSF/MSF.TMP` + fsync + rename, so a pulled card never
+  leaves a truncated `.msfx`. Listing reads each header (a file whose size
+  does not match its header is not listed).
+- Import: the whole file is authenticated (GCM tag over header + records)
+  and parsed **before** the store is touched; header values are bounded
+  before any allocation or KDF. Then a summary: new / changed /
+  unchanged accounts (names match case-insensitively, "changed" = any
+  field differs), unusable records, and for Replace all the accounts it
+  would remove. Then a mode: **Merge** (new names added, differing
+  accounts overwritten, the rest untouched, nothing removed) or **Replace
+  all** (the store becomes the backup: full sync, removals included). The
+  backup / PC JSON is the reference (user decision 2026-10-11, was Add /
+  Update / Replace). ONE store write, none if nothing changes: if it
+  fails, nothing changed. New accounts get new ids, updated ones keep
+  theirs. Unusable records (empty name, bad TOTP key, digits outside 6-8,
+  period 0) are never imported.
+- The former "same key as the device" option is dropped (amendment
+  2026-10-11): one format, one passphrase.
+
+**PC JSON** (`tools/msf_backup.py decrypt` / `encrypt`): see the tool's
+docstring. `totp` is `{key, digits, period}` or an `otpauth://totp/` URI;
+recovery codes are strings (available) or `{"code", "used": true}`. The
+tool checks the device's limits and refuses (never truncates) a field
+that does not fit.
 
 ## 4. Internal APIs (C contracts)
 
@@ -201,8 +258,9 @@ esp_err_t store_account_get(uint16_t id, ...);      /* name + present parts */
 esp_err_t store_account_add/update/delete(...);     /* name unique, case-insensitive */
 esp_err_t store_account_totp(uint16_t id, time_t utc, ...); /* code + seconds left */
 esp_err_t store_rcv_mark_used(uint16_t id, int code_index);
-esp_err_t store_export_to_sd(void);             /* F-06b */
-esp_err_t store_import_from_sd(void);           /* F-06b, explicit confirmation */
+/* F-06b, as implemented: msf_backup_seal/peek/open (secret_store.h, file
+   image in RAM), backup_export/list/load (app backup.h, SD), then
+   accounts_import(records, n, ADD|UPDATE|REPLACE) (app accounts.h). */
 /* Persistence: every mutation rewrites the entire blob (N is small, writes are rare,
    flash endurance saving: no incremental log in v1). */
 ```

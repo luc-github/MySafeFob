@@ -23,6 +23,7 @@
  */
 #include "ui_screens.h"
 #include "ui_widgets.h"
+#include "msf_symbols.h"
 #include "lv_port_indev.h"
 #include "lv_port_disp.h"
 
@@ -177,15 +178,15 @@ lv_obj_t *build_settings_display(lv_group_t **group_out, lv_obj_t **battery_labe
     s_display_group = group;
 
     lv_obj_t *screen = make_screen();
-    add_back_header(screen, "Display", Screen::SettingsDevice, group, battery_label_out);
+    add_back_header(screen, MSF_SYMBOL_LIGHTBULB " Display", Screen::SettingsDevice, group, battery_label_out);
     lv_obj_t *content = make_content(screen);
 
     bool on = settings_store_get_frontlight_on();
 
-    make_round_toggle_row(content, group, "Frontlight", on, frontlight_switch_cb);
+    make_round_toggle_row(content, group, MSF_SYMBOL_LIGHTBULB " Frontlight", on, frontlight_switch_cb);
 
-    s_color_row = make_stepper_row(content, group, "Color", color_prev_cb, color_next_cb,
-                                   &s_color_value_label);
+    s_color_row = make_stepper_row(content, group, MSF_SYMBOL_ADJUST " Color", color_prev_cb, color_next_cb,
+                                   &s_color_value_label, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT);   /* presets */
     lv_obj_t *color_controls = lv_obj_get_child(s_color_row, 1);
     s_color_prev_btn = lv_obj_get_child(color_controls, 0);
     s_color_next_btn = lv_obj_get_child(color_controls, 2);
@@ -193,8 +194,9 @@ lv_obj_t *build_settings_display(lv_group_t **group_out, lv_obj_t **battery_labe
                                          settings_store_get_frontlight_color());
     lv_label_set_text(s_color_value_label, kColorMixLabels[s_color_index]);
 
-    s_intensity_row = make_stepper_row(content, group, "Intensity", intensity_prev_cb, intensity_next_cb,
-                                       &s_intensity_value_label);
+    s_intensity_row = make_stepper_row(content, group, MSF_SYMBOL_SUN " Intensity", intensity_prev_cb,
+                                       intensity_next_cb, &s_intensity_value_label, MSF_SYMBOL_MOON,
+                                       MSF_SYMBOL_SUN);
     lv_obj_t *intensity_controls = lv_obj_get_child(s_intensity_row, 1);
     s_intensity_prev_btn = lv_obj_get_child(intensity_controls, 0);
     s_intensity_next_btn = lv_obj_get_child(intensity_controls, 2);

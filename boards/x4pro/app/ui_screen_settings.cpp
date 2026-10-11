@@ -19,13 +19,19 @@
 /**
  * @file ui_screen_settings.cpp
  * @brief MySafeFob App — Settings menus: top level (Device / Time /
- *        Security & Data / About) and its two sub-menus, Device (Controls /
- *        Display / Touch Calibration) and Security & Data (Security /
- *        Owner info).
+ *        Security / About) and its two sub-menus, Device (Controls /
+ *        Display / Touch Calibration) and Security (Change PIN,
+ *        Lock now). Every entry carries an icon (msf_symbols.h).
  */
 #include "ui_screens.h"
 #include "ui_widgets.h"
+#include "msf_symbols.h"
 #include "lv_port_indev.h"
+
+extern "C" {
+#include "accounts.h"
+#include "settings_store.h"
+}
 
 static void open_screen_deferred(void *user_data)
 {
@@ -83,12 +89,12 @@ static lv_obj_t *make_menu_screen(const char *title, Screen back_target, lv_grou
 lv_obj_t *build_settings(lv_group_t **group_out, lv_obj_t **battery_label_out)
 {
     lv_obj_t *content;
-    lv_obj_t *screen = make_menu_screen("Settings", Screen::Home, group_out, battery_label_out, &content);
+    lv_obj_t *screen = make_menu_screen(LV_SYMBOL_SETTINGS " Settings", Screen::Home, group_out, battery_label_out, &content);
 
-    add_menu_button(content, "Device", Screen::SettingsDevice, *group_out);
-    add_menu_button(content, "Time", Screen::Time, *group_out);
-    add_menu_button(content, "Security & Data", Screen::SettingsSecurityData, *group_out);
-    add_menu_button(content, "About", Screen::SettingsAbout, *group_out);
+    add_menu_button(content, MSF_SYMBOL_MOBILE "  Device", Screen::SettingsDevice, *group_out);
+    add_menu_button(content, MSF_SYMBOL_CLOCK "  Time", Screen::Time, *group_out);
+    add_menu_button(content, MSF_SYMBOL_KEY "  Security", Screen::SettingsSecurity, *group_out);
+    add_menu_button(content, MSF_SYMBOL_INFO "  About", Screen::SettingsAbout, *group_out);
 
     return screen;
 }
@@ -96,24 +102,70 @@ lv_obj_t *build_settings(lv_group_t **group_out, lv_obj_t **battery_label_out)
 lv_obj_t *build_settings_device(lv_group_t **group_out, lv_obj_t **battery_label_out)
 {
     lv_obj_t *content;
-    lv_obj_t *screen = make_menu_screen("Device", Screen::Settings, group_out, battery_label_out, &content);
+    lv_obj_t *screen = make_menu_screen(MSF_SYMBOL_MOBILE " Device", Screen::Settings, group_out, battery_label_out, &content);
 
-    add_menu_button(content, "Controls", Screen::SettingsControls, *group_out);
-    add_menu_button(content, "Display", Screen::SettingsDisplay, *group_out);
-    add_menu_button(content, "Touch Calibration", Screen::TouchDiag, *group_out);
-    add_menu_button(content, "Keyboard test", Screen::KeyboardTest, *group_out);
+    add_menu_button(content, MSF_SYMBOL_SLIDERS "  Controls", Screen::SettingsControls, *group_out);
+    add_menu_button(content, MSF_SYMBOL_LIGHTBULB "  Display", Screen::SettingsDisplay, *group_out);
+    add_menu_button(content, MSF_SYMBOL_CROSSHAIRS "  Touch Calibration", Screen::TouchDiag, *group_out);
 
     return screen;
 }
 
-/* Backup (SD) joins this menu with ROADMAP 8.0 P11. */
-lv_obj_t *build_settings_security_data(lv_group_t **group_out, lv_obj_t **battery_label_out)
+/* Security actions (2026-10-11: the former Security sub-screen's
+ * two buttons, directly here, one level less). */
+static void change_pin_deferred(void *)
+{
+    pin_open_change();
+}
+
+static void change_pin_cb(lv_event_t *)
+{
+    ui_defer(change_pin_deferred, nullptr);
+}
+
+static void lock_now_deferred(void *)
+{
+    accounts_lock();
+    pin_open_unlock();
+}
+
+static void lock_now_cb(lv_event_t *)
+{
+    ui_defer(lock_now_deferred, nullptr);
+}
+
+static void add_action_button(lv_obj_t *parent, const char *label_text, lv_event_cb_t cb, lv_group_t *group)
+{
+    lv_obj_t *btn = make_button(parent, label_text);
+    lv_obj_set_width(btn, LV_PCT(90));
+    lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
+    add_to_group(btn, group);
+}
+
+static void pin_symbols_deferred(void *user_data)
+{
+    settings_store_set_pin_symbols(static_cast<bool>(reinterpret_cast<intptr_t>(user_data)));
+}
+
+static void pin_symbols_cb(lv_event_t *e)
+{
+    bool checked = lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED);
+    ui_defer(pin_symbols_deferred, reinterpret_cast<void *>(static_cast<intptr_t>(checked)));
+}
+
+/* Change PIN, Lock now (Owner info moved to About, 2026-10-11), Symbol
+ * keypad. Planned additions, within the 5-row limit: Auto-lock (PIN) delay
+ * (UI-SPECS §2.13) and one Backup row (SD export and import, ROADMAP 8.0
+ * P11). */
+lv_obj_t *build_settings_security(lv_group_t **group_out, lv_obj_t **battery_label_out)
 {
     lv_obj_t *content;
-    lv_obj_t *screen = make_menu_screen("Security & Data", Screen::Settings, group_out, battery_label_out, &content);
+    lv_obj_t *screen = make_menu_screen(MSF_SYMBOL_KEY " Security", Screen::Settings, group_out, battery_label_out, &content);
 
-    add_menu_button(content, "Security", Screen::Security, *group_out);
-    add_menu_button(content, "Owner info", Screen::OwnerInfo, *group_out);
+    add_action_button(content, MSF_SYMBOL_KEY "  Change PIN", change_pin_cb, *group_out);
+    add_action_button(content, MSF_SYMBOL_LOCK "  Lock now", lock_now_cb, *group_out);
+    make_round_toggle_row(content, *group_out, MSF_SYMBOL_SMILE " Symbol keypad", settings_store_get_pin_symbols(),
+                          pin_symbols_cb);
 
     return screen;
 }

@@ -128,11 +128,13 @@ then start the TOTP core (8.1/8.2). Order below is the working order.
 | P4 | Serial time sync: `settime` console command (ADR-006 serial channel, new sync source `serial`) — `main/cmd_settime.c`: `settime` (status), `settime <epoch>[.f]`, `settime YYYY-MM-DDTHH:MM:SS[.f][Z]`, always UTC; same precise path as BLE (system clock to the µs, then aligned RTC write, sync recorded). PC script `tools/settime.py`: measures the offset (status line `Epoch <s>.<ms>`), sets, re-measures; `--check` only measures, to verify any other sync path (manual, BLE, Wi-Fi) | — | ✅ hardware-validated 2026-10-09: offset -0.408 s before, -0.034 s after a set (round trip 62 ms) |
 | P5 | ~~BLE time: confirmation step before applying~~ | — | ❌ Dropped 2026-10-09 (user decision, built then reverted): a pending confirmation delays applying the time, and even compensated (proposal + time elapsed since the read) it adds side effects for no real gain: a wrong time is only a temporary DoS (ADR-001), fixed by another sync, and `tools/settime.py --check` verifies any sync. The BLE time is applied at once, as before |
 | P6 | Shared destructive-action confirmation dialog (UI-SPECS §2.18) — `ui_confirm_show()` (`ui_widgets.cpp`): full-screen modal on `lv_layer_top()`, title + message + Cancel (focused by default) / action, taps outside absorbed, Left/Right and confirm pulses routed to its own group (`ui_nav_set_modal_group()`), full refresh on open/close. First user: Owner info's new "Clear" button | — | ✅ hardware-validated 2026-10-09 (touch and buttons, Cancel default focus, taps outside absorbed) |
-| P7 | Keyboard modes: Base32 (A-Z, 2-7) and numeric, on top of `ui_keyboard.cpp` — `ui_keyboard_create(..., mode)`: Base32 = `QWERTYU / IOPASDF / GHJKLZ / XCVBNM ⌫ / 234567 ↵` (one layer, uppercase, same key width as the full keyboard), numeric = `123 / 456 / 789 / 0 ⌫ / ↵` (wide keys). Every mode keeps the validated 5x56px bottom-anchored grid. Test screen Settings > Device > Keyboard test (to remove once the TOTP entry screen uses the modes) | — | ✅ hardware-validated 2026-10-09 (all three modes) |
-| P8 | **Rescoped by ADR-019 (2026-10-09)**: HOME alphabet grid (+ Power icon replacing "Sleep now"), names page, account page (TOTP code + Refresh, login, recovery count, Edit/Remove), dummy data. First version below (three flat lists) built and hardware-validated 2026-10-09, kept for its pagination/`touch_safe_y()` layout. Generic entry list screen (TOTP/PWD/RCV lists), dummy data — `ui_screen_entry_list.cpp`: pages of 6 rows (no scrolling), `<` `>` + page number, "+ Add"; rows at fixed y via `touch_safe_y()` (4 above the X4 Pro touch band, 2 below, status line in the gap); empty state. HOME gets TOTP Codes / Passwords / Recovery Codes. Dummy: 14 TOTP (3 pages), 4 passwords, 0 recovery codes. Selecting a row / Add only shows a status line until the target screens exist. **ADR-019 version built 2026-10-09**: `ui_screen_home.cpp` (letter grid, Power icon), `ui_screen_names.cpp` (was `ui_screen_entry_list.cpp`), `ui_screen_account.cpp` (real TOTP codes from public test keys, Refresh, Reveal, Remove via P6, F-05 auto-clear), data through `accounts.h` served by `accounts_dummy.c` (22 sample accounts, 7 under G) until secret_store exists. Edit / Add / recovery code list: not built yet. **Edit / Add built 2026-10-10** (`ui_screen_account_edit.cpp`: EDIT on a copy, Save in the header, "Discard changes?", 7 field rows; FIELD entry with full / numeric / Base32 keyboard, prefilled value, Clear, TOTP 6/8 digits and 30/60 s, default 6/30; `add_back_header_cb()`, shared `ui_auto_clear_attach()`). Recovery code list editor: next | — | 🔄 built, hardware test pending |
+| P7 | Keyboard modes: Base32 (A-Z, 2-7) and numeric, on top of `ui_keyboard.cpp` — `ui_keyboard_create(..., mode)`: Base32 = `QWERTYU / IOPASDF / GHJKLZ / XCVBNM ⌫ / 234567 ↵` (one layer, uppercase, same key width as the full keyboard), numeric = `123 / 456 / 789 / 0 ⌫ / ↵` (wide keys). Every mode keeps the validated 5x56px bottom-anchored grid. Test screen Settings > Device > Keyboard test (removed 2026-10-10: the modes are used by the account FIELD entry) | — | ✅ hardware-validated 2026-10-09 (all three modes) |
+| 8.2-A | **Encrypted store, no UI (2026-10-10)** — `components/secret_store` rewritten for ADR-019 (AES-256-GCM, Argon2id m=2 MiB t=1, two alternating slots, failure counter + back-off), `accounts_store.c` (was the dummy store) backs `accounts.h` with it, console `store` (create / unlock / lock / passwd / demo / erase ERASE), `kdfbench`. Format: INTERFACES.md §1.1/§1.2 "as implemented". Decisions: 6-digit PIN, no auto-erase, forgotten PIN = data lost (warn at creation), PIN change as soon as possible (step B) | — | ✅ hardware-validated 2026-10-10 (create, demo, persistence across sleep/reboot and reflash, wrong PIN + back-off kept across reboot, PIN change; console REPL stack raised to 16 KiB for it) |
+| 8.2-B | **PIN UI (2026-10-10)** — `ui_screen_pin.cpp`: UNLOCK (keypad reshuffled at every attempt, 6 dots, auto-submit, "Wrong PIN (n)", back-off wait on the status line), CREATE (new + confirm, "forgotten = data lost" warning), CHANGE (current + new + confirm); Argon2id in a worker task, polled. HOME only while unlocked (`switch_screen()` redirects to the PIN screen), lock before every sleep, console lock sends the UI back to UNLOCK. Settings > Security & Data: Change PIN, Lock now (2026-10-11: directly in that menu, the Security sub-screen was removed; replaces the keypad test). Covers P10. Fonts: the app now uses its own `msf_font_24/32` (`tools/gen_fonts.py`, lv_font_conv 1.5.2 with the built-in Montserrat options + Font Awesome lock U+F023 / lock-open U+F3C1, rewritten to LVGL 9 form; built-in 24/32 disabled, `LV_FONT_DEFAULT` overridden in the root CMakeLists; icons in `msf_symbols.h`), lock icon on the UNLOCK prompt and Lock now | — | 🔄 built, hardware test pending |
+| P8 | **Rescoped by ADR-019 (2026-10-09)**: HOME alphabet grid (+ Power icon replacing "Sleep now"), names page, account page (TOTP code + Refresh, login, recovery count, Edit/Remove), dummy data. First version below (three flat lists) built and hardware-validated 2026-10-09, kept for its pagination/`touch_safe_y()` layout. Generic entry list screen (TOTP/PWD/RCV lists), dummy data — `ui_screen_entry_list.cpp`: pages of 6 rows (no scrolling), `<` `>` + page number, "+ Add"; rows at fixed y via `touch_safe_y()` (4 above the X4 Pro touch band, 2 below, status line in the gap); empty state. HOME gets TOTP Codes / Passwords / Recovery Codes. Dummy: 14 TOTP (3 pages), 4 passwords, 0 recovery codes. Selecting a row / Add only shows a status line until the target screens exist. **ADR-019 version built 2026-10-09**: `ui_screen_home.cpp` (letter grid, Power icon), `ui_screen_names.cpp` (was `ui_screen_entry_list.cpp`), `ui_screen_account.cpp` (real TOTP codes from public test keys, Refresh, Reveal, Remove via P6, F-05 auto-clear), data through `accounts.h` served by `accounts_dummy.c` (22 sample accounts, 7 under G) until secret_store exists. Edit / Add / recovery code list: not built yet. **Edit / Add built 2026-10-10** (`ui_screen_account_edit.cpp`: EDIT on a copy, Save in the header, "Discard changes?", 7 field rows; FIELD entry with full / numeric / Base32 keyboard, prefilled value, Clear, TOTP 6/8 digits and 30/60 s, default 6/30; `add_back_header_cb()`, shared `ui_auto_clear_attach()`). **Recovery codes built 2026-10-10** (`ui_screen_recovery.cpp`): view from the account page (numbered, used ones struck through, tap = mark used behind a confirmation), editor from EDIT on the draft (tap = remove, + Add via FIELD, Clear all), shared paginated list | — | ✅ hardware-validated 2026-10-10 (HOME, NAMES, ACCOUNT, EDIT/FIELD, recovery view/edit; still on dummy data until secret_store) |
 | P9 | TOTP_CODE prototype with a fake code: countdown + e-ink refresh strategy under the ghost budget | — | ⏳ |
-| P10 | UNLOCK screen: shuffled (anti-trace) keypad + back-off display, fake counter | — | ⏳ |
-| P11 | Security & Data menu gains a Backup row (SD detection/listing only, no crypto); the Owner info row came with P3 | P3 | ⏳ |
+| P10 | UNLOCK screen: shuffled (anti-trace) keypad + back-off display, fake counter | — | → done for real in 8.2-B (real store and counter) |
+| P11 | Encrypted SD backup (ADR-005 + amendment 2026-10-11). Step A: `.msfx` format in secret_store, app SD driver, `backup` console command, PC tool `tools/msf_backup.py` (JSON <-> .msfx). Step B: Settings > Security > Backup screens (export, import with Merge / Replace all) | P3 | ✅ step A hardware-validated 2026-10-11 (device export/import, and device -> PC decrypt/edit/encrypt -> device import: same Argon2id key on both sides); 🔧 step B |
 
 Decided 2026-09-26: F-05's auto-clear delay (secret shown → neutral
 screen) is a setting, `SecretAutoClearS`, default **5 min** (300 s),
@@ -156,6 +158,7 @@ not in NVS.
 | Frontlight off during deep sleep (`splash.cpp`) | ✅ Hardware-validated: off while asleep, restored on wake per its setting |
 | Keyboard taps on the lower rows sometimes register the key above | ✅ Fixed and hardware-validated 2026-10-09: the bottom of `touch.c`'s Y table re-measured on the keyboard keys (the jump was placed ~50px too high); Time's keyboard bottom-anchored like Owner info's (`touch-calibration-notes.md` §11) |
 | Time > Wi-Fi keyboard "does nothing" | ✅ Fixed and hardware-validated 2026-10-09: taps were received, but past 18 masked characters the password field never changed (count now shown, e.g. `****** (6)`), and the keyboard keys' focus ring was clipped by their rows (rows now declare room for it, `ui_keyboard.cpp`) |
+| Keyboard typing slow (user report 2026-10-11, not blocking; navigation much faster since 240 MHz) | ⏳ Open, to measure first: time per key and refreshed area. Leads, in order: (1) fast refresh may redraw the whole panel (logs show "flush fast unusually slow: ~1.5 s"): try a partial-window refresh in `eink.c` if the UC8279 allows it; (2) a tap also moves the focus ring (two keys + the field redrawn): no click-focus on keyboard keys; (3) coalesce keys typed during a refresh |
 | `base32_decode()` (`totp_engine.c`) writes its output with no size limit | ✅ Fixed 2026-10-09: `*out_len` is now the buffer size in, decoded length out; `ESP_ERR_INVALID_SIZE` if it does not fit; self-test case added (`totpselftest`) |
 | Negative I32 values in `setting` (P2) | ✅ Hardware-validated 2026-10-09; duration suffix now uses the setting's own unit (ADR-018) |
 
@@ -268,6 +271,41 @@ libsodium/monocypher. INTERFACES.md §1.1 updated accordingly.
 **Status**: ✅ VALIDATED 2026-09-13 (replaces PBKDF2 in INTERFACES.md §1.1
 and FEATURES.md F-04).
 
+**Amendment 2026-10-10 — m=8 MiB is impossible**: the "8 MB" PSRAM is
+64 Mbit = exactly 8 MiB, so an 8 MiB work area would need the whole PSRAM,
+part of which the firmware already uses (LVGL, BLE, store). Direction
+agreed with the user: **m = 4 MiB** (leaves several MiB for the rest of
+the firmware, unlock happens with the UI loaded), **t calibrated** to
+0.5-1 s per attempt; 6 MiB only if the measurements leave a safe margin.
+The security cost is limited: with a 6-digit PIN (10⁶ values) the
+protection is the time per attempt × 10⁶, plus the on-device failure
+counter and back-off. Library: Monocypher 4.0.2 (`components/monocypher`,
+`crypto_argon2`, CRYPTO_ARGON2_ID). Measurement: console `kdfbench`
+(free PSRAM, known-answer vectors from argon2-cffi, time matrix m × t);
+final m and t to be recorded here from its output.
+
+**Decision 2026-10-10 (measured, user choice): m = 2 MiB, t = 1, p = 1
+→ ~1.0 s per attempt.** `kdfbench` on the X4 Pro, full firmware, CPU
+240 MHz, Monocypher at -O2 (both set the same day: the first run, at the
+ESP-IDF default 160 MHz and the project's -Og, was ~2x slower), PSRAM
+largest free block 7680 KiB, known-answer vectors MATCH:
+
+| m \ t | 1 | 2 | 3 | 4 |
+|---|---|---|---|---|
+| 1 MiB | 662 ms | 977 | 1296 | 1612 |
+| 2 MiB | **1042 ms** | 1674 | 2312 | 2945 |
+| 4 MiB | 1801 ms | 3073 | 4344 | 5629 |
+| 6 MiB | 2562 ms | 4468 | 6386 | 8306 |
+
+Now PSRAM-bound. 4 MiB / t=1 (1.8 s) was the alternative; with a 6-digit
+PIN an attacker holding a flash dump tests the 10⁶ PINs offline anyway,
+so 2 vs 4 MiB only scales his time by 2; the real barriers are physical
+access to dump the flash and the on-device failure counter (ADR-003
+threat model), so the unlock delay decided. A bigger data cache (64 KB,
+64 B lines) might help PSRAM but costs internal RAM (133 KiB free):
+not tried. The parameters are stored in the envelope header, so they can
+be raised later (at a PIN change) without breaking an existing store.
+
 ---
 
 ### ADR-005 (proposed): SD export with a dedicated passphrase + versioned format
@@ -290,6 +328,26 @@ passphrase and a structured file format.
 
 **Status**: ✅ VALIDATED 2026-09-13 (INTERFACES.md §3 and FEATURES.md F-06b
 updated accordingly).
+
+**Amendment 2026-10-11 (user decisions, before implementing P11)**:
+1. The device reads and writes **only encrypted backups** (`/MSF/MSF-YYYYMMDD-HHMM.msfx`,
+   never overwritten): plaintext header (magic "MSFX", version, Argon2id m/t, salt,
+   nonce, date, record count) authenticated as GCM AAD, payload = the same TLV records
+   as the store (ADR-019). Argon2id stronger than the PIN one (t≈3), used rarely.
+2. Import modes (revised the same day: Add and Update merged, the backup / PC JSON is
+   the reference): **Merge** (new names added, accounts that differ overwritten, the rest
+   untouched -- bulk editing is done on the PC, far easier than with the on-device
+   keyboard) and **Replace all** (full sync, removals included, behind a P6
+   confirmation). Everything is decrypted and validated before the store is touched,
+   then a summary counts new / changed / unchanged (and removed for Replace all): an
+   unexpected "changed" count reveals a file older than the device's data.
+3. Export passphrase: dedicated (not the PIN), **8 characters minimum**, typed twice.
+4. **No plaintext export or import on the device.** Readable formats live on the PC
+   only: `tools/msf_backup.py` `decrypt` (.msfx -> JSON) / `encrypt` (JSON -> .msfx),
+   JSON with `totp` as an object or an `otpauth://` URI. Edit-on-PC workflow: export,
+   decrypt, edit the JSON, encrypt, import in Merge mode.
+5. Needs an SD driver in the app (FAT mount, SD power rail, unmount after each
+   operation).
 
 ---
 

@@ -124,7 +124,9 @@ lv_obj_t *make_round_toggle_row(lv_obj_t *parent, lv_group_t *group, const char 
  *        receives the middle label, for prev_cb/next_cb to update.
  */
 lv_obj_t *make_stepper_row(lv_obj_t *parent, lv_group_t *group, const char *label_text,
-                           lv_event_cb_t prev_cb, lv_event_cb_t next_cb, lv_obj_t **value_label_out);
+                           lv_event_cb_t prev_cb, lv_event_cb_t next_cb, lv_obj_t **value_label_out,
+                           const char *prev_text = "-", const char *next_text = "+",
+                           int32_t value_width = 130);
 
 /** @brief Full-width divider line directly below `above`. */
 lv_obj_t *add_divider_below(lv_obj_t *screen, lv_obj_t *above);
@@ -231,6 +233,7 @@ struct ui_confirm_t {
     void (*on_action)(void *ctx);
     void (*on_cancel)(void *ctx);
     void *ctx;
+    bool critical;            /* irreversible / destructive: warning sign in the title, else "?" */
 };
 bool ui_confirm_show(const ui_confirm_t *cfg);
 

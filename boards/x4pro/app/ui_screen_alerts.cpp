@@ -25,6 +25,7 @@
  */
 #include "ui_screens.h"
 #include "ui_widgets.h"
+#include "msf_symbols.h"
 #include "lv_port_indev.h"
 #include "alerts.h"
 
@@ -49,7 +50,7 @@ static void add_alert_block(alert_id_t id)
     char title_text[64];
     snprintf(title_text, sizeof(title_text), LV_SYMBOL_WARNING " %s", alerts_title(id));
     lv_label_set_text(title, title_text);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_32, 0);
+    lv_obj_set_style_text_font(title, &msf_font_32, 0);
 
     lv_obj_t *body = lv_label_create(s_content);
     char body_text[320];
@@ -61,7 +62,7 @@ static void add_alert_block(alert_id_t id)
     /* The time alerts are fixed from Settings > Time; the battery alert just
      * needs a charger. */
     if (!alerts_is_time_alert(id)) return;
-    lv_obj_t *btn = make_button(s_content, "Set the time");
+    lv_obj_t *btn = make_button(s_content, MSF_SYMBOL_CLOCK " Set the time");
     lv_obj_add_event_cb(btn, open_time_cb, LV_EVENT_CLICKED, nullptr);
     add_to_group(btn, s_group);
 }
@@ -94,7 +95,7 @@ lv_obj_t *build_alerts(lv_group_t **group_out, lv_obj_t **battery_label_out)
     *group_out = s_group;
 
     lv_obj_t *screen = make_screen();
-    add_back_header(screen, "Alerts", Screen::Home, s_group, battery_label_out);
+    add_back_header(screen, LV_SYMBOL_WARNING " Alerts", Screen::Home, s_group, battery_label_out);
     s_content = make_content(screen);
     lv_obj_set_flex_align(s_content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_add_event_cb(screen, screen_loaded_cb, LV_EVENT_SCREEN_LOADED, nullptr);

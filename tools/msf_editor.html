@@ -1,0 +1,532 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- No network at all: this page holds every secret in clear, nothing may leave the PC. -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'">
+<title>MySafeFob Editor</title>
+<!--
+  MySafeFob backup editor: opens the plaintext JSON made by
+  `python tools/msf_backup.py decrypt`, lets you browse / edit / add / remove
+  accounts with the device's limits checked, and saves it back as JSON for
+  `python tools/msf_backup.py encrypt`. Fully offline, single file, no
+  dependencies. The JSON holds every secret in clear: delete it when done.
+-->
+<style>
+:root {
+  --bg: #f6f6f4; --panel: #ffffff; --text: #1d1d1b; --muted: #6b6b66; --line: #dcdcd6;
+  --accent: #1f5f8b; --accent-text: #ffffff; --danger: #a8322d; --warn: #8a5a00; --ok: #2e6b34;
+  --field: #ffffff; --sel: #e4eef6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161716; --panel: #1f201f; --text: #e8e8e4; --muted: #9a9a94; --line: #3a3b39;
+    --accent: #6aa9d6; --accent-text: #0e1a24; --danger: #e07a73; --warn: #e0b45a; --ok: #7fc487;
+    --field: #262726; --sel: #23384a;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 16px;
+  border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
+header h1 { font-size: 17px; margin: 0 8px 0 0; }
+.file { color: var(--muted); font-size: 13px; }
+.dirty { color: var(--warn); font-weight: 600; }
+.spacer { flex: 1; }
+button, .btn { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--field); color: var(--text); cursor: pointer; }
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button.danger { color: var(--danger); }
+button:disabled { opacity: .45; cursor: default; }
+input, textarea, select { font: inherit; color: var(--text); background: var(--field);
+  border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; width: 100%; }
+input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.warnbar { background: var(--panel); border-bottom: 1px solid var(--line); padding: 6px 16px;
+  font-size: 13px; color: var(--warn); }
+main { display: grid; grid-template-columns: 300px 1fr; min-height: calc(100vh - 90px); }
+@media (max-width: 760px) { main { grid-template-columns: 1fr; } aside { max-height: 40vh; } }
+aside { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+.search { padding: 10px; border-bottom: 1px solid var(--line); display: flex; gap: 6px; }
+ul#list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
+#list li { padding: 7px 12px; border-bottom: 1px solid var(--line); cursor: pointer; display: flex;
+  justify-content: space-between; gap: 8px; }
+#list li.sel { background: var(--sel); }
+#list li .tags { color: var(--muted); font-size: 12px; white-space: nowrap; }
+#list li.bad .name::after { content: " \26A0"; color: var(--danger); }
+#list .letter { background: var(--bg); color: var(--muted); font-size: 12px; font-weight: 600;
+  padding: 2px 12px; cursor: default; }
+.count { padding: 6px 12px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); }
+section#editor { padding: 16px 20px 40px; max-width: 760px; }
+.empty { color: var(--muted); padding: 40px 20px; }
+.empty code { background: var(--panel); padding: 1px 5px; border-radius: 4px; }
+fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 0 0 14px; padding: 10px 14px 14px;
+  background: var(--panel); }
+legend { padding: 0 6px; font-weight: 600; }
+.row { display: grid; grid-template-columns: 110px 1fr; gap: 8px; align-items: center; margin-top: 8px; }
+.row label { color: var(--muted); }
+.inline { display: flex; gap: 6px; align-items: center; }
+.inline input { flex: 1; }
+.hint { font-size: 12px; color: var(--muted); }
+.err { font-size: 12px; color: var(--danger); grid-column: 2; }
+.wrn { font-size: 12px; color: var(--warn); grid-column: 2; }
+.totp { font: 600 22px ui-monospace, Consolas, monospace; letter-spacing: 2px; }
+.small { width: auto; }
+table.codes { width: 100%; border-collapse: collapse; margin-top: 6px; }
+table.codes td { padding: 3px 4px; }
+table.codes td.n { color: var(--muted); width: 28px; text-align: right; }
+table.codes td.u { width: 70px; white-space: nowrap; }
+table.codes input[type=checkbox] { width: auto; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+dialog { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text);
+  max-width: 460px; }
+dialog::backdrop { background: rgba(0,0,0,.4); }
+#drop { position: fixed; inset: 0; background: rgba(31,95,139,.18); border: 3px dashed var(--accent);
+  display: none; align-items: center; justify-content: center; font-size: 20px; z-index: 5; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MySafeFob Editor</h1>
+  <button class="primary" id="btnOpen">Open JSON…</button>
+  <input type="file" id="fileInput" accept=".json,application/json" hidden>
+  <button id="btnNew">New</button>
+  <button id="btnSave" disabled>Save JSON</button>
+  <span class="file" id="fileName"></span>
+  <span class="dirty" id="dirty"></span>
+  <span class="spacer"></span>
+  <button id="btnClose" class="danger" disabled title="Forget everything loaded in this page">Close &amp; wipe</button>
+</header>
+<div class="warnbar">Secrets in clear. This page works offline and sends nothing anywhere, but the JSON
+  file on disk is readable by anyone: encrypt it with <code>msf_backup.py encrypt</code>, then delete it.</div>
+<main>
+  <aside>
+    <div class="search">
+      <input id="search" placeholder="Search name, login, note…" autocomplete="off">
+      <button id="btnAdd" disabled title="Add an account">+ Add</button>
+    </div>
+    <ul id="list"></ul>
+    <div class="count" id="count"></div>
+  </aside>
+  <section id="editor">
+    <div class="empty">
+      <p><b>Open</b> a JSON made by <code>python tools/msf_backup.py decrypt backup.msfx</code>
+        (or drop it on this page), or start a <b>New</b> list.</p>
+      <p>Edit, then <b>Save JSON</b> and run <code>python tools/msf_backup.py encrypt file.json</code>.
+        On the device: Settings › Security › Backup › Import, mode <b>Merge</b> (adds and updates) or
+        <b>Replace all</b> (also removes what is not in the file).</p>
+    </div>
+  </section>
+</main>
+<div id="drop">Drop the JSON file here</div>
+
+<dialog id="confirmDlg">
+  <p id="confirmText"></p>
+  <div class="actions" style="justify-content:flex-end">
+    <button id="confirmNo">Cancel</button>
+    <button id="confirmYes" class="primary">OK</button>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+/* ---- device limits (components/secret_store/include/secret_store.h) ---- */
+const LIM = { accounts: 64, name: 48, login: 64, password: 128, pin: 12, note: 64, totpKey: 103,
+              rcv: 32, rcvCode: 16 };
+
+let doc = null;          // {format, version, created?, ...} without accounts
+let accounts = [];       // normalized: {name, login, password, pin, note, totp:{key,digits,period}|null, recovery:[{code,used}]}
+let selected = -1;
+let dirty = false;
+let fileName = "accounts.json";
+let totpTimer = null;
+
+const $ = (id) => document.getElementById(id);
+const enc = new TextEncoder();
+const bytes = (s) => enc.encode(s).length;
+
+/* ---- load / normalize ---------------------------------------------------- */
+
+function parseOtpauth(uri) {
+  let u;
+  try { u = new URL(uri); } catch { return { error: "not a valid otpauth:// URI" }; }
+  if (u.protocol !== "otpauth:" || u.hostname !== "totp") return { error: "only otpauth://totp/ is supported" };
+  const q = u.searchParams;
+  if ((q.get("algorithm") || "SHA1").toUpperCase() !== "SHA1") return { error: "only SHA1 TOTP is supported" };
+  const label = decodeURIComponent(u.pathname.replace(/^\/+/, ""));
+  const issuer = q.get("issuer") || (label.includes(":") ? label.split(":")[0] : label);
+  return { key: q.get("secret") || "", digits: +(q.get("digits") || 6), period: +(q.get("period") || 30), issuer };
+}
+
+function normalize(j) {
+  const a = { name: "", login: "", password: "", pin: "", note: "", totp: null, recovery: [] };
+  if (!j || typeof j !== "object") return a;
+  for (const k of ["name", "login", "password", "pin", "note"]) if (typeof j[k] === "string") a[k] = j[k];
+  let t = j.totp;
+  if (typeof t === "string") {
+    const p = parseOtpauth(t);
+    if (!p.error) { if (!a.name) a.name = p.issuer; t = p; } else t = { key: t, digits: 6, period: 30 };
+  }
+  if (t && typeof t === "object") a.totp = { key: String(t.key || ""), digits: +t.digits || 6, period: +t.period || 30 };
+  if (Array.isArray(j.recovery)) {
+    a.recovery = j.recovery.map((c) => typeof c === "object" && c
+      ? { code: String(c.code || ""), used: !!c.used } : { code: String(c), used: false });
+  }
+  return a;
+}
+
+function loadText(text, name) {
+  let parsed;
+  try { parsed = JSON.parse(text); } catch (e) { alert("Not valid JSON: " + e.message); return; }
+  if (!parsed || !Array.isArray(parsed.accounts)) { alert('This JSON has no "accounts" list.'); return; }
+  const { accounts: list, ...rest } = parsed;
+  doc = rest;
+  if (!doc.format) doc.format = "mysafefob";
+  if (!doc.version) doc.version = 1;
+  accounts = list.map(normalize);
+  fileName = name || "accounts.json";
+  selected = -1;
+  setDirty(false);
+  enableUi(true);
+  renderList();
+  renderEditor();
+}
+
+/* ---- save ------------------------------------------------------------------- */
+
+function toJson(a) {
+  const j = { name: a.name };
+  for (const k of ["login", "password", "pin", "note"]) if (a[k]) j[k] = a[k];
+  if (a.totp && a.totp.key) j.totp = { key: cleanKey(a.totp.key), digits: a.totp.digits, period: a.totp.period };
+  const codes = a.recovery.filter((c) => c.code);
+  if (codes.length) j.recovery = codes.map((c) => c.used ? { code: c.code, used: true } : c.code);
+  return j;
+}
+
+function save() {
+  const problems = accounts.map((a, i) => validate(a, i)).filter((v) => v.errors.length).length;
+  const go = () => {
+    const out = { ...doc, accounts: accounts.map(toJson) };
+    const blob = new Blob([JSON.stringify(out, null, 2) + "\n"], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setDirty(false);
+  };
+  if (problems) confirmBox(`${problems} account(s) have errors (marked ⚠): msf_backup.py encrypt will refuse the file until they are fixed. Save anyway?`, go);
+  else go();
+}
+
+/* ---- validation (same rules as msf_backup.py and the device) --------------- */
+
+function cleanKey(k) { return k.replace(/[\s-]/g, "").toUpperCase().replace(/=+$/, ""); }
+
+function base32Decode(s) {
+  const alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = 0, value = 0;
+  const out = [];
+  for (const ch of s) {
+    const v = alpha.indexOf(ch);
+    if (v < 0) return null;
+    value = (value << 5) | v;
+    bits += 5;
+    if (bits >= 8) { out.push((value >>> (bits - 8)) & 0xff); bits -= 8; }
+  }
+  return new Uint8Array(out);
+}
+
+function validate(a, index) {
+  const errors = {}, warns = {};
+  const add = (map, k, m) => { (map[k] = map[k] || []).push(m); };
+  const text = (k, limit) => {
+    const n = bytes(a[k]);
+    if (n > limit) add(errors, k, `${n} bytes, the device keeps at most ${limit}`);
+    if (/[^\x20-\x7E]/.test(a[k])) add(warns, k, "non-ASCII characters are stored but not displayed by the device");
+  };
+  text("name", LIM.name); text("login", LIM.login); text("password", LIM.password);
+  text("pin", LIM.pin); text("note", LIM.note);
+  if (!a.name.trim()) add(errors, "name", "a name is required");
+  else if (accounts.some((b, i) => i !== index && b.name.toLowerCase() === a.name.toLowerCase()))
+    add(errors, "name", "this name is used twice (names are case-insensitive)");
+  if (a.pin && !/^\d+$/.test(a.pin)) add(errors, "pin", "digits only");
+  if (a.totp && a.totp.key) {
+    const k = cleanKey(a.totp.key);
+    const raw = base32Decode(k);
+    if (!raw || raw.length < 1 || raw.length > 64) add(errors, "totp", "not valid Base32 (1-64 bytes)");
+    if (k.length > LIM.totpKey) add(errors, "totp", `longer than ${LIM.totpKey} characters`);
+    if (![6, 7, 8].includes(a.totp.digits)) add(errors, "totp", "digits: 6 to 8");
+    else if (a.totp.digits !== 6 && a.totp.digits !== 8) add(warns, "totp", "7 digits: accepted, but the device's edit screen only offers 6 or 8");
+    if (!(a.totp.period >= 1 && a.totp.period <= 255)) add(errors, "totp", "period: 1 to 255 s");
+    else if (a.totp.period !== 30 && a.totp.period !== 60) add(warns, "totp", `${a.totp.period} s: accepted, but the device's edit screen only offers 30 or 60 s`);
+  }
+  if (a.recovery.length > LIM.rcv) add(errors, "recovery", `${a.recovery.length} codes, at most ${LIM.rcv}`);
+  a.recovery.forEach((c, i) => {
+    if (bytes(c.code) > LIM.rcvCode) add(errors, "recovery", `code ${i + 1}: at most ${LIM.rcvCode} characters`);
+    if (/[^\x20-\x7E]/.test(c.code)) add(warns, "recovery", `code ${i + 1}: non-ASCII characters`);
+  });
+  return { errors: Object.values(errors).flat().length ? Object.entries(errors) : [], errMap: errors, warnMap: warns };
+}
+
+/* ---- TOTP preview (WebCrypto HMAC-SHA1, RFC 6238) --------------------------- */
+
+async function totpCode(key, digits, period) {
+  const raw = base32Decode(cleanKey(key));
+  if (!raw || !raw.length || !crypto.subtle) return null;
+  const counter = Math.floor(Date.now() / 1000 / period);
+  const msg = new ArrayBuffer(8);
+  new DataView(msg).setUint32(4, counter >>> 0);
+  new DataView(msg).setUint32(0, Math.floor(counter / 2 ** 32));
+  const k = await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
+  const h = new Uint8Array(await crypto.subtle.sign("HMAC", k, msg));
+  const o = h[19] & 0x0f;
+  const bin = ((h[o] & 0x7f) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3];
+  return String(bin % 10 ** digits).padStart(digits, "0");
+}
+
+/* ---- list -------------------------------------------------------------------- */
+
+function letterOf(name) { const c = (name[0] || "").toUpperCase(); return c >= "A" && c <= "Z" ? c : "#"; }
+
+function renderList() {
+  const q = $("search").value.trim().toLowerCase();
+  const ul = $("list");
+  ul.innerHTML = "";
+  const order = accounts.map((a, i) => i)
+    .filter((i) => !q || ["name", "login", "note"].some((k) => accounts[i][k].toLowerCase().includes(q)))
+    .sort((x, y) => accounts[x].name.localeCompare(accounts[y].name, undefined, { sensitivity: "base" }));
+  let last = null;
+  for (const i of order) {
+    const a = accounts[i];
+    const L = letterOf(a.name);
+    if (L !== last) {
+      const h = document.createElement("li");
+      h.className = "letter";
+      h.textContent = L;
+      ul.appendChild(h);
+      last = L;
+    }
+    const li = document.createElement("li");
+    if (i === selected) li.className = "sel";
+    if (validate(a, i).errors.length) li.classList.add("bad");
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = a.name || "(no name)";
+    const tags = document.createElement("span");
+    tags.className = "tags";
+    tags.textContent = [a.totp && a.totp.key ? "TOTP" : "", a.password ? "pwd" : "", a.pin ? "PIN" : "",
+      a.recovery.length ? `${a.recovery.length} codes` : ""].filter(Boolean).join(" · ");
+    li.append(name, tags);
+    li.onclick = () => { selected = i; renderList(); renderEditor(); };
+    ul.appendChild(li);
+  }
+  const shown = order.length, total = accounts.length;
+  $("count").textContent = `${total} / ${LIM.accounts} accounts` + (shown !== total ? ` (${shown} shown)` : "") +
+    (total > LIM.accounts ? " — too many for the device" : "");
+}
+
+/* ---- editor ------------------------------------------------------------------ */
+
+function el(tag, props = {}, ...kids) {
+  const e = document.createElement(tag);
+  const { dataset, ...rest } = props;   /* dataset is read-only: copy its entries */
+  Object.assign(e, rest);
+  if (dataset) Object.assign(e.dataset, dataset);
+  for (const k of kids) e.append(k);
+  return e;
+}
+
+function field(label, key, a, opts = {}) {
+  const input = el("input", { value: a[key], type: opts.secret ? "password" : "text", autocomplete: "off",
+    spellcheck: false, placeholder: opts.placeholder || "" });
+  input.oninput = () => { a[key] = input.value; changed(); };
+  let control = input;
+  if (opts.secret) {
+    const eye = el("button", { textContent: "Show", type: "button", className: "small" });
+    eye.onclick = () => { const s = input.type === "password"; input.type = s ? "text" : "password"; eye.textContent = s ? "Hide" : "Show"; };
+    control = el("div", { className: "inline" }, input, eye);
+  }
+  return [el("label", { textContent: label }), control, el("div", { className: "msg", dataset: { key } })];
+}
+
+function renderEditor() {
+  clearInterval(totpTimer);
+  const ed = $("editor");
+  if (selected < 0 || !accounts[selected]) {
+    ed.innerHTML = doc ? '<div class="empty">Select an account, or <b>+ Add</b> one.</div>' : ed.innerHTML;
+    return;
+  }
+  const a = accounts[selected];
+  ed.innerHTML = "";
+
+  const general = el("fieldset", {}, el("legend", { textContent: "Account" }));
+  const g = el("div", { className: "row" });
+  g.append(...field("Name", "name", a, { placeholder: "required, unique" }), ...field("Login", "login", a),
+           ...field("Password", "password", a, { secret: true }), ...field("PIN", "pin", a, { secret: true, placeholder: "digits only (bank card…)" }),
+           ...field("Note", "note", a, { placeholder: "one line: website, e-mail…" }));
+  general.append(g);
+
+  /* TOTP */
+  const tf = el("fieldset", {}, el("legend", { textContent: "TOTP (2FA)" }));
+  const t = el("div", { className: "row" });
+  const keyIn = el("input", { value: a.totp ? a.totp.key : "", placeholder: "Base32 key, or paste an otpauth:// URI",
+    autocomplete: "off", spellcheck: false });
+  /* The device's choices (6/8 digits, 30/60 s); another value coming from a
+   * file or an otpauth URI is kept as an extra option, not silently changed. */
+  const choice = (values, current, unit) => {
+    const list = values.includes(current) ? values : [...values, current];
+    const sel = el("select", { className: "small" }, ...list.map((v) => el("option", { value: v,
+      textContent: v + unit + (values.includes(v) ? "" : " (from file)") })));
+    sel.value = current;
+    return sel;
+  };
+  const digits = choice([6, 8], a.totp ? a.totp.digits : 6, " digits");
+  const period = choice([30, 60], a.totp ? a.totp.period : 30, " s");
+  const code = el("span", { className: "totp" });
+  const left = el("span", { className: "hint" });
+  const sync = () => {
+    const k = keyIn.value.trim();
+    if (k.startsWith("otpauth://")) {
+      const p = parseOtpauth(k);
+      if (!p.error) {
+        a.totp = { key: p.key, digits: p.digits, period: p.period };
+        if (!a.name) a.name = p.issuer;
+        changed();
+        renderEditor();   /* rebuilds the selects, with a non-standard value if any */
+        return;
+      }
+    }
+    a.totp = keyIn.value.trim() ? { key: keyIn.value.trim(), digits: +digits.value, period: +period.value } : null;
+    changed();
+    tick();
+  };
+  keyIn.oninput = sync; digits.onchange = sync; period.onchange = sync;
+  const tick = async () => {
+    if (!a.totp || !a.totp.key) { code.textContent = "—"; left.textContent = ""; return; }
+    try {
+      const c = await totpCode(a.totp.key, a.totp.digits, a.totp.period || 30);
+      code.textContent = c ? c.replace(/(\d{3})(?=\d)/, "$1 ") : "—";
+      left.textContent = c ? `${(a.totp.period || 30) - Math.floor(Date.now() / 1000) % (a.totp.period || 30)} s left` : "";
+    } catch { code.textContent = "—"; }
+  };
+  t.append(el("label", { textContent: "Key" }), keyIn,
+           el("label", { textContent: "Digits / period" }), el("div", { className: "inline" }, digits, period),
+           el("label", { textContent: "Current code" }), el("div", { className: "inline" }, code, left),
+           el("div"), el("div", { className: "msg", dataset: { key: "totp" } }));
+  tf.append(t);
+  totpTimer = setInterval(tick, 1000);
+  tick();
+
+  /* Recovery codes */
+  const rf = el("fieldset", {}, el("legend", { textContent: "Recovery codes" }));
+  const table = el("table", { className: "codes" });
+  const drawCodes = () => {
+    table.innerHTML = "";
+    a.recovery.forEach((c, i) => {
+      const inp = el("input", { value: c.code, autocomplete: "off", spellcheck: false });
+      inp.oninput = () => { c.code = inp.value; changed(); };
+      const used = el("input", { type: "checkbox", checked: c.used });
+      used.onchange = () => { c.used = used.checked; changed(); };
+      const del = el("button", { textContent: "✕", type: "button", title: "Remove this code", className: "danger" });
+      del.onclick = () => { a.recovery.splice(i, 1); changed(); drawCodes(); };
+      table.append(el("tr", {}, el("td", { className: "n", textContent: i + 1 }), el("td", {}, inp),
+        el("td", { className: "u" }, el("label", {}, used, " used")), el("td", {}, del)));
+    });
+  };
+  drawCodes();
+  const addCode = el("button", { textContent: "+ Add code", type: "button" });
+  addCode.onclick = () => { a.recovery.push({ code: "", used: false }); changed(); drawCodes(); table.querySelector("tr:last-child input").focus(); };
+  const paste = el("button", { textContent: "Paste several…", type: "button", title: "One code per line, or separated by spaces" });
+  paste.onclick = () => {
+    const text = prompt("Paste the codes (one per line, or separated by spaces/commas):");
+    if (!text) return;
+    for (const c of text.split(/[\s,;]+/).filter(Boolean)) a.recovery.push({ code: c, used: false });
+    changed(); drawCodes();
+  };
+  rf.append(table, el("div", { className: "actions" }, addCode, paste),
+            el("div", { className: "msg", dataset: { key: "recovery" } }));
+
+  const del = el("button", { textContent: "Delete this account", className: "danger", type: "button" });
+  del.onclick = () => confirmBox(`Delete "${a.name || "(no name)"}"? (Only from this file: on the device, use Replace all to remove it there too.)`, () => {
+    accounts.splice(selected, 1); selected = -1; setDirty(true); renderList(); renderEditor();
+  });
+
+  ed.append(general, tf, rf, el("div", { className: "actions" }, del));
+  showMessages();
+}
+
+function showMessages() {
+  if (selected < 0) return;
+  const v = validate(accounts[selected], selected);
+  document.querySelectorAll("#editor .msg").forEach((m) => {
+    const k = m.dataset.key;
+    m.innerHTML = "";
+    for (const e of v.errMap[k] || []) m.append(el("div", { className: "err", textContent: "✗ " + e }));
+    for (const w of v.warnMap[k] || []) m.append(el("div", { className: "wrn", textContent: "⚠ " + w }));
+  });
+}
+
+function changed() { setDirty(true); showMessages(); renderList(); }
+
+/* ---- UI plumbing ---------------------------------------------------------------- */
+
+function setDirty(d) { dirty = d; $("dirty").textContent = d ? "● unsaved changes" : ""; $("fileName").textContent = doc ? fileName : ""; }
+
+function enableUi(on) { for (const id of ["btnSave", "btnAdd", "btnClose"]) $(id).disabled = !on; }
+
+function confirmBox(text, onYes) {
+  const d = $("confirmDlg");
+  $("confirmText").textContent = text;
+  $("confirmYes").onclick = () => { d.close(); onYes(); };
+  $("confirmNo").onclick = () => d.close();
+  d.showModal();
+}
+
+function guard(next) { if (dirty) confirmBox("Discard the unsaved changes?", next); else next(); }
+
+$("btnOpen").onclick = () => guard(() => $("fileInput").click());
+$("fileInput").onchange = async (e) => {
+  const f = e.target.files[0];
+  if (f) loadText(await f.text(), f.name);
+  e.target.value = "";
+};
+$("btnNew").onclick = () => guard(() => loadText('{"format":"mysafefob","version":1,"accounts":[]}', "accounts.json"));
+$("btnSave").onclick = save;
+$("btnAdd").onclick = () => {
+  if (accounts.length >= LIM.accounts) { alert(`The device holds at most ${LIM.accounts} accounts.`); return; }
+  accounts.push(normalize({ name: "" }));
+  selected = accounts.length - 1;
+  $("search").value = "";
+  setDirty(true); renderList(); renderEditor();
+  document.querySelector("#editor input").focus();
+};
+$("btnClose").onclick = () => guard(() => {
+  clearInterval(totpTimer);
+  doc = null; accounts = []; selected = -1;
+  setDirty(false); enableUi(false); renderList();
+  $("editor").innerHTML = '<div class="empty">Closed: nothing is kept by this page. Reload it to start again.</div>';
+});
+$("search").oninput = renderList;
+window.addEventListener("beforeunload", (e) => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
+
+/* drag and drop */
+let dragDepth = 0;
+window.addEventListener("dragenter", (e) => { e.preventDefault(); dragDepth++; $("drop").style.display = "flex"; });
+window.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; $("drop").style.display = "none"; } });
+window.addEventListener("dragover", (e) => e.preventDefault());
+window.addEventListener("drop", (e) => {
+  e.preventDefault(); dragDepth = 0; $("drop").style.display = "none";
+  const f = e.dataTransfer.files[0];
+  if (f) guard(async () => loadText(await f.text(), f.name));
+});
+
+renderList();
+</script>
+</body>
+</html>

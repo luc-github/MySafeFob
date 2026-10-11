@@ -8,6 +8,13 @@ set(MSF_BOARD "x4pro" CACHE STRING "Target board (see boards/)")
 # MUST be included before project.cmake (SDKCONFIG_DEFAULTS is set there).
 include(${CMAKE_CURRENT_SOURCE_DIR}/boards/${MSF_BOARD}/board_config.cmake)
 
+# esp_lcd is not used (the e-ink panel has its own SPI driver, eink.c; LVGL
+# does not require it), and GCC 14.2 intermittently crashes on its
+# rgb/esp_lcd_panel_rgb.c ("internal compiler error" in the ira pass, known
+# issue). ESP-IDF builds every component by default: exclude it. If
+# something ever needs esp_lcd, the build fails clearly at configure time.
+set(EXCLUDE_COMPONENTS esp_lcd)
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(mysafefob)
 
@@ -15,6 +22,14 @@ project(mysafefob)
 # add_compile_definitions() after project() does NOT propagate to IDF
 # components — idf_build_set_property is required (observed at the 5.5.5 build).
 idf_build_set_property(COMPILE_DEFINITIONS "MSF_BOARD_NAME=\"${MSF_BOARD}\"" APPEND)
+
+# LVGL fonts: the app's own msf_font_24 / msf_font_32 (boards/x4pro/app/fonts,
+# tools/gen_fonts.py) instead of the built-in Montserrat 24/32 (disabled in
+# sdkconfig). Declared for every component (LVGL's theme uses the default
+# font); Kconfig's default-font choice cannot name a custom font.
+idf_build_set_property(COMPILE_DEFINITIONS "LV_FONT_DEFAULT=&msf_font_24" APPEND)
+idf_build_set_property(COMPILE_DEFINITIONS
+    "LV_FONT_CUSTOM_DECLARE=LV_FONT_DECLARE(msf_font_24) LV_FONT_DECLARE(msf_font_32)" APPEND)
 
 # Postbuild: feeds installer/<board>_app/ (flash_mgr + web installer).
 include(boards/${MSF_BOARD}/cmake/postbuild.cmake)

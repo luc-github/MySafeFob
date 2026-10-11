@@ -14,14 +14,16 @@ idf_component_register(
          "ui_screen_home.cpp" "ui_screen_settings.cpp"
          "ui_screen_settings_controls.cpp" "ui_screen_settings_display.cpp"
          "ui_screen_settings_about.cpp" "ui_screen_touch_diag.cpp"
-         "ui_screen_security.cpp" "ui_screen_time.cpp" "ui_keyboard.cpp"
-         "ui_screen_owner.cpp" "ui_screen_keyboard_test.cpp"
-         "ui_screen_names.cpp" "ui_screen_account.cpp" "accounts_dummy.c"
-         "ui_screen_account_edit.cpp"
+         "ui_screen_time.cpp" "ui_keyboard.cpp"
+         "ui_screen_owner.cpp"
+         "ui_screen_names.cpp" "ui_screen_account.cpp" "accounts_store.c"
+         "ui_screen_account_edit.cpp" "ui_screen_recovery.cpp"
+         "ui_screen_pin.cpp" "fonts/msf_font_24.c" "fonts/msf_font_32.c"
+         "images/msf_logo.c"
          "time_service.c" "wifi_time.c" "ble_time.c"
-         "settings_store.c" "alerts.c" "ui_screen_alerts.cpp" "battery.c" "frontlight.c"
+         "settings_store.c" "alerts.c" "sdcard.c" "backup.c" "ui_screen_alerts.cpp" "battery.c" "frontlight.c"
          "lv_port_disp.c" "lv_port_indev.c"
     INCLUDE_DIRS "."
-    REQUIRES driver esp_timer lvgl power_mgr nvs_flash esp_app_format totp_engine
-             esp_wifi esp_netif esp_event bt
+    REQUIRES driver esp_timer lvgl power_mgr nvs_flash esp_app_format totp_engine secret_store
+             esp_wifi esp_netif esp_event bt sdmmc fatfs
 )

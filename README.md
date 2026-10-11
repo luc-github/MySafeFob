@@ -117,5 +117,20 @@ The default board is `x4pro`. See `boards/<name>/README.md`.
    app slot — ADR-011) and factory (direct write). Navigation:
    physical Left/Right + Home pad
    (touch zone validated by measurement); Power = fallback select.
-3. **`secret_store` = stub**: Argon2id + AES-256-GCM implementation in
-   task 8.2, after calibrating the parameters on the S3.
+3. **~~`secret_store` = stub~~ DONE (task 8.2, 2026-10-11)**: Argon2id
+   (monocypher) + AES-256-GCM, format in `docs/INTERFACES.md`.
+
+## Credits
+
+- [LVGL](https://lvgl.io) (MIT): app UI.
+- [Montserrat](https://github.com/JulietaUla/Montserrat) (SIL OFL 1.1): text
+  of the app fonts, via LVGL's built-in font files.
+- [Font Awesome Free 5](https://fontawesome.com) by Fonticons, Inc.: icons
+  (fonts under SIL OFL 1.1, icons under CC BY 4.0). Solid glyphs come from
+  LVGL's merged FA5 file, outline ("regular") ones from Font Awesome Free
+  5.15.4's split web fonts in `resources/fonts/` (license:
+  `resources/fonts/fontawesome-free-5.15.4-LICENSE.txt`).
+  The generated fonts (`boards/x4pro/app/fonts/`, `tools/gen_fonts.py`)
+  are covered by the same licenses.
+- [Monocypher](https://monocypher.org) (CC0 / BSD-2-Clause): Argon2id in
+  `components/monocypher/`.

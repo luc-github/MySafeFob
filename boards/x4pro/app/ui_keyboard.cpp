@@ -195,12 +195,12 @@ static void build_fixed(KeyboardState *kb, lv_obj_t *cont, lv_group_t *group, co
         for (int c = 0; c < n; c++) {
             char ch = rows[r][c];
             if (ch == '\b') {
-                add_key(kb, row, group, LV_SYMBOL_BACKSPACE, kKeyBackspace, width, &lv_font_montserrat_32);
+                add_key(kb, row, group, LV_SYMBOL_BACKSPACE, kKeyBackspace, width, &msf_font_32);
             } else if (ch == '\n') {
-                add_key(kb, row, group, LV_SYMBOL_NEW_LINE, kKeyEnter, width, &lv_font_montserrat_32);
+                add_key(kb, row, group, LV_SYMBOL_NEW_LINE, kKeyEnter, width, &msf_font_32);
             } else {
                 char text[2] = {ch, '\0'};
-                add_key(kb, row, group, text, ch, width, fill ? &lv_font_montserrat_32 : nullptr);
+                add_key(kb, row, group, text, ch, width, fill ? &msf_font_32 : nullptr);
             }
         }
     }
@@ -234,7 +234,7 @@ lv_obj_t *ui_keyboard_create(lv_obj_t *parent, lv_group_t *group, const ui_keybo
             kb->char_keys[r][c] = add_key(kb, row, group, "a", 'a', kKeyW, nullptr);
         }
         if (r == kCharRows - 1) {
-            add_key(kb, row, group, LV_SYMBOL_BACKSPACE, kKeyBackspace, kKeyW, &lv_font_montserrat_32);
+            add_key(kb, row, group, LV_SYMBOL_BACKSPACE, kKeyBackspace, kKeyW, &msf_font_32);
         }
     }
 
@@ -244,7 +244,7 @@ lv_obj_t *ui_keyboard_create(lv_obj_t *parent, lv_group_t *group, const ui_keybo
     lv_obj_t *layer = add_key(kb, ctrl, group, "123", kKeyLayer, kCtrlKeyW, nullptr);
     kb->layer_label = lv_obj_get_child(layer, 0);
     add_key(kb, ctrl, group, "space", kKeySpace, kSpaceKeyW, nullptr);
-    add_key(kb, ctrl, group, LV_SYMBOL_NEW_LINE, kKeyEnter, kCtrlKeyW, &lv_font_montserrat_32);
+    add_key(kb, ctrl, group, LV_SYMBOL_NEW_LINE, kKeyEnter, kCtrlKeyW, &msf_font_32);
 
     apply_layer(kb);
     return cont;

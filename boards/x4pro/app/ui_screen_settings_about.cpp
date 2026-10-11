@@ -22,6 +22,7 @@
  */
 #include "ui_screens.h"
 #include "ui_widgets.h"
+#include "msf_symbols.h"
 #include "lv_port_indev.h"
 #include "time_service.h"
 #include "settings_store.h"
@@ -127,14 +128,31 @@ static void screen_loaded_cb(lv_event_t *)
     update_about_text();
 }
 
+static void owner_deferred(void *)
+{
+    switch_screen(Screen::OwnerInfo);
+}
+
+static void owner_cb(lv_event_t *)
+{
+    ui_defer(owner_deferred, nullptr);
+}
+
 lv_obj_t *build_settings_about(lv_group_t **group_out, lv_obj_t **battery_label_out)
 {
     lv_group_t *group = lv_port_indev_new_group();
     *group_out = group;
 
     lv_obj_t *screen = make_screen();
-    add_back_header(screen, "About", Screen::Settings, group, battery_label_out);
+    add_back_header(screen, MSF_SYMBOL_INFO " About", Screen::Settings, group, battery_label_out);
     lv_obj_t *content = make_content(screen);
+
+    /* Owner info lives here since 2026-10-11 (was in Security & Data, now Security): it
+     * is about the device and its owner, not a security setting. */
+    lv_obj_t *owner = make_button(content, MSF_SYMBOL_USER_EDIT "  Owner info");
+    lv_obj_set_width(owner, LV_PCT(90));
+    lv_obj_add_event_cb(owner, owner_cb, LV_EVENT_CLICKED, nullptr);
+    add_to_group(owner, group);
 
     s_label = lv_label_create(content);
     update_about_text();

@@ -18,6 +18,37 @@
 
 ## 1. Conventions
 
+> **Iconography (2026-10-11)**: every menu entry, screen title and action
+> button carries a Font Awesome 5 icon next to its text (Back = reply ↩,
+> not NEW_LINE, which is the keyboard's Enter; Device = mobile-alt, Time =
+> clock, Security & Data = key, About = info-circle, Owner info =
+> user-edit, Display/Frontlight = lightbulb, intensity −/+ = moon/sun,
+> Controls = sliders-h, Touch calibration = crosshairs (its Restart
+> button = undo-alt, FA6 rotate-left), Clear = eraser,
+> SD import/export = file-import/file-export...). The account page uses
+> icons alone instead of field names (user, key, hashtag, clock,
+> life-ring, sticky-note). Goal: readable at a glance and largely
+> language-independent, so a translation system may not be needed. Icons
+> are generated into the app's fonts by `tools/gen_fonts.py`, which also
+> writes `msf_symbols.h` (one list to edit). LVGL's FA5 file has one glyph
+> per code point: no "regular" outline variant of a solid icon.
+> Follow-up the same day: on/off settings are check boxes (were filled
+> circles): outline square (Font Awesome Free Regular, LVGL's merged FA5
+> font only has the solid one) / solid check-square; steppers over discrete presets (Auto-sleep,
+> frontlight Color) use ◀ / ▶ instead of − / +; Power short press uses
+> the check icon (it is Select; deep sleep is the long press). Confirmation
+> dialogs: the action button carries a check, the title a warning sign
+> when the action is destructive/irreversible (`ui_confirm_t.critical`),
+> a question-circle otherwise (only "Mark as used?" today).
+>
+> **Symbol keypad (2026-10-11)**: Settings › Security option, off by
+> default. PIN keys show one fixed picture per digit, chosen to be clearly
+> distinct: 0 star, 1 eye, 2 smile, 3 poo, 4 home, 5 crown, 6 bell, 7
+> snowflake, 8 heart, 9 chess-pawn. Purely cosmetic: the PIN is still the
+> digits (switching the option off shows them again), and the shuffle of
+> the current-PIN keypad is unchanged. Neither stronger nor weaker against
+> shoulder surfing (an observer reads a picture as easily as a digit).
+
 ### 1.1 Canvas
 
 - **480×800 portrait**, 1 bpp (black/white only, no gray — no animation,
@@ -276,6 +307,17 @@ screen.
 └──────────────────────────────────────┘
 ```
 
+> **Built 2026-10-10** (ROADMAP 8.2-B, `ui_screen_pin.cpp`), one screen,
+> three modes: UNLOCK (this section), CREATE (first boot: new PIN, then
+> confirmation, warning "If you forget it, the data is lost: keep an SD
+> backup."), CHANGE (Settings > Security: current, new, confirmation; the
+> only mode with `< Back`). Keypad: 3 rows of 3 + a bottom row (digit,
+> backspace), 120×80 keys, two rows above the X4 Pro touch band and two
+> below, the status line ("Unlocking...", "Wrong PIN (n)", "Too many
+> attempts: wait N s") in the gap. Shuffled when the current PIN is asked
+> (unlock, change step 1), in order when a new PIN is chosen. The header
+> keeps the battery line (title "MySafeFob").
+
 - No chrome header (nothing to go "Back" to before unlocking).
 - Digit grid (originally planned on FreeInkUI's `key-grid.h`; now an LVGL
   keypad derived from Settings > Security's test keypad,
@@ -331,7 +373,7 @@ screen.
 >                      [Refresh]
 >  Login     octocat
 >  Password  ●●●●●●●●  [Reveal]
->  Recovery  9 / 10 unused   [>]
+>  Recovery  9 / 10 available   [>]
 >
 >        [ Edit ]   [ Remove ]
 > ```
@@ -599,7 +641,13 @@ and frontlight.
 > Settings
 >   > Device           -> Controls, Display, Touch Calibration
 >   > Time             (direct)
->   > Security & Data  -> Security, Backup (SD, P11), Owner info
+>   > Security         -> Change PIN, Lock now, SD export/import (P11)
+>                         ("Security & Data" until 2026-10-11, renamed when Owner
+>                         info moved to About)
+>   > About            -> Owner info (moved here 2026-10-11) + device info
+>                         (2026-10-11: the Security sub-screen's actions moved
+>                         here, one level less; Auto-lock (PIN), §2.13, will
+>                         be the 5th row)
 >   > About            (direct)
 > ```
 >

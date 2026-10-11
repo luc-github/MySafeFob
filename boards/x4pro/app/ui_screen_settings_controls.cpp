@@ -23,6 +23,7 @@
  */
 #include "ui_screens.h"
 #include "ui_widgets.h"
+#include "msf_symbols.h"
 #include "lv_port_indev.h"
 
 extern "C" {
@@ -82,18 +83,21 @@ lv_obj_t *build_settings_controls(lv_group_t **group_out, lv_obj_t **battery_lab
     *group_out = group;
 
     lv_obj_t *screen = make_screen();
-    add_back_header(screen, "Controls", Screen::SettingsDevice, group, battery_label_out);
+    add_back_header(screen, MSF_SYMBOL_SLIDERS " Controls", Screen::SettingsDevice, group, battery_label_out);
     lv_obj_t *content = make_content(screen);
 
-    make_round_toggle_row(content, group, "Power short press",
+    make_round_toggle_row(content, group, LV_SYMBOL_OK " Short press",
                           settings_store_get_power_short_confirm(), power_confirm_switch_cb);
 
-    make_stepper_row(content, group, "Auto-sleep", idle_prev_cb, idle_next_cb, &s_idle_value_label);
+    /* Discrete presets: < > rather than - +, and a value column sized for
+     * "2min" so the buttons no longer cover the row's label. */
+    make_stepper_row(content, group, MSF_SYMBOL_MOON " Auto-sleep", idle_prev_cb, idle_next_cb, &s_idle_value_label,
+                     LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, 90);
     s_idle_index = nearest_preset_index(kAutoSleepPresets, kAutoSleepPresetCount,
                                         settings_store_get_idle_timeout_s());
     lv_label_set_text(s_idle_value_label, kAutoSleepLabels[s_idle_index]);
 
-    make_round_toggle_row(content, group, "Stay awake on USB",
+    make_round_toggle_row(content, group, LV_SYMBOL_USB " Stay awake",
                           settings_store_get_stay_awake_on_usb(), usb_awake_switch_cb);
 
     return screen;

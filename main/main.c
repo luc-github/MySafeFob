@@ -46,13 +46,16 @@
 #include "freertos/task.h"
 #include "esp3d_log.h"
 #include "totp_engine.h"
-#include "secret_store.h"
+#include "accounts.h"
 #include "power_mgr.h"
 #include "ui_nav.h"
 #include "settings_store.h"
 #include "cmd_setting.h"
 #include "cmd_battery.h"
 #include "cmd_settime.h"
+#include "cmd_kdfbench.h"
+#include "cmd_store.h"
+#include "cmd_backup.h"
 
 static bool s_wake_from_sleep = false;
 
@@ -256,6 +259,7 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
     ESP_ERROR_CHECK(settings_store_init());
+    accounts_init();   /* encrypted account store (secret_store), locked until unlock */
 
     /* Interactive menu (task 8.4, ui_nav.cpp) right after the splash: its
      * first draw (full refresh) replaces the old static "READY" screen,
@@ -269,6 +273,10 @@ void app_main(void)
      * native USB-Serial/JTAG (the dock doesn't wire UART0). */
     esp_console_repl_config_t repl_cfg = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
     repl_cfg.prompt = "msf> ";
+    /* 16 KiB, not the 4 KiB default (2026-10-10, stack overflow on
+     * `store create`): commands run in this task, and the store's Argon2id
+     * (Monocypher keeps 1 KiB blocks on the stack) plus AES-GCM need it. */
+    repl_cfg.task_stack_size = 16384;
     esp_console_register_help_command();
     const esp_console_cmd_t about_cmd = {
         .command = "about",
@@ -291,6 +299,9 @@ void app_main(void)
     ESP_ERROR_CHECK(cmd_setting_register());
     ESP_ERROR_CHECK(cmd_battery_register());
     ESP_ERROR_CHECK(cmd_settime_register());
+    ESP_ERROR_CHECK(cmd_kdfbench_register());
+    ESP_ERROR_CHECK(cmd_store_register());
+    ESP_ERROR_CHECK(cmd_backup_register());
     /* BUGFIX 2026-09-16: previous comment was wrong — esp_console_new_repl_*()
      * does create the REPL task, but it stays parked in the
      * CONSOLE_REPL_STATE_INIT state (read loop never executed) until

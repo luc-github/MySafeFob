@@ -37,12 +37,13 @@
 #pragma once
 
 #include "lvgl.h"
+#include "accounts.h"
 
 #ifdef __cplusplus
 
-enum class Screen { Home, Settings, SettingsControls, SettingsAbout, SettingsDisplay, TouchDiag, Security, Time, Alerts, OwnerInfo,
-                    SettingsDevice, SettingsSecurityData, KeyboardTest, Names, Account, AccountEdit,
-                    FieldEdit, kCount };
+enum class Screen { Home, Settings, SettingsControls, SettingsAbout, SettingsDisplay, TouchDiag, Time, Alerts, OwnerInfo,
+                    SettingsDevice, SettingsSecurity, Names, Account, AccountEdit,
+                    FieldEdit, RecoveryView, RecoveryEdit, Pin, kCount };
 
 /**
  * @brief Switches to screen `s`: refreshes its battery label, forces the
@@ -82,16 +83,14 @@ void apply_frontlight_from_settings(void);
 lv_obj_t *build_home(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_settings(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_settings_device(lv_group_t **group_out, lv_obj_t **battery_label_out);
-lv_obj_t *build_settings_security_data(lv_group_t **group_out, lv_obj_t **battery_label_out);
+lv_obj_t *build_settings_security(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_settings_controls(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_settings_display(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_settings_about(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_touch_diag(lv_group_t **group_out, lv_obj_t **battery_label_out);
-lv_obj_t *build_security(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_time(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_alerts(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_owner_info(lv_group_t **group_out, lv_obj_t **battery_label_out);
-lv_obj_t *build_keyboard_test(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_names(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_account(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_account_edit(lv_group_t **group_out, lv_obj_t **battery_label_out);
@@ -106,6 +105,26 @@ void account_edit_open(uint16_t id);
  *        prefill); 0 = from HOME.
  */
 void account_edit_open_new(char letter);
+
+lv_obj_t *build_pin(lv_group_t **group_out, lv_obj_t **battery_label_out);
+
+/** @brief Device PIN screen (ui_screen_pin.cpp): unlock, first PIN creation, PIN change. */
+void pin_open_unlock(void);
+void pin_open_create(void);
+void pin_open_change(void);
+
+lv_obj_t *build_recovery_view(lv_group_t **group_out, lv_obj_t **battery_label_out);
+lv_obj_t *build_recovery_edit(lv_group_t **group_out, lv_obj_t **battery_label_out);
+
+/** @brief Opens the recovery code list of account `id`, mark-used view (ui_screen_recovery.cpp). */
+void recovery_open(uint16_t id);
+
+/** @brief The record being edited (EDIT's draft), for the recovery code editor. */
+account_t *account_edit_draft(void);
+/** @brief Marks EDIT's draft as changed (Back then asks "Discard changes?"). */
+void account_edit_mark_dirty(void);
+/** @brief Opens FIELD to type a new recovery code, appended to the draft on Enter. */
+void account_edit_new_rcv_code(void);
 
 /** @brief Opens NAMES for `letter` ('A'-'Z' or '#'), ADR-019 (ui_screen_names.cpp). */
 void names_open(char letter);

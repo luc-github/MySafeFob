@@ -23,10 +23,10 @@
  *        note / recovery codes, sorted by name, indexed by first letter).
  *        A part is present when its field is not empty.
  *
- *        For now backed by DUMMY data in RAM (accounts_dummy.c, ROADMAP 8.0
- *        P8): the same calls will be served by secret_store (INTERFACES.md
- *        §4.2) once the encrypted store exists, without changing the
- *        screens.
+ *        Backed by secret_store (accounts_store.c): the records are
+ *        decrypted into RAM when the store is unlocked, every change is
+ *        saved (encrypted) at once, and the RAM copy is wiped on lock.
+ *        While locked every query returns nothing.
  */
 #pragma once
 
@@ -34,39 +34,29 @@
 #include <stdint.h>
 #include <time.h>
 
+#include "secret_store.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define ACCOUNTS_NAME_MAX 48
-#define ACCOUNTS_USER_MAX 64
-#define ACCOUNTS_PASSWORD_MAX 128
-#define ACCOUNTS_PIN_MAX 12          /* digits only */
-#define ACCOUNTS_NOTE_MAX 64         /* one line: website, e-mail, short note */
-#define ACCOUNTS_TOTP_KEY_MAX 103    /* Base32 of a 64-byte secret */
-#define ACCOUNTS_RCV_MAX 32          /* recovery codes per account */
-#define ACCOUNTS_RCV_CODE_MAX 16
-#define ACCOUNTS_ALL_LETTERS 0       /* `letter` argument: every account */
+#define ACCOUNTS_NAME_MAX MSF_NAME_MAX
+#define ACCOUNTS_USER_MAX MSF_USER_MAX
+#define ACCOUNTS_PASSWORD_MAX MSF_PASSWORD_MAX
+#define ACCOUNTS_PIN_MAX MSF_PIN_FIELD_MAX     /* digits only */
+#define ACCOUNTS_NOTE_MAX MSF_NOTE_MAX         /* one line: website, e-mail, short note */
+#define ACCOUNTS_TOTP_KEY_MAX MSF_TOTP_KEY_MAX /* Base32 of a 64-byte secret */
+#define ACCOUNTS_RCV_MAX MSF_RCV_MAX           /* recovery codes per account */
+#define ACCOUNTS_RCV_CODE_MAX MSF_RCV_CODE_MAX
+#define ACCOUNTS_ALL_LETTERS 0                 /* `letter` argument: every account */
 
 typedef struct {
     uint16_t id;
     char name[ACCOUNTS_NAME_MAX + 1];
 } account_summary_t;
 
-typedef struct {
-    uint16_t id;
-    char name[ACCOUNTS_NAME_MAX + 1];
-    char totp_key[ACCOUNTS_TOTP_KEY_MAX + 1];   /* Base32, empty = no TOTP */
-    uint8_t digits;                              /* 6/8 */
-    uint8_t period;                              /* 30/60 s */
-    char username[ACCOUNTS_USER_MAX + 1];
-    char password[ACCOUNTS_PASSWORD_MAX + 1];
-    char pin[ACCOUNTS_PIN_MAX + 1];
-    char note[ACCOUNTS_NOTE_MAX + 1];
-    uint8_t rcv_count;
-    uint32_t rcv_used_mask;                      /* bit i = code i used */
-    char rcv_codes[ACCOUNTS_RCV_MAX][ACCOUNTS_RCV_CODE_MAX + 1];
-} account_t;
+/** The record itself is the store's (secret_store.h). */
+typedef msf_account_t account_t;
 
 typedef enum {
     ACCOUNTS_OK = 0,
@@ -75,7 +65,38 @@ typedef enum {
     ACCOUNTS_ERR_NAME_EXISTS,    /* same name, case-insensitive */
     ACCOUNTS_ERR_TOTP_KEY,       /* not valid Base32, or too long */
     ACCOUNTS_ERR_FULL,
+    ACCOUNTS_ERR_LOCKED,         /* store not unlocked */
+    ACCOUNTS_ERR_STORE,          /* the encrypted write failed */
 } accounts_result_t;
+
+/* ---- Store state (secret_store) ---------------------------------------- */
+
+/** @brief Opens the store (call once at boot, after the flash is usable). */
+void accounts_init(void);
+
+bool accounts_is_unlocked(void);
+bool accounts_store_exists(void);
+
+/**
+ * @brief Unlocks with the device PIN (6 digits, ~1 s of key derivation).
+ * @return ESP_OK, ESP_ERR_INVALID_RESPONSE (wrong PIN), ESP_ERR_TIMEOUT
+ *         (back-off running), or another store error.
+ */
+int accounts_unlock(const char *pin);
+
+/** @brief Creates the store protected by `pin` (none must exist) and unlocks it. */
+int accounts_create(const char *pin);
+
+/** @brief Changes the device PIN (unlocked only). */
+int accounts_change_pin(const char *new_pin);
+
+/** @brief Wipes the decrypted records and the key from RAM. */
+void accounts_lock(void);
+
+/** @brief Adds the sample accounts (public test TOTP keys); skips existing names. */
+int accounts_load_demo(void);
+
+/* ---- Records ------------------------------------------------------------- */
 
 /** @brief Empty record with the TOTP defaults (6 digits, 30 s). */
 void accounts_init_record(account_t *a);
@@ -83,7 +104,7 @@ void accounts_init_record(account_t *a);
 /** @brief Index letter of a name: its first character as 'A'-'Z', '#' otherwise. */
 char accounts_index_letter(const char *name);
 
-/** @brief Unused recovery codes of `a`. */
+/** @brief Available (not yet used) recovery codes of `a`. */
 int accounts_rcv_unused(const account_t *a);
 
 /** @brief true if `b32` is a usable TOTP key (valid Base32, 1-64 bytes). */
@@ -117,8 +138,57 @@ accounts_result_t accounts_add(const account_t *in, uint16_t *id_out);
 /** @brief Replaces account `id` with `in` (in->id is ignored). */
 accounts_result_t accounts_update(uint16_t id, const account_t *in);
 
-/** @brief Deletes the account. false if `id` does not exist. */
+/** @brief Marks recovery code `index` of account `id` as used (F-05b, irreversible). */
+bool accounts_rcv_mark_used(uint16_t id, int index);
+
+/**
+ * @brief Removes recovery code `index` from `a` (a record being edited):
+ *        later codes and their used bits shift down by one.
+ */
+void accounts_rcv_remove(account_t *a, int index);
+
+/** @brief Appends `code` to `a`'s recovery codes (unused). false if full or empty. */
+bool accounts_rcv_append(account_t *a, const char *code);
+
+/** @brief Deletes the account. false if `id` does not exist or the write failed. */
 bool accounts_remove(uint16_t id);
+
+/* ---- Backup import / export (ADR-005 amendment 2026-10-11) -------------- */
+
+/* Two modes (user decision 2026-10-11): the backup / PC JSON is the
+ * reference. Merge never removes; Replace all is the full sync. */
+typedef enum {
+    ACCOUNTS_IMPORT_MERGE,     /* new names added, differing records overwritten, the rest untouched */
+    ACCOUNTS_IMPORT_REPLACE,   /* the store becomes the backup's content (removals included) */
+} accounts_import_mode_t;
+
+/* What an import does (preview) or did (import). Names match
+ * case-insensitively; a record is "changed" when any field differs. */
+typedef struct {
+    int total;       /* records in the backup */
+    int invalid;     /* unusable (empty name, bad TOTP key...), never imported */
+    int added;       /* names not on the device */
+    int changed;     /* names on the device with a different content */
+    int unchanged;   /* names on the device with the same content */
+    int removed;     /* Replace all: device accounts not in the backup */
+    int full;        /* new ones left out: no room */
+} accounts_import_summary_t;
+
+/** @brief Copies every record (unlocked only); returns the count. */
+int accounts_export_all(account_t *out, int max);
+
+/** @brief What accounts_import() would do, without changing anything. */
+void accounts_import_preview(const account_t *in, int n, accounts_import_mode_t mode,
+                             accounts_import_summary_t *sum);
+
+/**
+ * @brief Applies `n` backup records according to `mode`, in ONE store
+ *        write (none at all if nothing changes): if it fails, the store
+ *        and the RAM copy are unchanged. New records get new ids, updated
+ *        ones keep theirs. *sum receives the outcome.
+ */
+accounts_result_t accounts_import(const account_t *in, int n, accounts_import_mode_t mode,
+                                  accounts_import_summary_t *sum);
 
 #ifdef __cplusplus
 }

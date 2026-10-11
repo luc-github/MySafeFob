@@ -26,11 +26,13 @@
  */
 #include "ui_screens.h"
 #include "ui_widgets.h"
+#include "msf_symbols.h"
 #include "lv_port_indev.h"
 #include "alerts.h"
 
 extern "C" {
 #include "accounts.h"
+LV_IMAGE_DECLARE(msf_logo);   /* images/msf_logo.c, tools/gen_logo.py */
 }
 
 #include "esp_log.h"
@@ -176,6 +178,13 @@ lv_obj_t *build_home(lv_group_t **group_out, lv_obj_t **battery_label_out)
     lv_obj_align(bar, LV_ALIGN_TOP_MID, 0, 0);
     *battery_label_out = make_battery_label(bar);
 
+    /* Logo in the header's otherwise empty left side (2026-10-11 request),
+     * vertically centered on the battery label's strip. Not focusable. */
+    lv_obj_t *logo = lv_image_create(screen);
+    lv_image_set_src(logo, &msf_logo);
+    lv_obj_align(logo, LV_ALIGN_TOP_LEFT, 16,
+                 kHeaderContentPadTop + (kHeaderInfoHeight - kHeaderContentPadTop - msf_logo.header.h) / 2);
+
     add_divider_below(screen, bar);
 
     /* Icon-only, not the 140px make_button() default meant for text labels
@@ -219,7 +228,7 @@ lv_obj_t *build_home(lv_group_t **group_out, lv_obj_t **battery_label_out)
         lv_obj_set_style_min_width(btn, 0, 0);
         lv_obj_set_size(btn, kCellW, kMinTouchTarget);
         lv_obj_set_ext_click_area(btn, 0);   /* gaps < 2 x kExtClickMargin */
-        lv_obj_set_style_text_font(lv_obj_get_child(btn, 0), &lv_font_montserrat_32, 0);
+        lv_obj_set_style_text_font(lv_obj_get_child(btn, 0), &msf_font_32, 0);
         lv_obj_set_style_border_width(btn, 0, LV_STATE_DISABLED);
         lv_obj_align(btn, LV_ALIGN_TOP_LEFT, kGridLeft + col * (kCellW + kCellGap), y);
         lv_obj_add_event_cb(btn, letter_cb, LV_EVENT_CLICKED,
@@ -230,7 +239,7 @@ lv_obj_t *build_home(lv_group_t **group_out, lv_obj_t **battery_label_out)
 
     /* "+ Add" fills the rest of the last row (after Z and #). */
     int col = kLetterCount % kCols;
-    lv_obj_t *add = make_button(screen, "+ Add");
+    lv_obj_t *add = make_button(screen, LV_SYMBOL_PLUS " Add");
     lv_obj_set_style_min_width(add, 0, 0);
     lv_obj_set_size(add, (kCols - col) * kCellW + (kCols - col - 1) * kCellGap, kMinTouchTarget);
     lv_obj_set_ext_click_area(add, 0);
@@ -243,10 +252,10 @@ lv_obj_t *build_home(lv_group_t **group_out, lv_obj_t **battery_label_out)
      * deliberate. Centered on the gap between the two rows around it. */
     lv_obj_t *brand = lv_label_create(screen);
     lv_label_set_text(brand, "MySafeFob");
-    lv_obj_set_style_text_font(brand, &lv_font_montserrat_32, 0);
+    lv_obj_set_style_text_font(brand, &msf_font_32, 0);
     int32_t gap_top = kGridTop + 3 * kRowPitch + kMinTouchTarget;
     int32_t gap_bottom = touch_safe_y(kGridTop + 4 * kRowPitch, kMinTouchTarget);
-    lv_obj_align(brand, LV_ALIGN_TOP_MID, 0, (gap_top + gap_bottom - lv_font_montserrat_32.line_height) / 2);
+    lv_obj_align(brand, LV_ALIGN_TOP_MID, 0, (gap_top + gap_bottom - msf_font_32.line_height) / 2);
 
     update_letters();
     show_entry_count();

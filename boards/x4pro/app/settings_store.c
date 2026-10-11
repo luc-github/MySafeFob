@@ -236,6 +236,16 @@ void settings_store_set_stay_awake_on_usb(bool on)
     settings_set_u32(SETTINGS_ID_StayAwakeOnUsb, on ? 1 : 0);
 }
 
+bool settings_store_get_pin_symbols(void)
+{
+    return settings_get_u32(SETTINGS_ID_PinSymbols) != 0;
+}
+
+void settings_store_set_pin_symbols(bool on)
+{
+    settings_set_u32(SETTINGS_ID_PinSymbols, on ? 1 : 0);
+}
+
 bool settings_store_get_frontlight_on(void)
 {
     return settings_get_u32(SETTINGS_ID_FrontlightOn) != 0;
