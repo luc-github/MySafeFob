@@ -112,4 +112,15 @@ SETTINGS_DEF(OwnerInfoShow, "owner_show", BOOL, 0, GENERAL)
  * fixed picture per digit instead of the digit. Cosmetic only, the PIN is
  * still digits; readable before unlock, so stored here, not in the vault. */
 SETTINGS_DEF(PinSymbols, "pin_symbols", BOOL, 0, GENERAL)
+/* F-03 auto-lock (UI-SPECS §2.13, 2026-10-11): seconds without input before
+ * the store is locked and the PIN screen shown, while the device stays
+ * awake (independent of IdleTimeoutS's deep sleep, and NOT suspended by
+ * "Stay awake on USB"). 0 = off. Default 5 min. */
+SETTINGS_DEF(AutoLockS, "auto_lock_s", U32, 300, GENERAL)
+/* Display (lv_port_disp.c, 2026-10-11 keyboard-speed work), console only:
+ * DispZone = fast refreshes limited to the changed gate rows (0 = whole
+ * panel every time, the behavior before); DispTiming = log every refresh
+ * (gate window, ms) to measure. */
+SETTINGS_DEF(DispZone, "disp_zone", BOOL, 1, GENERAL)
+SETTINGS_DEF(DispTiming, "disp_timing", BOOL, 0, GENERAL)
 SETTINGS_STR_DEF(OwnerInfo, "owner_info", SETTINGS_OWNER_INFO_MAX, "", GENERAL)

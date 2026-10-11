@@ -117,6 +117,16 @@ esp_err_t msf_store_save(const msf_account_t *records, int count);
  */
 esp_err_t msf_store_change_pin(const char *new_pin, const msf_account_t *records, int count);
 
+/**
+ * @brief Re-checks the PIN of the UNLOCKED store (confirmation before a
+ *        backup export or import, 2026-10-11) without changing its state.
+ *        Same rules as an unlock: back-off, failures counted and persisted,
+ *        so it is no faster way to try PINs.
+ * @return ESP_OK, ESP_ERR_INVALID_RESPONSE (wrong PIN), ESP_ERR_TIMEOUT
+ *         (back-off), ESP_ERR_INVALID_STATE (not unlocked).
+ */
+esp_err_t msf_store_verify_pin(const char *pin);
+
 /** @brief Wipes the key from RAM. The caller wipes its decrypted records. */
 void msf_store_lock(void);
 

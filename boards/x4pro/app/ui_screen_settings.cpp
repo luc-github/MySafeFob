@@ -142,6 +142,41 @@ static void add_action_button(lv_obj_t *parent, const char *label_text, lv_event
     add_to_group(btn, group);
 }
 
+/* Auto-lock presets: < > steps through them (discrete values). */
+static constexpr uint32_t kAutoLockPresets[] = {0, 60, 120, 300, 600, 1800};
+static const char *const kAutoLockLabels[] = {"Off", "1min", "2min", "5min", "10min", "30min"};
+static constexpr int kAutoLockPresetCount = sizeof(kAutoLockPresets) / sizeof(kAutoLockPresets[0]);
+static lv_obj_t *s_auto_lock_label;
+static int s_auto_lock_index;
+
+static void auto_lock_step_deferred(void *user_data)
+{
+    int delta = static_cast<int>(reinterpret_cast<intptr_t>(user_data));
+    s_auto_lock_index = (s_auto_lock_index + delta + kAutoLockPresetCount) % kAutoLockPresetCount;
+    settings_store_set_auto_lock_s(kAutoLockPresets[s_auto_lock_index]);
+    lv_label_set_text(s_auto_lock_label, kAutoLockLabels[s_auto_lock_index]);
+}
+
+static void auto_lock_prev_cb(lv_event_t *)
+{
+    ui_defer(auto_lock_step_deferred, reinterpret_cast<void *>(static_cast<intptr_t>(-1)));
+}
+
+static void auto_lock_next_cb(lv_event_t *)
+{
+    ui_defer(auto_lock_step_deferred, reinterpret_cast<void *>(static_cast<intptr_t>(1)));
+}
+
+static void backup_deferred(void *)
+{
+    pin_open_backup();   /* PIN confirmation first, then the Backup menu */
+}
+
+static void backup_cb(lv_event_t *)
+{
+    ui_defer(backup_deferred, nullptr);
+}
+
 static void pin_symbols_deferred(void *user_data)
 {
     settings_store_set_pin_symbols(static_cast<bool>(reinterpret_cast<intptr_t>(user_data)));
@@ -153,10 +188,9 @@ static void pin_symbols_cb(lv_event_t *e)
     ui_defer(pin_symbols_deferred, reinterpret_cast<void *>(static_cast<intptr_t>(checked)));
 }
 
-/* Change PIN, Lock now (Owner info moved to About, 2026-10-11), Symbol
- * keypad. Planned additions, within the 5-row limit: Auto-lock (PIN) delay
- * (UI-SPECS §2.13) and one Backup row (SD export and import, ROADMAP 8.0
- * P11). */
+/* Change PIN, Lock now (Owner info moved to About, 2026-10-11), Backup (SD
+ * export and import, ROADMAP 8.0 P11), Auto-lock delay (UI-SPECS §2.13),
+ * Symbol keypad: the 5-row limit is reached. */
 lv_obj_t *build_settings_security(lv_group_t **group_out, lv_obj_t **battery_label_out)
 {
     lv_obj_t *content;
@@ -164,8 +198,26 @@ lv_obj_t *build_settings_security(lv_group_t **group_out, lv_obj_t **battery_lab
 
     add_action_button(content, MSF_SYMBOL_KEY "  Change PIN", change_pin_cb, *group_out);
     add_action_button(content, MSF_SYMBOL_LOCK "  Lock now", lock_now_cb, *group_out);
-    make_round_toggle_row(content, *group_out, MSF_SYMBOL_SMILE " Symbol keypad", settings_store_get_pin_symbols(),
-                          pin_symbols_cb);
+    add_action_button(content, LV_SYMBOL_SD_CARD "  Backup", backup_cb, *group_out);
+
+    /* The three buttons end at ~408; a 4th flex row would land in the touch
+     * band (490-554). The two setting rows sit at fixed y below it instead,
+     * outside the flex column, padded like content's rows. */
+    lv_obj_t *lock_row = make_stepper_row(screen, *group_out, MSF_SYMBOL_LOCK " Auto-lock", auto_lock_prev_cb,
+                                          auto_lock_next_cb, &s_auto_lock_label, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, 100);
+    s_auto_lock_index = nearest_preset_index(kAutoLockPresets, kAutoLockPresetCount,
+                                             settings_store_get_auto_lock_s());
+    lv_label_set_text(s_auto_lock_label, kAutoLockLabels[s_auto_lock_index]);
+    lv_obj_t *symbols_row = make_round_toggle_row(screen, *group_out, MSF_SYMBOL_SMILE " Symbol keypad",
+                                                  settings_store_get_pin_symbols(), pin_symbols_cb);
+    int32_t y = kTouchBandBottom + 12;
+    lv_obj_t *const rows[] = {lock_row, symbols_row};
+    for (lv_obj_t *row : rows) {
+        lv_obj_set_style_pad_left(row, 16, 0);
+        lv_obj_set_style_pad_right(row, 16 + kFocusOutlineSlack, 0);
+        lv_obj_align(row, LV_ALIGN_TOP_MID, 0, y);
+        y += 84;
+    }
 
     return screen;
 }

@@ -240,4 +240,8 @@ bool ui_confirm_show(const ui_confirm_t *cfg);
 /** @brief true while the confirmation modal is open. */
 bool ui_confirm_is_open(void);
 
+/** @brief Closes the modal, if open, without calling on_action / on_cancel
+ *        (the store was locked under it: nothing may run). */
+void ui_confirm_dismiss(void);
+
 #endif /* __cplusplus */

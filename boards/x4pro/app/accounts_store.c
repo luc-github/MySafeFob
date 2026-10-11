@@ -98,6 +98,11 @@ int accounts_change_pin(const char *new_pin)
     return msf_store_change_pin(new_pin, s_recs, s_count);
 }
 
+int accounts_verify_pin(const char *pin)
+{
+    return msf_store_verify_pin(pin);
+}
+
 void accounts_lock(void)
 {
     wipe_records();

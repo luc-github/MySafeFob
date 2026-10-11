@@ -22,12 +22,17 @@
  *        (ROADMAP 8.0 P11) before the on-device screens exist (step A).
  *
  *   backup list                              files in /MSF, newest first
- *   backup export <passphrase>               every account -> new .msfx
+ *   backup export <pin> <passphrase>         every account -> new .msfx
  *   backup show <file> <passphrase>          decrypt and summarize, no change
- *   backup import <file> <passphrase> merge|replace
+ *   backup import <file> <pin> <passphrase> merge|replace
  *
  * merge: new names added, differing accounts overwritten, the rest untouched.
  * replace: the store becomes the backup (accounts not in it are removed).
+ *
+ * export and import ask the device PIN again (2026-10-11): an unlocked
+ * device on a serial cable must not be enough to copy every secret out, or
+ * to slip modified accounts in. A wrong PIN counts like a wrong unlock
+ * (failure counter, back-off). show changes nothing and reveals only names.
  *
  * Quote a passphrase that contains spaces. Development aid, like `store`:
  * the passphrase is typed on the PC here.
@@ -84,6 +89,19 @@ static int do_list(void)
         printf("\n");
     }
     return 0;
+}
+
+/* The device PIN, re-checked before export / import. Prints why on failure. */
+static bool pin_ok(const char *pin)
+{
+    printf("Checking the PIN...\n");
+    esp_err_t err = accounts_verify_pin(pin);
+    if (err == ESP_OK) return true;
+    if (err == ESP_ERR_INVALID_RESPONSE) printf("Wrong PIN (%lu consecutive).\n", (unsigned long)msf_store_fail_count());
+    else if (err == ESP_ERR_TIMEOUT) printf("Too many failures: wait %lu s.\n", (unsigned long)msf_store_backoff_remaining_s());
+    else if (err == ESP_ERR_INVALID_STATE) printf("%s\n", err_text(ESP_ERR_INVALID_STATE));
+    else printf("Error: %s\n", esp_err_to_name(err));
+    return false;
 }
 
 /* show / import: decrypt into a PSRAM buffer, then summarize or merge. */
@@ -144,10 +162,11 @@ static int cmd_backup(int argc, char **argv)
     board_activity_notify();
     const char *sub = argc > 1 ? argv[1] : "";
     if (!strcmp(sub, "list") && argc == 2) return do_list();
-    if (!strcmp(sub, "export") && argc == 3) {
+    if (!strcmp(sub, "export") && argc == 4) {
+        if (!pin_ok(argv[2])) return 1;
         char name[BACKUP_NAME_MAX];
         printf("Encrypting (a few seconds)...\n");
-        esp_err_t err = backup_export(argv[2], name);
+        esp_err_t err = backup_export(argv[3], name);
         if (err != ESP_OK) {
             printf("%s\n", err_text(err));
             return 1;
@@ -156,9 +175,12 @@ static int cmd_backup(int argc, char **argv)
         return 0;
     }
     if (!strcmp(sub, "show") && argc == 4) return do_load(argv[2], argv[3], NULL);
-    if (!strcmp(sub, "import") && argc == 5) return do_load(argv[2], argv[3], argv[4]);
-    printf("Usage: backup list | export <passphrase> | show <file> <passphrase> |\n"
-           "       import <file> <passphrase> merge|replace\n");
+    if (!strcmp(sub, "import") && argc == 6) {
+        if (!pin_ok(argv[3])) return 1;
+        return do_load(argv[2], argv[4], argv[5]);
+    }
+    printf("Usage: backup list | export <pin> <passphrase> | show <file> <passphrase> |\n"
+           "       import <file> <pin> <passphrase> merge|replace\n");
     return 1;
 }
 
@@ -166,8 +188,8 @@ esp_err_t cmd_backup_register(void)
 {
     const esp_console_cmd_t cmd = {
         .command = "backup",
-        .help = "Encrypted SD backups: list | export <pass> | show <file> <pass> | "
-                "import <file> <pass> merge|replace. Quote a passphrase with spaces.",
+        .help = "Encrypted SD backups: list | export <pin> <pass> | show <file> <pass> | "
+                "import <file> <pin> <pass> merge|replace. Quote a passphrase with spaces.",
         .func = &cmd_backup,
     };
     return esp_console_cmd_register(&cmd);

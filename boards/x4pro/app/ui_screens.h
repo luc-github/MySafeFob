@@ -43,7 +43,8 @@
 
 enum class Screen { Home, Settings, SettingsControls, SettingsAbout, SettingsDisplay, TouchDiag, Time, Alerts, OwnerInfo,
                     SettingsDevice, SettingsSecurity, Names, Account, AccountEdit,
-                    FieldEdit, RecoveryView, RecoveryEdit, Pin, kCount };
+                    FieldEdit, RecoveryView, RecoveryEdit, Pin, Backup, BackupPass, BackupFiles, BackupImport,
+                    kCount };
 
 /**
  * @brief Switches to screen `s`: refreshes its battery label, forces the
@@ -112,6 +113,16 @@ lv_obj_t *build_pin(lv_group_t **group_out, lv_obj_t **battery_label_out);
 void pin_open_unlock(void);
 void pin_open_create(void);
 void pin_open_change(void);
+/** @brief PIN confirmation, then the Backup menu (ADR-005 amendment 2026-10-11). */
+void pin_open_backup(void);
+
+/* ui_screen_backup.cpp: encrypted SD backups (ROADMAP 8.0 P11 step B). */
+lv_obj_t *build_backup(lv_group_t **group_out, lv_obj_t **battery_label_out);
+lv_obj_t *build_backup_pass(lv_group_t **group_out, lv_obj_t **battery_label_out);
+lv_obj_t *build_backup_files(lv_group_t **group_out, lv_obj_t **battery_label_out);
+lv_obj_t *build_backup_import(lv_group_t **group_out, lv_obj_t **battery_label_out);
+/** @brief Opens the Backup menu (after the PIN confirmation). */
+void backup_open_menu(void);
 
 lv_obj_t *build_recovery_view(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_recovery_edit(lv_group_t **group_out, lv_obj_t **battery_label_out);

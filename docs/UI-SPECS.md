@@ -819,6 +819,19 @@ and frontlight.
 > `secret_store` exists and "Change PIN"/"Auto-lock (PIN)" are real,
 > so the screen ships as a whole rather than partially disabled.
 
+> **Amendment (2026-10-11), as built**: SETTINGS_SECURITY = Change PIN,
+> Lock now, Backup (PIN confirmation, then the SD backup screens, ROADMAP
+> P11), **Auto-lock** (< > presets Off / 1 / 2 / 5 / 10 / 30 min, default
+> 5 min, setting `AutoLockS`) and Symbol keypad: 5 rows, the last two at
+> fixed y below the touch band. Auto-lock is its own timer on the same
+> activity clock as Auto-sleep (which stays in Controls), and is NOT
+> suspended by "Stay awake on USB": awake is not unlocked. On expiry the
+> store locks, an open confirmation is dropped unanswered, and the PIN
+> screen shows (hardware-validated 2026-10-11). Password field (account edit): a dice button at the end of
+> the field (drawn as an outline die: Font Awesome Free has dice only in
+> Solid, black blobs at this size) generates 20 characters (hardware RNG, upper / lower / digits /
+> `-_.!@#$+=`, at least one of each, no I O l 0 1), Enter keeps it.
+
 ### 2.14 SETTINGS_DISPLAY (F-16, should-have)
 
 ```

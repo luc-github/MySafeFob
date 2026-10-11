@@ -535,6 +535,36 @@ esp_err_t msf_store_change_pin(const char *new_pin, const msf_account_t *records
     return err;
 }
 
+esp_err_t msf_store_verify_pin(const char *pin)
+{
+    lock();
+    esp_err_t err = ESP_ERR_INVALID_STATE;
+    if (s_state != MSF_STORE_UNLOCKED) goto done;
+    err = ESP_ERR_TIMEOUT;
+    if (msf_store_backoff_remaining_s() > 0) goto done;
+    err = write_control(s_fail_count + 1);   /* counted before the check, as unlock */
+    if (err != ESP_OK) goto done;
+    err = ESP_ERR_INVALID_RESPONSE;
+    if (msf_store_pin_valid(pin)) {
+        uint8_t key[KEY_LEN];
+        if (derive_key(pin, s_salt, s_kdf_m_mib, s_kdf_t, key) == ESP_OK) {
+            uint8_t diff = 0;   /* constant time */
+            for (int i = 0; i < KEY_LEN; i++) diff |= key[i] ^ s_key[i];
+            if (diff == 0) err = ESP_OK;
+        }
+        crypto_wipe(key, KEY_LEN);
+    }
+    if (err == ESP_OK) {
+        write_control(0);
+    } else {
+        s_last_fail_us = esp_timer_get_time();
+        ESP_LOGW(TAG, "PIN re-check failed (%lu consecutive)", (unsigned long)s_fail_count);
+    }
+done:
+    unlock();
+    return err;
+}
+
 void msf_store_lock(void)
 {
     lock();

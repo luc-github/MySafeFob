@@ -246,6 +246,26 @@ void settings_store_set_pin_symbols(bool on)
     settings_set_u32(SETTINGS_ID_PinSymbols, on ? 1 : 0);
 }
 
+uint32_t settings_store_get_auto_lock_s(void)
+{
+    return settings_get_u32(SETTINGS_ID_AutoLockS);
+}
+
+void settings_store_set_auto_lock_s(uint32_t seconds)
+{
+    settings_set_u32(SETTINGS_ID_AutoLockS, seconds);
+}
+
+bool settings_store_get_disp_zone(void)
+{
+    return settings_get_u32(SETTINGS_ID_DispZone) != 0;
+}
+
+bool settings_store_get_disp_timing(void)
+{
+    return settings_get_u32(SETTINGS_ID_DispTiming) != 0;
+}
+
 bool settings_store_get_frontlight_on(void)
 {
     return settings_get_u32(SETTINGS_ID_FrontlightOn) != 0;

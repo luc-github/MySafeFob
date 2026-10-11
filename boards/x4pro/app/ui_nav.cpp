@@ -285,6 +285,10 @@ static void build_screens(void)
     build_screen(Screen::RecoveryView, build_recovery_view);
     build_screen(Screen::RecoveryEdit, build_recovery_edit);
     build_screen(Screen::Pin, build_pin);
+    build_screen(Screen::Backup, build_backup);
+    build_screen(Screen::BackupPass, build_backup_pass);
+    build_screen(Screen::BackupFiles, build_backup_files);
+    build_screen(Screen::BackupImport, build_backup_import);
 }
 
 /* REMOVED 2026-09-24 (was: slip eink.c's mandatory ghost-budget full GC
@@ -316,6 +320,20 @@ static void check_idle_timeout(void)
         }
         enter_sleep_from_idle_or_menu("idle timeout");
     }
+}
+
+/* F-03 auto-lock (UI-SPECS §2.13): its own delay, same activity clock as
+ * the idle sleep above, but never suspended by "Stay awake on USB" -- that
+ * setting keeps the device awake, not unlocked. The PIN screen itself is
+ * left alone (nothing decrypted there). */
+static void check_auto_lock(void)
+{
+    uint32_t limit_s = settings_store_get_auto_lock_s();
+    if (limit_s == 0 || !accounts_is_unlocked() || s_screen == Screen::Pin) return;
+    int64_t idle = esp_timer_get_time() - s_last_activity_us.load(std::memory_order_relaxed);
+    if (idle < static_cast<int64_t>(limit_s) * 1000000) return;
+    ESP_LOGI(TAG, "auto-lock: %lu s without input", static_cast<unsigned long>(limit_s));
+    accounts_lock();   /* the check below then opens the PIN screen */
 }
 
 void board_ui_nav_task(void *arg)
@@ -407,12 +425,17 @@ void board_ui_nav_task(void *arg)
             }
 
             check_idle_timeout();
+            check_auto_lock();
 
-            /* Locked behind the UI's back (console `store lock`): back to
-             * the PIN screen, nothing decrypted stays on screen. */
+            /* Locked behind the UI's back (auto-lock, console `store lock`):
+             * back to the PIN screen, nothing decrypted stays on screen, and
+             * an open confirmation is dropped unanswered. */
             static bool s_was_unlocked = false;
             bool unlocked = accounts_is_unlocked();
-            if (s_was_unlocked && !unlocked && s_screen != Screen::Pin) pin_open_unlock();
+            if (s_was_unlocked && !unlocked && s_screen != Screen::Pin) {
+                ui_confirm_dismiss();
+                pin_open_unlock();
+            }
             s_was_unlocked = unlocked;
         }
         vTaskDelay(pdMS_TO_TICKS(20));

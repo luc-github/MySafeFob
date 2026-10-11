@@ -50,6 +50,7 @@
 extern "C" {
 #include "accounts.h"
 #include "esp_log.h"
+#include "esp_random.h"
 }
 
 #include "app_log_workaround.h"
@@ -293,6 +294,7 @@ lv_obj_t *build_account_edit(lv_group_t **group_out, lv_obj_t **battery_label_ou
 
 static constexpr int kModeCount = 3;   /* full, Base32, numeric keyboards */
 static constexpr int32_t kOptionsY = 176;
+static constexpr int32_t kFieldW = 432;   /* 90% of the 480 px screen */
 
 static lv_obj_t *s_field_title;
 static lv_obj_t *s_field_box;
@@ -302,6 +304,42 @@ static lv_obj_t *s_options;
 static lv_obj_t *s_digits_label;
 static lv_obj_t *s_period_label;
 static lv_obj_t *s_keyboards[kModeCount];
+static lv_obj_t *s_dice;   /* password field only */
+
+/* Password generator (ROADMAP 8.3, 2026-10-11): kGenLen characters from the
+ * hardware RNG, letters + digits + a few symbols that the on-device keyboard
+ * also has, at least one of each class (many sites demand it). Rejection
+ * sampling: no modulo bias. */
+static constexpr int kGenLen = 20;
+static const char kGenUpper[] = "ABCDEFGHJKLMNPQRSTUVWXYZ";    /* no I, O: easier to read back */
+static const char kGenLower[] = "abcdefghijkmnopqrstuvwxyz";   /* no l */
+static const char kGenDigit[] = "23456789";                    /* no 0, 1 */
+static const char kGenSymbol[] = "-_.!@#$+=";    /* all on the keyboard's symbol layer */
+
+static uint32_t gen_uniform(uint32_t n)
+{
+    uint32_t limit = UINT32_MAX - (UINT32_MAX % n);
+    uint32_t r;
+    do {
+        r = esp_random();
+    } while (r >= limit);
+    return r % n;
+}
+
+static void generate_password(char *out)
+{
+    static const char *const kClasses[] = {kGenUpper, kGenLower, kGenDigit, kGenSymbol};
+    char all[sizeof(kGenUpper) + sizeof(kGenLower) + sizeof(kGenDigit) + sizeof(kGenSymbol)];
+    snprintf(all, sizeof(all), "%s%s%s%s", kGenUpper, kGenLower, kGenDigit, kGenSymbol);
+    size_t all_len = strlen(all);
+    bool ok;
+    do {
+        for (int i = 0; i < kGenLen; i++) out[i] = all[gen_uniform(all_len)];
+        out[kGenLen] = '\0';
+        ok = true;
+        for (const char *cls : kClasses) ok = ok && strpbrk(out, cls) != nullptr;
+    } while (!ok);
+}
 
 static void show_field(void)
 {
@@ -402,6 +440,20 @@ static void clear_cb(lv_event_t *)
     ui_defer(clear_deferred, nullptr);
 }
 
+static void dice_deferred(void *)
+{
+    if (s_field != kPassword) return;
+    generate_password(s_text);
+    s_text_len = kGenLen;
+    show_field();
+    lv_label_set_text(s_field_status, "New password: Enter to keep it");
+}
+
+static void dice_cb(lv_event_t *)
+{
+    ui_defer(dice_deferred, nullptr);
+}
+
 static void option_deferred(void *user_data)
 {
     if (reinterpret_cast<intptr_t>(user_data) == 0) s_digits = (s_digits == 6) ? 8 : 6;
@@ -437,7 +489,17 @@ static void field_loaded_cb(lv_event_t *)
     bool totp = (s_field == kTotp);
     if (totp) lv_obj_remove_flag(s_options, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(s_options, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_align(s_field_box, LV_ALIGN_TOP_MID, 0, totp ? kOptionsY + kMinTouchTarget + 16 : kOptionsY);
+    /* Password: the field leaves room for the dice at its end. */
+    bool password = (s_field == kPassword);
+    if (password) lv_obj_remove_flag(s_dice, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(s_dice, LV_OBJ_FLAG_HIDDEN);
+    if (password) {
+        lv_obj_set_width(s_field_box, kFieldW - kMinTouchTarget - 12);
+        lv_obj_align(s_field_box, LV_ALIGN_TOP_LEFT, (480 - kFieldW) / 2, kOptionsY);
+    } else {
+        lv_obj_set_width(s_field_box, kFieldW);
+        lv_obj_align(s_field_box, LV_ALIGN_TOP_MID, 0, totp ? kOptionsY + kMinTouchTarget + 16 : kOptionsY);
+    }
     show_field();
     show_options();
     lv_label_set_text(s_field_status, "");
@@ -481,7 +543,7 @@ lv_obj_t *build_field_edit(lv_group_t **group_out, lv_obj_t **battery_label_out)
 
     s_field_box = lv_obj_create(screen);
     lv_obj_remove_style_all(s_field_box);
-    lv_obj_set_size(s_field_box, LV_PCT(90), LV_SIZE_CONTENT);
+    lv_obj_set_size(s_field_box, kFieldW, LV_SIZE_CONTENT);
     lv_obj_set_style_min_height(s_field_box, kMinTouchTarget, 0);
     lv_obj_set_style_border_width(s_field_box, kButtonBorderWidth, 0);
     lv_obj_set_style_border_color(s_field_box, lv_color_black(), 0);
@@ -491,6 +553,38 @@ lv_obj_t *build_field_edit(lv_group_t **group_out, lv_obj_t **battery_label_out)
     s_field_label = lv_label_create(s_field_box);
     lv_obj_set_width(s_field_label, LV_PCT(100));
     lv_label_set_long_mode(s_field_label, LV_LABEL_LONG_WRAP);
+
+    /* Dice drawn as an outline (2026-10-11): Font Awesome's dice glyphs are
+     * solid only in the free set (black blobs at this size), none in
+     * Regular. A 30 px rounded frame with five pips, Regular-style. */
+    s_dice = make_button(screen, "");
+    lv_obj_set_style_min_width(s_dice, 0, 0);
+    lv_obj_set_size(s_dice, kMinTouchTarget, kMinTouchTarget);
+    lv_obj_t *face = lv_obj_create(s_dice);
+    lv_obj_remove_style_all(face);
+    lv_obj_set_size(face, 30, 30);
+    lv_obj_center(face);
+    lv_obj_remove_flag(face, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_radius(face, 5, 0);
+    lv_obj_set_style_border_width(face, 3, 0);
+    lv_obj_set_style_border_color(face, lv_color_black(), 0);
+    /* Inside the 3 px border (children are placed in the content area, 24 px
+     * here): 2 px margins, center pip at 9-15 -- exactly centered. */
+    static const int8_t kPips[5][2] = {{2, 2}, {16, 2}, {9, 9}, {2, 16}, {16, 16}};
+    for (const auto &pip : kPips) {
+        lv_obj_t *dot = lv_obj_create(face);
+        lv_obj_remove_style_all(dot);
+        lv_obj_set_size(dot, 6, 6);
+        lv_obj_set_pos(dot, pip[0], pip[1]);
+        lv_obj_remove_flag(dot, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(dot, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+    }
+    lv_obj_align(s_dice, LV_ALIGN_TOP_RIGHT, -(480 - kFieldW) / 2, kOptionsY);
+    lv_obj_add_event_cb(s_dice, dice_cb, LV_EVENT_CLICKED, nullptr);
+    add_to_group(s_dice, group);
+    lv_obj_add_flag(s_dice, LV_OBJ_FLAG_HIDDEN);
 
     /* Validation message, just above the keyboard (not a target). */
     s_field_status = lv_label_create(screen);

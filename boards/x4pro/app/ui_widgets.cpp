@@ -517,6 +517,11 @@ static void confirm_close(void)
     lv_port_disp_request_full_refresh();
 }
 
+void ui_confirm_dismiss(void)
+{
+    if (s_confirm) confirm_close();
+}
+
 /* Deferred (ui_defer() rule): the button deletes itself through
  * confirm_close(), which must not happen inside its own event. */
 static void confirm_answer_deferred(void *user_data)

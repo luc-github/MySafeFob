@@ -90,6 +90,9 @@ int accounts_create(const char *pin);
 /** @brief Changes the device PIN (unlocked only). */
 int accounts_change_pin(const char *new_pin);
 
+/** @brief Re-checks the device PIN while unlocked (before a backup export or import). */
+int accounts_verify_pin(const char *pin);
+
 /** @brief Wipes the decrypted records and the key from RAM. */
 void accounts_lock(void);
 

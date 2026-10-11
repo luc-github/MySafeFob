@@ -94,6 +94,18 @@ bool settings_store_get_pin_symbols(void);
 void settings_store_set_pin_symbols(bool on);
 
 /**
+ * @brief Auto-lock (F-03, UI-SPECS §2.13): seconds without input before the
+ *        store locks while awake; 0 = off. Separate from the deep-sleep
+ *        timeout, and kept even with "Stay awake on USB". Default 300.
+ */
+uint32_t settings_store_get_auto_lock_s(void);
+void settings_store_set_auto_lock_s(uint32_t seconds);
+
+/** @brief Display tuning (console only): zone refresh on/off, per-refresh timing log. */
+bool settings_store_get_disp_zone(void);
+bool settings_store_get_disp_timing(void);
+
+/**
  * @brief Frontlight preferences (UI-SPECS.md §2.14, SETTINGS_DISPLAY).
  *        Color is a 0-100 warm<->cool mix percentage (0=warm, 100=cool,
  *        50=neutral — see frontlight_apply()), amended 2026-09-20 from an

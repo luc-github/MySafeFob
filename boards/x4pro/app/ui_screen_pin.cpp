@@ -28,6 +28,9 @@
  *        CREATE  new PIN then confirmation, with the "forgotten PIN = data
  *                lost" warning (first boot, no store).
  *        CHANGE  current PIN, new PIN, confirmation (Settings > Security).
+ *        CONFIRM current PIN once more before the Backup menu (ADR-005
+ *                amendment 2026-10-11): an unlocked device alone must not
+ *                be enough to copy every secret out or slip accounts in.
  *
  *        The key derivation (~1 s, Argon2id) runs in a worker task; a poll
  *        timer picks up its result, so the UI keeps drawing ("Unlocking...").
@@ -70,8 +73,8 @@ static constexpr int32_t kKeysTop = 294;
 static constexpr int32_t kKeysLeft = (480 - (3 * kKeyW + 2 * kKeyGapX)) / 2;
 static constexpr int kDel = -1;
 
-enum Mode { kUnlock, kCreate, kChange };
-enum Job { kJobNone, kJobUnlock, kJobCreate, kJobVerify, kJobChange };
+enum Mode { kUnlock, kCreate, kChange, kConfirm };
+enum Job { kJobNone, kJobUnlock, kJobCreate, kJobVerify, kJobChange, kJobConfirm };
 
 static Mode s_mode = kUnlock;
 static int s_step;                    /* CREATE: 0 new, 1 confirm; CHANGE: 0 current, 1 new, 2 confirm */
@@ -103,6 +106,7 @@ static void worker_task(void *)
     case kJobVerify: s_job_result = accounts_unlock(s_job_pin); break;
     case kJobCreate: s_job_result = accounts_create(s_job_pin); break;
     case kJobChange: s_job_result = accounts_change_pin(s_job_pin); break;
+    case kJobConfirm: s_job_result = accounts_verify_pin(s_job_pin); break;
     default: s_job_result = ESP_FAIL; break;
     }
     wipe(s_job_pin, sizeof(s_job_pin));
@@ -175,6 +179,7 @@ static const char *prompt_text(void)
     case kUnlock: return MSF_SYMBOL_LOCK "  Enter PIN";
     case kCreate: return s_step == 0 ? "Choose a 6-digit PIN" : "Confirm the PIN";
     case kChange: return s_step == 0 ? "Current PIN" : s_step == 1 ? "New PIN" : "Confirm the new PIN";
+    case kConfirm: return MSF_SYMBOL_KEY "  Confirm your PIN";
     }
     return "";
 }
@@ -192,7 +197,7 @@ static void show_step(void)
 {
     clear_entry();
     set_text(s_prompt, prompt_text());
-    bool current = (s_mode == kUnlock) || (s_mode == kChange && s_step == 0);
+    bool current = (s_mode == kUnlock) || (s_mode == kConfirm) || (s_mode == kChange && s_step == 0);
     layout_keys(current);
     bool warn = (s_mode == kCreate) || (s_mode == kChange && s_step > 0);
     set_text(s_warning, warn ? "If you forget it, the data is lost:\nkeep an SD backup." : "");
@@ -229,12 +234,23 @@ void pin_open_change(void)
     switch_screen(Screen::Pin);
 }
 
+void pin_open_backup(void)
+{
+    s_mode = kConfirm;
+    s_step = 0;
+    switch_screen(Screen::Pin);
+}
+
 static void submit(void)
 {
     switch (s_mode) {
     case kUnlock:
         set_text(s_status, "Unlocking...");
         start_job(kJobUnlock, s_pin);
+        break;
+    case kConfirm:
+        set_text(s_status, "Checking...");
+        start_job(kJobConfirm, s_pin);
         break;
     case kCreate:
     case kChange: {
@@ -281,6 +297,9 @@ static void job_finished(void)
         case kJobChange:
             switch_screen(Screen::SettingsSecurity);
             return;
+        case kJobConfirm:
+            backup_open_menu();
+            return;
         default: return;
         }
     }
@@ -317,7 +336,7 @@ static void poll_cb(lv_timer_t *)
 static void key_deferred(void *user_data)
 {
     if (s_busy) return;
-    bool asking_current = (s_mode == kUnlock) || (s_mode == kChange && s_step == 0);
+    bool asking_current = (s_mode == kUnlock) || (s_mode == kConfirm) || (s_mode == kChange && s_step == 0);
     if (asking_current && msf_store_backoff_remaining_s() > 0) {
         show_wait();
         return;
@@ -355,9 +374,10 @@ static void back_cb(lv_event_t *)
 
 static void loaded_cb(lv_event_t *)
 {
-    static const char *const kTitles[] = {MSF_SYMBOL_LOCK " MySafeFob", MSF_SYMBOL_KEY " New PIN", MSF_SYMBOL_KEY " Change PIN"};
+    static const char *const kTitles[] = {MSF_SYMBOL_LOCK " MySafeFob", MSF_SYMBOL_KEY " New PIN",
+                                          MSF_SYMBOL_KEY " Change PIN", LV_SYMBOL_SD_CARD " Backup"};
     set_text(s_title, kTitles[s_mode]);
-    if (s_mode == kChange) lv_obj_remove_flag(s_back, LV_OBJ_FLAG_HIDDEN);
+    if (s_mode == kChange || s_mode == kConfirm) lv_obj_remove_flag(s_back, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(s_back, LV_OBJ_FLAG_HIDDEN);   /* nothing to go back to */
     set_text(s_status, "");
     show_step();

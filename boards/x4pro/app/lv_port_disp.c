@@ -1,16 +1,19 @@
 /**
  * @file lv_port_disp.c
  * @brief MySafeFob App — LVGL display port for the UC8279 e-ink driver
- *        (eink.c/eink.h, unmodified). One full-frame I1 (1bpp) PSRAM
- *        buffer, LV_DISPLAY_RENDER_MODE_FULL: LVGL always redraws and
- *        flushes the whole 480x800 portrait screen in one shot, which is
- *        the natural fit for a panel that has no partial-rectangle write
- *        path of its own (eink_display_fb()/_fast() both take a full
- *        frame). flush_cb transposes that portrait buffer into eink.c's
- *        native landscape layout at write time, per hw_config.h's
- *        documented convention (fb_x = uy, fb_y = 479 - ux) -- the same
- *        transform FreeInkUIDisplayTarget used to do internally for
- *        Orientation::Portrait.
+ *        (eink.c/eink.h). One full-frame I1 (1bpp) PSRAM buffer,
+ *        LV_DISPLAY_RENDER_MODE_DIRECT (2026-10-11, was FULL): LVGL redraws
+ *        only the invalidated areas, in place, and flush_cb is called once
+ *        per area. Each area is transposed into eink.c's native landscape
+ *        frame (kept between flushes), per hw_config.h's convention (fb_x =
+ *        uy, fb_y = 479 - ux); on the LAST area the panel gets a fast DU
+ *        restricted to the gate rows the areas cover.
+ *
+ *        Why DIRECT: in FULL mode LVGL turns ANY invalidation into the
+ *        whole screen (lv_refr.c, lv_inv_area: "in full refresh mode,
+ *        redraw the whole screen"), so every key press re-rendered every
+ *        widget and the "zone refresh" below always got the full 480-gate
+ *        window -- the keyboard-slowness lead (ROADMAP open items).
  *
  * Bit polarity note: LVGL's I1 software blender (lv_draw_sw_blend_to_i1.c)
  * sets a bit for a WHITE/light pixel and clears it for BLACK/dark, MSB
@@ -24,6 +27,7 @@
 
 #include "eink.h"
 #include "hw_config.h"
+#include "settings_store.h"
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -42,6 +46,8 @@ static uint32_t s_lv_stride;          /* bytes per portrait row */
 static uint8_t s_native_fb[SCREEN_FB_SIZE];  /* landscape native fb, rebuilt every flush */
 static bool s_force_full_refresh = true;
 static uint32_t s_flush_count;        /* see lv_port_disp_get_flush_count() */
+static int32_t s_win_x1 = INT32_MAX;  /* portrait x range of this refresh's areas */
+static int32_t s_win_x2 = -1;
 
 static inline int lv_i1_get_bit(const uint8_t *buf, uint32_t stride, int x, int y)
 {
@@ -73,27 +79,37 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
      * palette (which can be skipped in flush callbacks via px_map += 8)". */
     px_map += 8;
 
-    for (int uy = 0; uy < SCREEN_HEIGHT; uy++) {
-        for (int ux = 0; ux < SCREEN_WIDTH; ux++) {
+    /* DIRECT mode: px_map is the whole screen buffer, `area` the part LVGL
+     * just redrew; only that part changes in the native frame. */
+    for (int uy = area->y1; uy <= area->y2; uy++) {
+        for (int ux = area->x1; ux <= area->x2; ux++) {
             const int bit = lv_i1_get_bit(px_map, s_lv_stride, ux, uy);
             native_set_bit(s_native_fb, uy, SCREEN_WIDTH - 1 - ux, bit);
         }
     }
+    if (area->x1 < s_win_x1) s_win_x1 = area->x1;
+    if (area->x2 > s_win_x2) s_win_x2 = area->x2;
+    if (!lv_display_flush_is_last(disp)) {
+        lv_display_flush_ready(disp);   /* more areas of the same refresh follow */
+        return;
+    }
 
-    /* Zone refresh (2026-09-22): even under LV_DISPLAY_RENDER_MODE_FULL,
-     * `area` is NOT "the whole screen" -- LVGL's refr_invalid_areas()
-     * (lv_refr.c) always passes the ACTUAL invalidated rectangle here,
-     * the render BUFFER covers the whole screen but the CHANGED region is
-     * tracked separately and given to us for free. Transposed through the
-     * same portrait->native mapping as the pixel loop above (fb_y =
-     * SCREEN_WIDTH-1-ux), `area`'s ux range becomes the native gate/row
-     * window -- the dimension that actually costs refresh TIME on this
-     * panel (sequential gate scan), passed to eink_display_fb_fast_region()
-     * instead of always re-scanning every one of the 480 gates for a
-     * change that might only span a few dozen. Full refreshes stay
-     * unrestricted on purpose (see that function's doc comment). */
-    int32_t native_y1 = SCREEN_WIDTH - 1 - area->x2;
-    int32_t native_y2 = SCREEN_WIDTH - 1 - area->x1;
+    /* Zone refresh: the union of this refresh's areas, transposed through
+     * the same portrait->native mapping as the pixel loop above (fb_y =
+     * SCREEN_WIDTH-1-ux), gives the native gate/row window -- the dimension
+     * that costs refresh TIME on this panel (sequential gate scan). Added
+     * 2026-09-22 assuming FULL mode passed the real invalidated rectangle;
+     * it never did (always the whole screen, see the file comment), so this
+     * window is only really partial since the DIRECT switch (2026-10-11).
+     * Full refreshes stay unrestricted on purpose (eink.c's doc comment). */
+    int32_t native_y1 = SCREEN_WIDTH - 1 - s_win_x2;
+    int32_t native_y2 = SCREEN_WIDTH - 1 - s_win_x1;
+    s_win_x1 = INT32_MAX;
+    s_win_x2 = -1;
+    if (!settings_store_get_disp_zone()) {   /* console A/B: whole panel, the pre-2026-10-11 behavior */
+        native_y1 = 0;
+        native_y2 = SCREEN_WIDTH - 1;
+    }
 
     /* Timed, but only LOGGED for a FULL refresh (rare: one per screen switch
      * or ghost-budget housekeeping) or an abnormally slow fast DU (should
@@ -116,6 +132,9 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
         ESP_LOGE(TAG, "flush failed: %s", esp_err_to_name(err));
     } else if (full) {
         ESP_LOGI(TAG, "flush FULL done in %lld ms", (long long)elapsed_ms);
+    } else if (settings_store_get_disp_timing()) {
+        printf("flush fast: gates %ld-%ld (%ld), %lld ms\n", (long)native_y1, (long)native_y2,
+               (long)(native_y2 - native_y1 + 1), (long long)elapsed_ms);
     } else if (elapsed_ms > kSlowFastMs) {
         ESP_LOGW(TAG, "flush fast unusually slow: %lld ms", (long long)elapsed_ms);
     }
@@ -172,7 +191,7 @@ void lv_port_disp_init(void)
         abort();
     }
 
-    lv_display_set_buffers(disp, s_lv_buf, NULL, buf_size, LV_DISPLAY_RENDER_MODE_FULL);
+    lv_display_set_buffers(disp, s_lv_buf, NULL, buf_size, LV_DISPLAY_RENDER_MODE_DIRECT);
     lv_display_set_flush_cb(disp, flush_cb);
 
     /* CONFIG_LV_COLOR_DEPTH_1 (sdkconfig.defaults) already auto-selects
