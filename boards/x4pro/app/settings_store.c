@@ -256,6 +256,26 @@ void settings_store_set_auto_lock_s(uint32_t seconds)
     settings_set_u32(SETTINGS_ID_AutoLockS, seconds);
 }
 
+bool settings_store_get_sd_check(void)
+{
+    return settings_get_u32(SETTINGS_ID_SdCheck) != 0;
+}
+
+void settings_store_set_sd_check(bool on)
+{
+    settings_set_u32(SETTINGS_ID_SdCheck, on ? 1 : 0);
+}
+
+uint32_t settings_store_get_sd_check_last(void)
+{
+    return settings_get_u32(SETTINGS_ID_SdCheckLastS);
+}
+
+void settings_store_set_sd_check_last(uint32_t utc)
+{
+    settings_set_u32(SETTINGS_ID_SdCheckLastS, utc);
+}
+
 bool settings_store_get_disp_zone(void)
 {
     return settings_get_u32(SETTINGS_ID_DispZone) != 0;

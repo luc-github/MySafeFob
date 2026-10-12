@@ -101,6 +101,12 @@ void settings_store_set_pin_symbols(bool on);
 uint32_t settings_store_get_auto_lock_s(void);
 void settings_store_set_auto_lock_s(uint32_t seconds);
 
+/** @brief SD sanity check after unlock (on/off) and the UTC time of the last one. */
+bool settings_store_get_sd_check(void);
+void settings_store_set_sd_check(bool on);
+uint32_t settings_store_get_sd_check_last(void);
+void settings_store_set_sd_check_last(uint32_t utc);
+
 /** @brief Display tuning (console only): zone refresh on/off, per-refresh timing log. */
 bool settings_store_get_disp_zone(void);
 bool settings_store_get_disp_timing(void);

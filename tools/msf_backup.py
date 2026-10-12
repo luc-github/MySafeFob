@@ -6,6 +6,8 @@ The device only reads and writes encrypted .msfx files (ADR-005 amendment
 2026-10-11). This tool is where the readable format lives:
 
   decrypt  backup.msfx [-o accounts.json]   .msfx -> JSON (to check or edit)
+                                            (also a factory rescue copy
+                                            RESCUEnn.MSR: asks the device PIN)
   encrypt  accounts.json [-o file.msfx]     JSON -> .msfx (to import on the device)
 
 Typical edit-on-PC round trip: export on the device, `decrypt`, edit the
@@ -152,6 +154,35 @@ def seal(accounts, passphrase, created):
                          len(accounts), 0, len(plain))
     key = derive_key(passphrase, salt, KDF_M_MIB, KDF_T, KDF_P)
     return header + AESGCM(key).encrypt(nonce, plain, header)   # ciphertext | tag
+
+
+# Factory rescue copy (RESCUEnn.MSR): one store slot as on flash, slot_header_t
+# of secret_store.c (packed, 46 bytes, GCM AAD) | ciphertext | tag; key =
+# Argon2id(device PIN, header salt and parameters).
+SLOT_HEADER = struct.Struct("<4sBBBBH16s12sII")
+SLOT_MAGIC = b"MSF1"
+
+
+def is_rescue(data):
+    return data[:4] == SLOT_MAGIC
+
+
+def open_rescue(data, pin):
+    if len(data) < SLOT_HEADER.size + TAG_LEN:
+        raise BackupError("damaged rescue copy")
+    magic, version, algo, t, p, m_mib, salt, nonce, _seq, ct_len = SLOT_HEADER.unpack_from(data)
+    if version != 1 or algo != KDF_ARGON2ID:
+        raise BackupError("unknown store format")
+    if len(data) != SLOT_HEADER.size + ct_len + TAG_LEN:
+        raise BackupError("damaged rescue copy (size does not match its header)")
+    if not (len(pin) == 6 and pin.isdigit()):
+        raise BackupError("the device PIN is 6 digits")
+    key = derive_key(pin, salt, m_mib, t, p)
+    try:
+        plain = AESGCM(key).decrypt(nonce, data[SLOT_HEADER.size:], data[:SLOT_HEADER.size])
+    except Exception:
+        raise BackupError("wrong PIN, or the file was altered") from None
+    return deserialize(plain), 0
 
 
 def open_backup(data, passphrase):
@@ -307,7 +338,11 @@ def ask_passphrase(confirm):
 def cmd_decrypt(args):
     with open(args.file, "rb") as f:
         data = f.read()
-    accounts, created = open_backup(data, ask_passphrase(False))
+    if is_rescue(data):
+        print("Factory rescue copy: protected by the device PIN only.")
+        accounts, created = open_rescue(data, getpass.getpass("Device PIN: "))
+    else:
+        accounts, created = open_backup(data, ask_passphrase(False))
     out = args.output or os.path.splitext(args.file)[0] + ".json"
     with open(out, "w", encoding="utf-8") as f:
         json.dump(to_json(accounts, created), f, indent=2, ensure_ascii=False)

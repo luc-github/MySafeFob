@@ -36,6 +36,8 @@
  *                (ADR-011: app1 removed, no network OTA -> no need for
  *                esp_ota A/B rollback, the factory is the safety net if
  *                the update boots badly)
+ *   Export accounts : rescue copy of the account store to the SD card,
+ *                after the device PIN (rescue_export.c, 2026-10-11)
  *
  * NO "SD -> factory" (removed 2026-09-15, user decision): the factory
  * never self-updates from the SD — it would be writing to the very
@@ -67,6 +69,7 @@
 #include "battery.h"
 #include "battery_icon.h"
 #include "rtc.h"
+#include "rescue_export.h"
 #include "esp_timer.h"
 
 static const char *TAG = "RECOVERY";
@@ -210,6 +213,7 @@ static void probe_sd_files(void)
 typedef enum {
     MENU_ACTION_BOOT_APP0,
     MENU_ACTION_SD_APP0,
+    MENU_ACTION_EXPORT,
 } menu_action_t;
 
 typedef struct {
@@ -535,11 +539,29 @@ static void action_sd_flash(const char *target_label)
     set_status("Flash FAILED!", false);
 }
 
+static bool s_touch_ok;
+
+static void action_export(void)
+{
+    char msg[40];
+    bool ok = false;
+    bool done = rescue_export_run(s_touch_ok, msg, sizeof(msg), &ok);
+    if (!done) {          /* cancelled at the PIN */
+        draw_menu();
+        return;
+    }
+    strncpy(last_status, msg, sizeof(last_status) - 1);
+    last_status[sizeof(last_status) - 1] = '\0';
+    last_status_ok = ok;
+    draw_menu();          /* full: coming back from the export's own screens */
+}
+
 static void execute_selected_action(void)
 {
     switch (menu_items[menu_selected].action) {
         case MENU_ACTION_BOOT_APP0:    action_boot("app0");    break;
         case MENU_ACTION_SD_APP0:      action_sd_flash("app0");   break;
+        case MENU_ACTION_EXPORT:       action_export();   break;
     }
 }
 
@@ -615,6 +637,7 @@ void app_main(void)
     /* 3. Inputs */
     buttons_init();
     bool touch_ok = touch_init();
+    s_touch_ok = touch_ok;
     FACTORY_LOGD(TAG, "touch: %s", touch_ok ? "OK" : "ABSENT");
 
     /* 4. SD (no more app1 probing: partition removed, ADR-011; no
@@ -623,6 +646,7 @@ void app_main(void)
     menu_count = 0;
     menu_items[menu_count++] = (menu_item_t){ "Boot app0", MENU_ACTION_BOOT_APP0 };
     menu_items[menu_count++] = (menu_item_t){ "SD -> app0", MENU_ACTION_SD_APP0 };
+    menu_items[menu_count++] = (menu_item_t){ "Export accounts", MENU_ACTION_EXPORT };
     menu_selected = 0;
     probe_sd_files();
     draw_menu();

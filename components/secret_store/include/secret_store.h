@@ -127,6 +127,16 @@ esp_err_t msf_store_change_pin(const char *new_pin, const msf_account_t *records
  */
 esp_err_t msf_store_verify_pin(const char *pin);
 
+/**
+ * @brief Copy of the newest store slot, exactly as on flash (header |
+ *        ciphertext | tag), UNLOCKED only: the factory's rescue export
+ *        (2026-10-11, user decision). Still encrypted with the PIN-derived
+ *        key; tools/msf_backup.py decrypts it with the PIN. PSRAM, free with
+ *        msf_backup_free().
+ * @return ESP_ERR_INVALID_STATE (not unlocked), ESP_ERR_NO_MEM, ESP_FAIL.
+ */
+esp_err_t msf_store_rescue_image(uint8_t **image_out, size_t *len_out);
+
 /** @brief Wipes the key from RAM. The caller wipes its decrypted records. */
 void msf_store_lock(void);
 

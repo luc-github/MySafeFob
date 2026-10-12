@@ -181,6 +181,7 @@ not in NVS.
 | # | Deliverable | Description |
 |---|----------|-------------|
 | 10.1 | Firmware v1.0 signed/tagged | GitHub release with binary and checksum |
+| 10.0 | Secure Boot v2 + Flash Encryption (decided 2026-10-11: not critical now, before the final v1) | Step-by-step plan, prerequisites (bootloader size vs the 0xB000 otadata backup, hook, 16-byte aligned store writes, final factory) and irreversible eFuse order: `docs/SECURE-BOOT-PLAN.md` |
 | 10.2 | User documentation | User guide, backup/recovery procedure |
 | 10.3 | Developer documentation | How to flash, how to contribute, how to port |
 
@@ -346,6 +347,20 @@ updated accordingly).
    only: `tools/msf_backup.py` `decrypt` (.msfx -> JSON) / `encrypt` (JSON -> .msfx),
    JSON with `totp` as an object or an `otpauth://` URI. Edit-on-PC workflow: export,
    decrypt, edit the JSON, encrypt, import in Merge mode.
+7. **Console `store` / `backup` commands are kept in the release** (user decision
+   2026-10-11): a way to export over USB if the screens ever fail; both ask the PIN.
+8. **Factory rescue export** (same day, option A): menu "Export accounts" in the
+   factory, device PIN (digit by digit, app's failure counter and back-off), raw copy
+   of the newest store slot to `MSF/RESCUEnn.MSR`, decrypted on the PC with the PIN by
+   `msf_backup.py`. PIN-only protection accepted for a rescue file deleted after use
+   (`FACTORY.md` §5.3b).
+9. **SD sanity check** (same day, user request): setting "Check SD at start" (Backup
+   menu, `SdCheck`, on by default). After an unlock, at most once an hour
+   (`SdCheckLastS`), a worker scans the card for plaintext leftovers: `MSF/RESCUE*.MSR` and
+   `*.json` in the root or `MSF/` whose first bytes contain "mysafefob" (other apps' JSON
+   never listed); if any, the shared confirmation (critical) offers to overwrite them with
+   zeros and delete them (best effort: the card's wear levelling may keep old blocks).
+   `ui_sd_check.cpp`, `backup_find_plaintext()` / `backup_wipe_files()`.
 6. **Device PIN asked again** (same day): an unlocked device must not be enough to copy
    every secret out, or to slip modified accounts in (a backup is data, never code, but
    it can carry altered passwords / TOTP keys). Serial: `backup export <pin> ...` and

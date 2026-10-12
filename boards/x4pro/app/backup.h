@@ -70,6 +70,25 @@ int backup_list(backup_file_t *out, int max);
  */
 esp_err_t backup_load(const char *name, const char *passphrase, account_t *out, int max, int *count);
 
+#define BACKUP_PATH_MAX 48   /* "/sdcard/MSF/RESCUE01.MSR", "/sdcard/<name>.json" */
+
+/**
+ * @brief Plaintext leftovers on the card (SD sanity check, 2026-10-11):
+ *        MSF/RESCUE*.MSR (factory rescue copies, PIN-only protection) and
+ *        *.json in the root or MSF/ whose first bytes contain "mysafefob"
+ *        (msf_backup.py / msf_editor.html exports; other apps' JSON is
+ *        never listed). Paths as "/sdcard/...".
+ * @return number found (<= max), -1 if there is no usable card.
+ */
+int backup_find_plaintext(char (*paths)[BACKUP_PATH_MAX], int max);
+
+/**
+ * @brief Overwrites each file with zeros, then deletes it (best effort: an
+ *        SD card's own wear levelling may keep old blocks).
+ * @return number deleted.
+ */
+int backup_wipe_files(char (*paths)[BACKUP_PATH_MAX], int count);
+
 #ifdef __cplusplus
 }
 #endif

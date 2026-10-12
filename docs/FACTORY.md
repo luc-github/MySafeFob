@@ -284,6 +284,33 @@ takes ~2-4 s; ~10 redraws for a 2 MB flash — acceptable for a
 recovery). **Difference from the reference design**: no partial redraw
 possible (e-ink); the earlier LCD-based version redrew by zones.
 
+### 5.3b Export accounts (rescue copy, 2026-10-11)
+
+For the rare case where the app no longer starts (ADR-005 amendment,
+option A chosen by the user): menu **Export accounts**.
+
+1. Checks the store exists and an SD card is present (FAT; the factory has
+   no long file names).
+2. Device PIN, one digit at a time: Left/Right change the digit, Home pad
+   confirms it, Power cancels (only the validated inputs, no touch
+   calibration needed). Checked with the app's own `secret_store`
+   (`msf_store_unlock()`): same failure counter and back-off as the app.
+3. The newest store slot is copied as is (header | ciphertext | tag, still
+   encrypted with the PIN-derived key) to `/sdcard/MSF/RESCUEnn.MSR`
+   (01-99, never overwritten; temp file + fsync + rename).
+4. Result screen: count, file name, and "protected by the PIN only:
+   decrypt it on the PC, then delete it from the card".
+
+On the PC: `python tools/msf_backup.py decrypt MSF/RESCUE01.MSR` asks the
+PIN and writes the JSON (then `encrypt` it into a normal `.msfx` if it
+must be kept). Weaker than a `.msfx` (a 6-digit PIN can be brute-forced
+offline in hours), accepted for a rescue file deleted after use; no worse
+than today's unencrypted flash (`docs/SECURE-BOOT-PLAN.md`).
+
+Build: the factory pulls `components/secret_store` and
+`components/monocypher` through `EXTRA_COMPONENT_DIRS` (factory
+`CMakeLists.txt`), nothing else from the app.
+
 ### 5.4 E-ink constraints (vs the reference design's LCD)
 
 - A single `gfx_flush()` per screen (full framebuffer).

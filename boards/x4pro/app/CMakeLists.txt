@@ -18,7 +18,7 @@ idf_component_register(
          "ui_screen_owner.cpp"
          "ui_screen_names.cpp" "ui_screen_account.cpp" "accounts_store.c"
          "ui_screen_account_edit.cpp" "ui_screen_recovery.cpp"
-         "ui_screen_pin.cpp" "ui_screen_backup.cpp" "fonts/msf_font_24.c" "fonts/msf_font_32.c"
+         "ui_screen_pin.cpp" "ui_screen_backup.cpp" "ui_sd_check.cpp" "fonts/msf_font_24.c" "fonts/msf_font_32.c"
          "images/msf_logo.c"
          "time_service.c" "wifi_time.c" "ble_time.c"
          "settings_store.c" "alerts.c" "sdcard.c" "backup.c" "ui_screen_alerts.cpp" "battery.c" "frontlight.c"

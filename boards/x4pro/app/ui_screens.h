@@ -124,6 +124,11 @@ lv_obj_t *build_backup_import(lv_group_t **group_out, lv_obj_t **battery_label_o
 /** @brief Opens the Backup menu (after the PIN confirmation). */
 void backup_open_menu(void);
 
+/* ui_sd_check.cpp: SD sanity check after an unlock (setting SdCheck). */
+void sd_check_on_unlock(void);
+/** @brief Called from the UI task loop: shows the confirmation once the scan found files. */
+void sd_check_poll(void);
+
 lv_obj_t *build_recovery_view(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_recovery_edit(lv_group_t **group_out, lv_obj_t **battery_label_out);
 

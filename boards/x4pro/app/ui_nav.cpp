@@ -436,7 +436,9 @@ void board_ui_nav_task(void *arg)
                 ui_confirm_dismiss();
                 pin_open_unlock();
             }
+            if (!s_was_unlocked && unlocked) sd_check_on_unlock();
             s_was_unlocked = unlocked;
+            sd_check_poll();
         }
         vTaskDelay(pdMS_TO_TICKS(20));
     }

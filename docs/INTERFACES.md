@@ -224,6 +224,11 @@ tag 16B
 - The former "same key as the device" option is dropped (amendment
   2026-10-11): one format, one passphrase.
 
+**Factory rescue copy** (`docs/FACTORY.md` §5.3b): `/MSF/RESCUEnn.MSR` =
+the newest store slot exactly as on flash (§1.1 slot header, 46 bytes,
+as GCM AAD | ciphertext | tag), written by the factory after the device
+PIN; `msf_backup.py decrypt` recognizes the `MSF1` magic and asks the PIN.
+
 **PC JSON** (`tools/msf_backup.py decrypt` / `encrypt`): see the tool's
 docstring. `totp` is `{key, digits, period}` or an `otpauth://totp/` URI;
 recovery codes are strings (available) or `{"code", "used": true}`. The

@@ -121,6 +121,12 @@ SETTINGS_DEF(AutoLockS, "auto_lock_s", U32, 300, GENERAL)
  * DispZone = fast refreshes limited to the changed gate rows (0 = whole
  * panel every time, the behavior before); DispTiming = log every refresh
  * (gate window, ms) to measure. */
+/* SD sanity check (2026-10-11): after an unlock, at most once an hour,
+ * look for plaintext leftovers on the card (MySafeFob JSON exports, factory
+ * rescue copies) and offer to delete them. SdCheckLastS = UTC of the last
+ * check. */
+SETTINGS_DEF(SdCheck, "sd_check", BOOL, 1, GENERAL)
+SETTINGS_DEF(SdCheckLastS, "sd_check_last", U32, 0, GENERAL)
 SETTINGS_DEF(DispZone, "disp_zone", BOOL, 1, GENERAL)
 SETTINGS_DEF(DispTiming, "disp_timing", BOOL, 0, GENERAL)
 SETTINGS_STR_DEF(OwnerInfo, "owner_info", SETTINGS_OWNER_INFO_MAX, "", GENERAL)

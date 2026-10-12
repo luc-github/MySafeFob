@@ -13,9 +13,10 @@ idf_component_register(SRCS
                            "battery.c"
                            "battery_icon.cpp"
                            "rtc.c"
+                           "rescue_export.c"
                        INCLUDE_DIRS "."
                        REQUIRES driver esp_timer spi_flash esp_partition
-                                app_update sdmmc fatfs freeinkui)
+                                app_update sdmmc fatfs freeinkui secret_store)
 
 # BUGFIX: ENABLE_FACTORY_DEBUG_LOG (factory/CMakeLists.txt) was only wired
 # for the bootloader component (see bootloader_components/custom_bootloader/

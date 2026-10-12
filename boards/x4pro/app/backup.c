@@ -191,6 +191,82 @@ int backup_list(backup_file_t *out, int max)
     return n;
 }
 
+static bool name_has_suffix(const char *name, const char *suffix)
+{
+    size_t n = strlen(name), e = strlen(suffix);
+    return n > e && strcasecmp(name + n - e, suffix) == 0;
+}
+
+/* A MySafeFob JSON starts with {"format": "mysafefob", ... (both tools). */
+static bool is_our_json(const char *path)
+{
+    char head[256];
+    FILE *f = fopen(path, "rb");
+    if (!f) return false;
+    size_t got = fread(head, 1, sizeof(head) - 1, f);
+    fclose(f);
+    head[got] = '\0';
+    return strstr(head, "mysafefob") != NULL;
+}
+
+static void scan_dir(const char *dir, bool rescue, char (*paths)[BACKUP_PATH_MAX], int max, int *n)
+{
+    DIR *d = opendir(dir);
+    if (!d) return;
+    struct dirent *e;
+    while (*n < max && (e = readdir(d)) != NULL) {
+        if (e->d_type == DT_DIR) continue;
+        bool json = name_has_suffix(e->d_name, ".json");
+        bool msr = rescue && name_has_suffix(e->d_name, ".msr") && strncasecmp(e->d_name, "RESCUE", 6) == 0;
+        if (!json && !msr) continue;
+        if (strlen(dir) + 1 + strlen(e->d_name) >= BACKUP_PATH_MAX) continue;
+        strlcpy(paths[*n], dir, BACKUP_PATH_MAX);   /* length checked above */
+        strlcat(paths[*n], "/", BACKUP_PATH_MAX);
+        strlcat(paths[*n], e->d_name, BACKUP_PATH_MAX);
+        if (json && !is_our_json(paths[*n])) continue;
+        (*n)++;
+    }
+    closedir(d);
+}
+
+int backup_find_plaintext(char (*paths)[BACKUP_PATH_MAX], int max)
+{
+    if (sdcard_mount() != ESP_OK) return -1;
+    int n = 0;
+    scan_dir(SD_MOUNT_POINT, false, paths, max, &n);
+    scan_dir(BACKUP_DIR, true, paths, max, &n);
+    sdcard_unmount();
+    return n;
+}
+
+int backup_wipe_files(char (*paths)[BACKUP_PATH_MAX], int count)
+{
+    if (sdcard_mount() != ESP_OK) return 0;
+    static const uint8_t kZeros[512];
+    int wiped = 0;
+    for (int i = 0; i < count; i++) {
+        struct stat st;
+        if (stat(paths[i], &st) == 0) {
+            FILE *f = fopen(paths[i], "r+b");
+            if (f) {
+                for (off_t done = 0; done < st.st_size; done += sizeof(kZeros)) {
+                    size_t chunk = (size_t)(st.st_size - done) < sizeof(kZeros) ? (size_t)(st.st_size - done)
+                                                                                  : sizeof(kZeros);
+                    fwrite(kZeros, 1, chunk, f);
+                }
+                fflush(f);
+                fsync(fileno(f));
+                fclose(f);
+            }
+        }
+        if (unlink(paths[i]) == 0) wiped++;
+        else ESP_LOGW(TAG, "could not delete %s", paths[i]);
+    }
+    sdcard_unmount();
+    ESP_LOGI(TAG, "SD check: %d plaintext file(s) wiped", wiped);
+    return wiped;
+}
+
 esp_err_t backup_load(const char *name, const char *passphrase, account_t *out, int max, int *count)
 {
     *count = 0;

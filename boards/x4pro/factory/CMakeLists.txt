@@ -7,6 +7,12 @@ cmake_minimum_required(VERSION 3.16)
 # Set back to OFF for release (the factory must stay lean and reliable).
 option(ENABLE_FACTORY_DEBUG_LOG "Enable Factory app and bootloader debug logs" ON)
 
+# The app's encrypted store, for the rescue export (rescue_export.c): only
+# these two shared components, not the whole components/ folder.
+set(EXTRA_COMPONENT_DIRS
+    ${CMAKE_CURRENT_LIST_DIR}/../../../components/secret_store
+    ${CMAKE_CURRENT_LIST_DIR}/../../../components/monocypher)
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(mysafefob-factory)
 

@@ -252,6 +252,17 @@ static void import_cb(lv_event_t *)
     ui_defer(import_deferred, nullptr);
 }
 
+static void sd_check_deferred(void *user_data)
+{
+    settings_store_set_sd_check(static_cast<bool>(reinterpret_cast<intptr_t>(user_data)));
+}
+
+static void sd_check_cb(lv_event_t *e)
+{
+    bool checked = lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED);
+    ui_defer(sd_check_deferred, reinterpret_cast<void *>(static_cast<intptr_t>(checked)));
+}
+
 static void menu_back_deferred(void *)
 {
     if (s_busy) return;   /* an export is writing: stay until it ends */
@@ -293,6 +304,11 @@ lv_obj_t *build_backup(lv_group_t **group_out, lv_obj_t **battery_label_out)
     lv_obj_set_style_pad_row(content, 2 * kExtClickMargin, 0);   /* as the Settings menus */
     add_menu_action(content, MSF_SYMBOL_FILE_EXPORT "  Export to the SD card", export_cb, group);
     add_menu_action(content, MSF_SYMBOL_FILE_IMPORT "  Import from the SD card", import_cb, group);
+    /* SD sanity check after unlock (ui_sd_check.cpp): against the right
+     * edge, no stepper on this screen to line up with. */
+    lv_obj_t *check_row = make_round_toggle_row(content, group, MSF_SYMBOL_SEARCH " Check SD at start",
+                                                settings_store_get_sd_check(), sd_check_cb);
+    lv_obj_set_style_margin_right(lv_obj_get_child(check_row, -1), 0, 0);
     s_menu_status_label = lv_label_create(content);
     lv_obj_set_width(s_menu_status_label, LV_PCT(90));
     lv_obj_set_style_text_align(s_menu_status_label, LV_TEXT_ALIGN_CENTER, 0);

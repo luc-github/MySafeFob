@@ -565,6 +565,29 @@ done:
     return err;
 }
 
+esp_err_t msf_store_rescue_image(uint8_t **image_out, size_t *len_out)
+{
+    *image_out = NULL;
+    lock();
+    esp_err_t err = ESP_ERR_INVALID_STATE;
+    if (s_state == MSF_STORE_UNLOCKED && s_current >= 0) {
+        size_t len = sizeof(slot_header_t) + s_hdr[s_current].ct_len + TAG_LEN;
+        uint8_t *img = heap_caps_malloc(len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        err = ESP_ERR_NO_MEM;
+        if (img) {
+            err = esp_partition_read(s_part, kSlotOff[s_current], img, len);
+            if (err == ESP_OK) {
+                *image_out = img;
+                *len_out = len;
+            } else {
+                heap_caps_free(img);
+            }
+        }
+    }
+    unlock();
+    return err;
+}
+
 void msf_store_lock(void)
 {
     lock();
