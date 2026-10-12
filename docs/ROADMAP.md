@@ -2,7 +2,8 @@
 
 > **Version**: 1.0  
 > **Date**: 2026-08-30  
-> **Status**: Phase 1 — Documentation and preparation
+> **Status** (2026-10-12): Phase 8 functionally complete and hardware-validated;
+> next: Phase 9 (one week of real use, endurance and security tests), then Phase 10.
 
 ---
 
@@ -24,7 +25,7 @@ Each phase produces a documented and validated deliverable before moving on to t
 | 1.2 | `TEST-PLAN.md` | 🔄 | Test strategy, target service, validation criteria |
 | 1.3 | `SPECS.md` | ✅ | Hardware specifications (X4 Pro, pins, peripherals) |
 | 1.4 | `TOTP-ALGO.md` | ✅ | TOTP principle, RFC 6238, reference implementation |
-| 1.5 | `ARCHITECTURE.md` | ⏳ | Software architecture (components, interfaces, data flow) |
+| 1.5 | `ARCHITECTURE.md` | ✅ | Software architecture (components, interfaces, data flow) — written 2026-10-12, as built |
 
 **Exit gates**: All documents written and reviewed.
 
@@ -84,7 +85,7 @@ Each phase produces a documented and validated deliverable before moving on to t
 |---|----------|-------------|
 | 6.1 | `FEATURES.md` | ✅ Finalized feature list (must have / should have / nice to have) |
 | 6.2 | `UI-SPECS.md` | ✅ Textual mockups of each screen (written retroactively during task 8.4, 2026-09-16 — draft, awaiting review) |
-| 6.3 | `SECURITY-THREAT-MODEL.md` | ⏳ Attack scenarios and mitigations |
+| 6.3 | `SECURITY-THREAT-MODEL.md` | ✅ Attack scenarios and mitigations — written 2026-10-12, as built |
 
 **Exit gates**: The project scope is frozen. No new features until v1.0.
 
@@ -113,6 +114,12 @@ Each phase produces a documented and validated deliverable before moving on to t
 
 **Exit gates**: Each sub-phase tested and validated individually.
 
+**Status 2026-10-12**: 8.1 (TOTP engine, live code + countdown), 8.2 (PIN,
+Argon2id + AES-256-GCM store, auto-lock), 8.3 (accounts CRUD, password
+generator, recovery codes, encrypted SD backup) and 8.4 (LVGL UI, three
+keyboards, icons, partial refresh) are built and hardware-validated; detail
+in the 8.0 table below and the ADRs.
+
 #### 8.0 Preparation backlog — everything that does not need the TOTP engine or `secret_store` (added 2026-09-26)
 
 User decision (2026-09-26): finish the environment around the TOTP flow
@@ -132,9 +139,9 @@ then start the TOTP core (8.1/8.2). Order below is the working order.
 | 8.2-A | **Encrypted store, no UI (2026-10-10)** — `components/secret_store` rewritten for ADR-019 (AES-256-GCM, Argon2id m=2 MiB t=1, two alternating slots, failure counter + back-off), `accounts_store.c` (was the dummy store) backs `accounts.h` with it, console `store` (create / unlock / lock / passwd / demo / erase ERASE), `kdfbench`. Format: INTERFACES.md §1.1/§1.2 "as implemented". Decisions: 6-digit PIN, no auto-erase, forgotten PIN = data lost (warn at creation), PIN change as soon as possible (step B) | — | ✅ hardware-validated 2026-10-10 (create, demo, persistence across sleep/reboot and reflash, wrong PIN + back-off kept across reboot, PIN change; console REPL stack raised to 16 KiB for it) |
 | 8.2-B | **PIN UI (2026-10-10)** — `ui_screen_pin.cpp`: UNLOCK (keypad reshuffled at every attempt, 6 dots, auto-submit, "Wrong PIN (n)", back-off wait on the status line), CREATE (new + confirm, "forgotten = data lost" warning), CHANGE (current + new + confirm); Argon2id in a worker task, polled. HOME only while unlocked (`switch_screen()` redirects to the PIN screen), lock before every sleep, console lock sends the UI back to UNLOCK. Settings > Security & Data: Change PIN, Lock now (2026-10-11: directly in that menu, the Security sub-screen was removed; replaces the keypad test). Covers P10. Fonts: the app now uses its own `msf_font_24/32` (`tools/gen_fonts.py`, lv_font_conv 1.5.2 with the built-in Montserrat options + Font Awesome lock U+F023 / lock-open U+F3C1, rewritten to LVGL 9 form; built-in 24/32 disabled, `LV_FONT_DEFAULT` overridden in the root CMakeLists; icons in `msf_symbols.h`), lock icon on the UNLOCK prompt and Lock now | — | 🔄 built, hardware test pending |
 | P8 | **Rescoped by ADR-019 (2026-10-09)**: HOME alphabet grid (+ Power icon replacing "Sleep now"), names page, account page (TOTP code + Refresh, login, recovery count, Edit/Remove), dummy data. First version below (three flat lists) built and hardware-validated 2026-10-09, kept for its pagination/`touch_safe_y()` layout. Generic entry list screen (TOTP/PWD/RCV lists), dummy data — `ui_screen_entry_list.cpp`: pages of 6 rows (no scrolling), `<` `>` + page number, "+ Add"; rows at fixed y via `touch_safe_y()` (4 above the X4 Pro touch band, 2 below, status line in the gap); empty state. HOME gets TOTP Codes / Passwords / Recovery Codes. Dummy: 14 TOTP (3 pages), 4 passwords, 0 recovery codes. Selecting a row / Add only shows a status line until the target screens exist. **ADR-019 version built 2026-10-09**: `ui_screen_home.cpp` (letter grid, Power icon), `ui_screen_names.cpp` (was `ui_screen_entry_list.cpp`), `ui_screen_account.cpp` (real TOTP codes from public test keys, Refresh, Reveal, Remove via P6, F-05 auto-clear), data through `accounts.h` served by `accounts_dummy.c` (22 sample accounts, 7 under G) until secret_store exists. Edit / Add / recovery code list: not built yet. **Edit / Add built 2026-10-10** (`ui_screen_account_edit.cpp`: EDIT on a copy, Save in the header, "Discard changes?", 7 field rows; FIELD entry with full / numeric / Base32 keyboard, prefilled value, Clear, TOTP 6/8 digits and 30/60 s, default 6/30; `add_back_header_cb()`, shared `ui_auto_clear_attach()`). **Recovery codes built 2026-10-10** (`ui_screen_recovery.cpp`): view from the account page (numbered, used ones struck through, tap = mark used behind a confirmation), editor from EDIT on the draft (tap = remove, + Add via FIELD, Clear all), shared paginated list | — | ✅ hardware-validated 2026-10-10 (HOME, NAMES, ACCOUNT, EDIT/FIELD, recovery view/edit; still on dummy data until secret_store) |
-| P9 | TOTP_CODE prototype with a fake code: countdown + e-ink refresh strategy under the ghost budget | — | ⏳ |
+| P9 | TOTP_CODE prototype with a fake code: countdown + e-ink refresh strategy under the ghost budget | — | → done for real in P8 (account page: live TOTP code, countdown refreshed 30/20/10 s then every second, full refresh on a new code) |
 | P10 | UNLOCK screen: shuffled (anti-trace) keypad + back-off display, fake counter | — | → done for real in 8.2-B (real store and counter) |
-| P11 | Encrypted SD backup (ADR-005 + amendment 2026-10-11). Step A: `.msfx` format in secret_store, app SD driver, `backup` console command (device PIN re-checked for export/import), PC tool `tools/msf_backup.py` (JSON <-> .msfx) + offline editor `tools/msf_editor.html`. Step B (2026-10-11): Settings > Security > Backup behind ONE PIN confirmation (pin screen CONFIRM mode), `ui_screen_backup.cpp`: Export (passphrase twice, masked + eye), Import (file list, newest first, 6 per page; passphrase; new / changed / unchanged / removed summary; Merge, or Replace all behind the shared confirmation); Argon2id and card access in a worker task | P3 | ✅ step A hardware-validated 2026-10-11 (device -> PC decrypt/edit/encrypt -> device import: same Argon2id key on both sides); 🔧 step B built, to test |
+| P11 | Encrypted SD backup (ADR-005 + amendment 2026-10-11). Step A: `.msfx` format in secret_store, app SD driver, `backup` console command (device PIN re-checked for export/import), PC tool `tools/msf_backup.py` (JSON <-> .msfx) + offline editor `tools/msf_editor.html`. Step B: Settings > Security > Backup behind ONE PIN confirmation, `ui_screen_backup.cpp` (export, import with a new / changed / unchanged / removed summary, Merge or Replace all). Also: factory rescue export (`MSF/RESCUEnn.MSR`, device PIN), SD sanity check after unlock (plaintext leftovers) | P3 | ✅ all hardware-validated 2026-10-11/12 (device -> PC -> device round trip with the same Argon2id key on both sides; factory export after the stack fix) |
 
 Decided 2026-09-26: F-05's auto-clear delay (secret shown → neutral
 screen) is a setting, `SecretAutoClearS`, default **5 min** (300 s),
@@ -150,7 +157,7 @@ not in NVS.
 | Item | Decision |
 |------|----------|
 | CW2017 SoC stuck at 0% after a full drain (BATINFO profile lost) | ✅ Fixed and hardware-validated: profile upload in the app's and the factory's `battery.c`, console `battery` (`hardware-specs.md`) |
-| No low-battery protection (`power_mgr_battery_critical()` was a stub) | 🔄 Built 2026-10-08, hardware test pending: alert + sleep-screen note at `BatteryLowPct`, automatic sleep at `BatteryCriticalPct` (ADR-018 amendment). Stub removed from `power_mgr` |
+| No low-battery protection (`power_mgr_battery_critical()` was a stub) | ✅ Built 2026-10-08, hardware-validated 2026-10-12 (thresholds raised from the console): alert + sleep-screen note at `BatteryLowPct`, automatic sleep at `BatteryCriticalPct` (ADR-018 amendment). Stub removed from `power_mgr` |
 | Deep-sleep current with the rails held (ADR-009 task 8c) | Closed, cannot be measured directly: the casing cannot be opened. Indirect check 2026-10-09: 98% -> 97% over one night asleep (gauge resolution 1%, so at most ~2% of ~2300 mAh per night), consistent with weeks to months on a charge |
 | SoC shown as `--` after a wake (gauge NACKs) | ✅ Fixed and hardware-validated 2026-10-09 over many wakes: every gauge read retried up to 3 times (`hardware-specs.md`) |
 | `ESP_LOG*` from `boards/x4pro/app` never reaches the console (`app_log_workaround.h`) | 👀 Keep watching: workaround in place, root cause unknown |
@@ -159,6 +166,7 @@ not in NVS.
 | Keyboard taps on the lower rows sometimes register the key above | ✅ Fixed and hardware-validated 2026-10-09: the bottom of `touch.c`'s Y table re-measured on the keyboard keys (the jump was placed ~50px too high); Time's keyboard bottom-anchored like Owner info's (`touch-calibration-notes.md` §11) |
 | Time > Wi-Fi keyboard "does nothing" | ✅ Fixed and hardware-validated 2026-10-09: taps were received, but past 18 masked characters the password field never changed (count now shown, e.g. `****** (6)`), and the keyboard keys' focus ring was clipped by their rows (rows now declare room for it, `ui_keyboard.cpp`) |
 | Keyboard typing slow (user report 2026-10-11, not blocking; navigation much faster since 240 MHz) | ✅ Fixed 2026-10-11, hardware-validated the same day ("much faster"): `LV_DISPLAY_RENDER_MODE_FULL` makes LVGL turn ANY invalidation into the whole screen (lv_refr.c), so every key press re-rendered every widget and the 2026-09-22 zone refresh always got all 480 gates. Now `RENDER_MODE_DIRECT` (only the changed areas redrawn and transposed, fast DU on their gate rows); console `setting set DispZone 0` restores the whole-panel refresh, `DispTiming 1` logs each refresh (gates, ms). Previous note: time per key and refreshed area. Leads, in order: (1) fast refresh may redraw the whole panel (logs show "flush fast unusually slow: ~1.5 s"): try a partial-window refresh in `eink.c` if the UC8279 allows it; (2) a tap also moves the focus ring (two keys + the field redrawn): no click-focus on keyboard keys; (3) coalesce keys typed during a refresh |
+| Partial refresh (LVGL `RENDER_MODE_DIRECT`, 2026-10-11): risk of stale areas, the PTL gate window had never run partial before | ✅ Hardware-validated 2026-10-12 over several days of navigation: no stale area or trace; `DispZone` kept as a console fallback |
 | `base32_decode()` (`totp_engine.c`) writes its output with no size limit | ✅ Fixed 2026-10-09: `*out_len` is now the buffer size in, decoded length out; `ESP_ERR_INVALID_SIZE` if it does not fit; self-test case added (`totpselftest`) |
 | Negative I32 values in `setting` (P2) | ✅ Hardware-validated 2026-10-09; duration suffix now uses the setting's own unit (ADR-018) |
 
@@ -1928,7 +1936,16 @@ updated 2026-09-19 to match what actually shipped) and
   the axis-swap bug. Real enhancement idea, not ruled out, just not
   needed yet.
 
-**Next roadmap step**: task 8.2 — implement `secret_store` for real
+**Update 2026-10-12 — what became of the items above**:
+`MSF_DEBUG_NO_SLEEP` no longer exists (real sleep since ADR-016); every
+"disabled SETTINGS row" became a real screen (Security, Display, Time,
+Backup, Owner info); `secret_store` is real (8.2-A); the touch dead zone
+was characterized (the 490-554 touch band, `touch_safe_y()`). Still open:
+the `ESP_LOG*` workaround (root cause unknown, watched in the open-items
+review), the guided 3x3 calibration grid (not needed so far). The
+paragraph below is kept as the historical plan of that day.
+
+**Next roadmap step** (as of 2026-09-19): task 8.2 — implement `secret_store` for real
 (`components/secret_store/`, currently a frozen contract with a stub
 implementation, `ESP_ERR_NOT_SUPPORTED` everywhere). Its own header
 comment already names the first move: *"First implementation: task 8.2,
