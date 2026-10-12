@@ -280,6 +280,10 @@ libsodium/monocypher. INTERFACES.md §1.1 updated accordingly.
 **Status**: ✅ VALIDATED 2026-09-13 (replaces PBKDF2 in INTERFACES.md §1.1
 and FEATURES.md F-04).
 
+**Alternatives and rationale, consolidated 2026-10-12**: PBKDF2 / bcrypt /
+scrypt / Argon2id compared, Monocypher vs libsodium, the measured parameters
+and what a KDF cannot solve with a 6-digit PIN: `SECURITY-THREAT-MODEL.md` §3.0.
+
 **Amendment 2026-10-10 — m=8 MiB is impossible**: the "8 MB" PSRAM is
 64 Mbit = exactly 8 MiB, so an 8 MiB work area would need the whole PSRAM,
 part of which the firmware already uses (LVGL, BLE, store). Direction

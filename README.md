@@ -120,6 +120,18 @@ The default board is `x4pro`. See `boards/<name>/README.md`.
 3. **~~`secret_store` = stub~~ DONE (task 8.2, 2026-10-11)**: Argon2id
    (monocypher) + AES-256-GCM, format in `docs/INTERFACES.md`.
 
+## Security status
+
+The account store is encrypted (AES-256-GCM, key derived from the device
+PIN with Argon2id, failure counter with back-off, auto-lock), backups are
+encrypted with their own passphrase. **Secure Boot and Flash Encryption
+are not enabled yet**: someone with the device and a PC can copy the
+encrypted store and brute-force the 6-digit PIN offline in hours, reset
+the failure counter, or flash a modified firmware (also from an SD card
+through the factory) that records the PIN. Details and accepted risks:
+`docs/SECURITY-THREAT-MODEL.md`; the step-by-step plan that closes them
+before the v1 release: `docs/SECURE-BOOT-PLAN.md`.
+
 ## Credits
 
 - [LVGL](https://lvgl.io) (MIT): app UI.

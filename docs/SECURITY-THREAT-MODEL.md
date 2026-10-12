@@ -5,6 +5,26 @@ hardware-validated at the end of Phase 8, not an intention. Formats:
 `INTERFACES.md` §1-§3; decisions: ADR-002/004/005/019 in `ROADMAP.md`;
 release hardening plan: `SECURE-BOOT-PLAN.md`.
 
+> ⚠️ **IMPORTANT — current limits (until `SECURE-BOOT-PLAN.md` is applied)**
+>
+> Neither Secure Boot nor Flash Encryption is enabled yet. The encrypted
+> store protects the data against someone using the device normally (PIN,
+> back-off), but **not** against someone with the device AND a PC or an SD
+> card:
+>
+> 1. **Flash readout**: `esptool read_flash` over USB copies the encrypted
+>    store; the 6-digit PIN can then be brute-forced offline, without the
+>    back-off, in **hours** (R1).
+> 2. **Failure counter reset**: the counter sector is plaintext and can be
+>    rewritten over USB (R2).
+> 3. **Modified firmware ("evil maid")**: an unsigned firmware can be
+>    flashed over USB **or from an SD card through the factory (Power held
+>    10 s, no PC needed)**, then record the PIN when the owner types it (R3).
+>
+> Until then: do not leave the device unattended where someone could take
+> it for a while, and keep a `.msfx` backup to be able to move to a new
+> device. These three risks are closed by the release hardening plan.
+
 ---
 
 ## 1. Assets
@@ -34,6 +54,50 @@ injection, side channels on the ESP32-S3), a malicious PC used by the
 owner to run the tools, coercion.
 
 ## 3. Protections in place
+
+### 3.0 Key derivation: why Argon2id (ADR-004)
+
+The store key is derived from a **6-digit PIN**: only 10^6 values. Whatever
+the algorithm, an attacker who has a copy of the encrypted store can try
+them all; the only lever is the **cost of one try**, on HIS hardware. The
+derivation must therefore be as expensive as possible for a GPU / ASIC
+farm while staying ~1 s on the S3.
+
+| Candidate | What it costs an attacker | Why not / why |
+|---|---|---|
+| PBKDF2-HMAC-SHA256 (the original choice, in mbedtls with the S3's SHA accelerator) | CPU only, no memory: SHA-256 parallelizes massively on GPUs | **Rejected** (ADR-004): with a "250 ms on the device" iteration count, the 10^6 PINs fall in about a day or two on one consumer GPU |
+| bcrypt | 4 KiB of memory per try | Better than PBKDF2 on GPUs, but the memory cost is fixed and tiny; not in ESP-IDF; a legacy design |
+| scrypt | Memory-hard (tunable RAM) | A valid option, but memory and time are tied by one parameter and it has known time-memory trade-offs; no advantage over Argon2id |
+| **Argon2id** (RFC 9106, Password Hashing Competition winner) | **Memory-hard**: every try needs the full `m` of RAM, which is what GPUs and ASICs lack per core; memory (`m`), passes (`t`) and lanes (`p`) tuned independently; the "id" variant also resists side channels and trade-off attacks | **Chosen**: the S3's 8 MB PSRAM makes a real memory cost affordable; the same algorithm exists on the PC (argon2-cffi) for `msf_backup.py` |
+
+**Library: Monocypher 4.0.2** (`components/monocypher`) rather than
+libsodium: a single C file (an earlier version was audited by Cure53), no
+dependencies, the caller provides
+the work area (put in PSRAM, wiped after use), BSD-2 / CC0. libsodium
+would have brought a much larger library and its own allocation scheme for
+the one function needed. Checked against argon2-cffi known-answer vectors
+on the device (`kdfbench`: MATCH) and end to end (an `.msfx` made on the
+device decrypted on the PC, and back).
+
+**Parameters, measured on the X4 Pro** (`kdfbench`, 240 MHz, ROADMAP
+ADR-004): store **m = 2 MiB, t = 1, p = 1 = ~1 s** per PIN try (the ADR's
+first target, 8 MiB, is the whole PSRAM; 4 MiB = 1.8 s was the
+alternative: it only doubles an attacker's time on a 10^6 space, the unlock
+delay decided). Backups **m = 2 MiB, t = 3 = ~3 s**: made rarely, and the
+passphrase space is far larger than a PIN's. The parameters are stored in
+each header, so they can be raised later (at a PIN change, or for new
+backups) without breaking existing data.
+
+**What Argon2id does not solve**: the ~1 s is the S3's time; a PC core
+computes the same Argon2id in a few milliseconds, so the 10^6 PINs take
+hours on one PC and less on a farm (the memory cost mostly limits how
+many tries a GPU can run in parallel). The real barriers are getting the encrypted store at all
+(physical access, then a flash readout: R1, closed by Flash Encryption)
+and the on-device failure counter. A possible further hardening, noted
+for the release work, would mix a device-only secret into the key (the
+S3's HMAC peripheral with a read-protected eFuse key): a copied store
+would then be useless off the device, and brute force would have to run
+on the device itself at ~1 s per try.
 
 ### 3.1 Data at rest (flash)
 
@@ -129,3 +193,17 @@ owner to run the tools, coercion.
 5. Console: every secret-revealing command refuses without the PIN.
 6. After the release hardening (plan step 8): `esptool read_flash` returns
    no plaintext; an unsigned `msf-fw.bin` is refused by the factory.
+
+## 6. Improvement ideas (not decided)
+
+Collected here so they are not lost; each needs its own decision.
+
+| # | Idea | Closes / improves | Cost or trade-off |
+|---|---|---|---|
+| I1 | Secure Boot v2 + Flash Encryption, `secrets` marked `encrypted` | R1, R2, R3 | Irreversible eFuses, bootloader size vs 0xB000, 16-byte aligned store format: `SECURE-BOOT-PLAN.md` |
+| I2 | Device-bound key: mix an HMAC of the Argon2id output, computed by the S3's HMAC peripheral with a read-protected eFuse key | R1 even before I1: a copied store is useless off the device; brute force must run on the device (~1 s per try) | One eFuse key block; a dead device = data only in backups; to design together with I1 |
+| I3 | Optional longer PIN (8 digits) or alphanumeric passphrase for the store | Offline brute force x100 (8 digits) or far more | Slower entry on e-paper; the PIN screen and the factory's digit entry must follow |
+| I4 | Raise Argon2id parameters at the next PIN change (4 MiB, or t=2) if a faster PSRAM path is found (bigger data cache) | Attacker cost x2-x3 | Unlock delay (1.8-2 s measured at 4 MiB / t=1) |
+| I5 | Rescue export protected by a passphrase (option B) if the factory ever gets a keyboard | R4 | Keyboard UI in the factory's plain gfx |
+| I6 | Optional wipe after N wrong PINs | Brute force on the device | Rejected for v1: anyone could destroy the data; at most an opt-in with a high N |
+| I7 | Require the PIN for `store erase` on the console | R8 | Minor: an unlocked device or a forgotten PIN would need `store erase` to start over |
