@@ -21,13 +21,21 @@
  * @brief MySafeFob — encrypted account store, see secret_store.h and
  *        INTERFACES.md §1 for the on-flash format.
  *
- * Partition layout (`secrets`):
- *   0x00000  control sector (plaintext): "MSFC" | version | fail_count | crc
- *   0x10000  slot 0 (128 KiB): header | ciphertext | tag
- *   0x30000  slot 1 (128 KiB)
- * A save goes to the slot that does not hold the current blob, body first,
- * header (with its magic) last: until the header is written the new slot is
- * invalid and the previous one is still used.
+ * Partition layout (`secrets`, 2.25 MiB):
+ *   0x000000  control sector (plaintext): "MSFC" | version | fail_count | crc
+ *   0x010000  format 1 slot A (128 KiB)  } read only (stores made before
+ *   0x030000  format 1 slot B (128 KiB)  } 2026-10-12), erased after migration
+ *   0x100000  format 2 slot A (512 KiB): header (64 B) | ciphertext | tag | pad
+ *   0x180000  format 2 slot B (512 KiB)
+ * Format 2 (2026-10-12): up to MSF_STORE_MAX_ACCOUNTS = 250 accounts (64
+ * before), header padded to 64 bytes and every write a multiple of 16 bytes
+ * at a 16-byte aligned offset (what flash encryption will require,
+ * SECURE-BOOT-PLAN.md §3.3). Its slots do not overlap format 1's, so a
+ * format 1 store migrates by itself: unlocked from its slot, the first save
+ * writes a format 2 slot, and only then are the format 1 slots erased.
+ * A save goes to the format 2 slot that does not hold the current blob,
+ * body first, header (with its magic) last: until the header is written the
+ * new slot is invalid and the previous one is still used.
  */
 #include "secret_store.h"
 
@@ -48,8 +56,12 @@
 static const char *TAG = "secret_store";
 
 #define CONTROL_OFF 0x00000
-#define SLOT_SIZE 0x20000
-static const uint32_t kSlotOff[2] = {0x10000, 0x30000};
+#define SLOT_COUNT 4
+#define FIRST_V2_SLOT 2                 /* slots 0-1: format 1, 2-3: format 2 */
+#define V1_SLOT_SIZE 0x20000
+#define V2_SLOT_SIZE 0x80000
+#define STORE_END 0x200000              /* end of the last slot */
+static const uint32_t kSlotOff[SLOT_COUNT] = {0x10000, 0x30000, 0x100000, 0x180000};
 
 #define KDF_ALGO_ARGON2ID 2
 #define KDF_M_MIB 2       /* ADR-004 decision 2026-10-10 */
@@ -59,11 +71,15 @@ static const uint32_t kSlotOff[2] = {0x10000, 0x30000};
 #define SALT_LEN 16
 #define NONCE_LEN 12
 #define TAG_LEN 16
-#define FORMAT_VERSION 1
+#define FORMAT_VERSION 2
+#define V1_HEADER_LEN 46     /* format 1: the fields up to ct_len, nothing after */
+#define V2_HEADER_LEN 64     /* format 2: the same fields + reserved, 16-byte multiple */
 
-/* Slot header, authenticated as GCM additional data. Little-endian. */
+/* Slot header, authenticated as GCM additional data (its first
+ * header_len() bytes). Little-endian. Format 1 used only the first 46 bytes;
+ * format 2 adds `reserved` (zero) to reach 64. */
 typedef struct __attribute__((packed)) {
-    char magic[4];         /* "MSF1" */
+    char magic[4];         /* "MSF1" (both formats; format_version tells them apart) */
     uint8_t format_version;
     uint8_t kdf_algo;
     uint8_t kdf_t;
@@ -71,11 +87,43 @@ typedef struct __attribute__((packed)) {
     uint16_t kdf_m_mib;
     uint8_t salt[SALT_LEN];
     uint8_t nonce[NONCE_LEN];
-    uint32_t seq;          /* higher = newer */
+    uint32_t seq;          /* higher = newer, continues across formats */
     uint32_t ct_len;
+    uint8_t reserved[V2_HEADER_LEN - V1_HEADER_LEN];
 } slot_header_t;
+_Static_assert(offsetof(slot_header_t, reserved) == V1_HEADER_LEN, "format 1 header layout");
+_Static_assert(sizeof(slot_header_t) == V2_HEADER_LEN, "format 2 header size");
 
-#define MAX_CT_LEN (SLOT_SIZE - sizeof(slot_header_t) - TAG_LEN)
+/* Largest ciphertext of a format 2 slot (header, tag and 16-byte padding). */
+#define MAX_CT_LEN (V2_SLOT_SIZE - V2_HEADER_LEN - TAG_LEN - 16)
+
+/* Worst-case serialized size of one account (serialize() below): record
+ * header + every field at its maximum + 32 recovery codes. The board's
+ * MSF_STORE_MAX_ACCOUNTS must fit one format 2 slot even when every account
+ * is full (~1.1 KB each: about 490 accounts at most). */
+#define TLV(len) (3 + (len))
+#define RECORD_MAX_LEN                                                                                        \
+    (TLV(0) + TLV(2) + TLV(MSF_NAME_MAX) + TLV(MSF_TOTP_KEY_MAX) + TLV(1) + TLV(1) + TLV(MSF_USER_MAX) +    \
+     TLV(MSF_PASSWORD_MAX) + TLV(MSF_PIN_FIELD_MAX) + TLV(MSF_NOTE_MAX) + TLV(MSF_IDENT_MAX) +              \
+     TLV(MSF_EXTRA_MAX) + TLV(4) +                                                                         \
+     MSF_RCV_MAX * TLV(MSF_RCV_CODE_MAX))
+_Static_assert(5 + (size_t)MSF_STORE_MAX_ACCOUNTS * RECORD_MAX_LEN <= MAX_CT_LEN,
+               "MSF_STORE_MAX_ACCOUNTS too large for a format 2 slot (see store_config.cmake)");
+
+static size_t header_len(int slot)
+{
+    return slot < FIRST_V2_SLOT ? V1_HEADER_LEN : V2_HEADER_LEN;
+}
+
+static size_t slot_size(int slot)
+{
+    return slot < FIRST_V2_SLOT ? V1_SLOT_SIZE : V2_SLOT_SIZE;
+}
+
+static size_t round16(size_t n)
+{
+    return (n + 15) & ~(size_t)15;
+}
 
 typedef struct __attribute__((packed)) {
     char magic[4];         /* "MSFC" */
@@ -88,8 +136,8 @@ typedef struct __attribute__((packed)) {
 static const esp_partition_t *s_part;
 static SemaphoreHandle_t s_lock;
 static msf_store_state_t s_state = MSF_STORE_ERROR;
-static slot_header_t s_hdr[2];
-static bool s_hdr_valid[2];
+static slot_header_t s_hdr[SLOT_COUNT];
+static bool s_hdr_valid[SLOT_COUNT];
 static int s_current = -1;             /* slot holding the newest blob */
 static uint8_t s_key[KEY_LEN];         /* valid while UNLOCKED */
 static uint8_t s_salt[SALT_LEN];
@@ -150,12 +198,17 @@ static void read_control(void)
 static void read_headers(void)
 {
     s_current = -1;
-    for (int i = 0; i < 2; i++) {
-        s_hdr_valid[i] = esp_partition_read(s_part, kSlotOff[i], &s_hdr[i], sizeof(s_hdr[i])) == ESP_OK &&
-                         memcmp(s_hdr[i].magic, "MSF1", 4) == 0 && s_hdr[i].format_version == FORMAT_VERSION &&
-                         s_hdr[i].kdf_algo == KDF_ALGO_ARGON2ID && s_hdr[i].ct_len <= MAX_CT_LEN &&
-                         s_hdr[i].kdf_m_mib >= 1 && s_hdr[i].kdf_m_mib <= 6 && s_hdr[i].kdf_t >= 1;
-        if (s_hdr_valid[i] && (s_current < 0 || s_hdr[i].seq > s_hdr[s_current].seq)) s_current = i;
+    for (int i = 0; i < SLOT_COUNT; i++) {
+        slot_header_t *h = &s_hdr[i];
+        memset(h, 0, sizeof(*h));
+        uint8_t version = i < FIRST_V2_SLOT ? 1 : 2;
+        size_t hlen = header_len(i);
+        s_hdr_valid[i] = esp_partition_read(s_part, kSlotOff[i], h, hlen) == ESP_OK &&
+                         memcmp(h->magic, "MSF1", 4) == 0 && h->format_version == version &&
+                         h->kdf_algo == KDF_ALGO_ARGON2ID &&
+                         h->ct_len <= slot_size(i) - hlen - TAG_LEN &&
+                         h->kdf_m_mib >= 1 && h->kdf_m_mib <= 6 && h->kdf_t >= 1;
+        if (s_hdr_valid[i] && (s_current < 0 || h->seq > s_hdr[s_current].seq)) s_current = i;
     }
 }
 
@@ -196,6 +249,7 @@ enum {
     F_ID = 0x01, F_NAME = 0x02,
     F_TOTP_KEY = 0x10, F_DIGITS = 0x11, F_PERIOD = 0x12,
     F_USER = 0x20, F_PASSWORD = 0x21, F_PIN = 0x22, F_NOTE = 0x23,
+    F_IDENT = 0x24, F_EXTRA = 0x25,   /* 2026-10-13: older firmware skips them */
     F_RCV_MASK = 0x40, F_RCV_CODE = 0x41,
 };
 
@@ -250,6 +304,8 @@ static size_t serialize(const msf_account_t *recs, int count, uint8_t *buf, size
         put_str(&w, F_PASSWORD, a->password);
         put_str(&w, F_PIN, a->pin);
         put_str(&w, F_NOTE, a->note);
+        put_str(&w, F_IDENT, a->ident);
+        put_str(&w, F_EXTRA, a->extra);
         if (a->rcv_count) {
             put_tlv(&w, F_RCV_MASK, &a->rcv_used_mask, 4);
             for (int c = 0; c < a->rcv_count && c < MSF_RCV_MAX; c++) put_str(&w, F_RCV_CODE, a->rcv_codes[c]);
@@ -302,6 +358,8 @@ static int deserialize(const uint8_t *buf, size_t len, msf_account_t *out, int m
                 case F_PASSWORD: get_str(a->password, sizeof(a->password), v, fl); break;
                 case F_PIN: get_str(a->pin, sizeof(a->pin), v, fl); break;
                 case F_NOTE: get_str(a->note, sizeof(a->note), v, fl); break;
+                case F_IDENT: get_str(a->ident, sizeof(a->ident), v, fl); break;
+                case F_EXTRA: get_str(a->extra, sizeof(a->extra), v, fl); break;
                 case F_RCV_MASK: if (fl == 4) memcpy(&a->rcv_used_mask, v, 4); break;
                 case F_RCV_CODE:
                     if (a->rcv_count < MSF_RCV_MAX) {
@@ -321,11 +379,13 @@ static int deserialize(const uint8_t *buf, size_t len, msf_account_t *out, int m
 
 /* ---- blob write / read -------------------------------------------------- */
 
-/* Encrypts the records with s_key into the slot that is not current. */
+/* Encrypts the records with s_key into the format 2 slot that is not
+ * current; after a migration from format 1, erases the format 1 slots. */
 static esp_err_t write_blob(const msf_account_t *recs, int count)
 {
     uint8_t *plain = heap_caps_malloc(MAX_CT_LEN, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    uint8_t *cipher = heap_caps_malloc(MAX_CT_LEN + TAG_LEN, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    /* ciphertext | tag | zero padding to a 16-byte multiple */
+    uint8_t *cipher = heap_caps_calloc(1, round16(MAX_CT_LEN + TAG_LEN), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     esp_err_t err = ESP_ERR_NO_MEM;
     if (!plain || !cipher) goto out;
 
@@ -333,7 +393,8 @@ static esp_err_t write_blob(const msf_account_t *recs, int count)
     err = ESP_ERR_INVALID_SIZE;
     if (len == 0) goto out;
 
-    int slot = (s_current < 0) ? 0 : 1 - s_current;
+    bool migrating = s_current < FIRST_V2_SLOT;   /* none yet, or a format 1 store */
+    int slot = migrating ? FIRST_V2_SLOT : (s_current == FIRST_V2_SLOT ? FIRST_V2_SLOT + 1 : FIRST_V2_SLOT);
     uint32_t seq = (s_current < 0) ? 1 : s_hdr[s_current].seq + 1;
     slot_header_t h = {.magic = {'M', 'S', 'F', '1'}, .format_version = FORMAT_VERSION,
                        .kdf_algo = KDF_ALGO_ARGON2ID, .kdf_t = s_kdf_t, .kdf_p = KDF_P,
@@ -353,10 +414,10 @@ static esp_err_t write_blob(const msf_account_t *recs, int count)
     err = ESP_FAIL;
     if (rc != 0) goto out;
 
-    size_t total = sizeof(h) + len + TAG_LEN;
-    size_t erase = (total + 0xFFF) & ~(size_t)0xFFF;
+    size_t body = round16(len + TAG_LEN);           /* 16-byte multiple, at a 16-byte aligned offset */
+    size_t erase = (sizeof(h) + body + 0xFFF) & ~(size_t)0xFFF;
     err = esp_partition_erase_range(s_part, kSlotOff[slot], erase);
-    if (err == ESP_OK) err = esp_partition_write(s_part, kSlotOff[slot] + sizeof(h), cipher, len + TAG_LEN);
+    if (err == ESP_OK) err = esp_partition_write(s_part, kSlotOff[slot] + sizeof(h), cipher, body);
     if (err == ESP_OK) err = esp_partition_write(s_part, kSlotOff[slot], &h, sizeof(h));   /* last */
     if (err == ESP_OK) {
         s_hdr[slot] = h;
@@ -364,6 +425,14 @@ static esp_err_t write_blob(const msf_account_t *recs, int count)
         s_current = slot;
         ESP_LOGI(TAG, "saved %d account(s), %u bytes, slot %d, seq %lu", count, (unsigned)len, slot,
                  (unsigned long)seq);
+        if (migrating && (s_hdr_valid[0] || s_hdr_valid[1])) {
+            /* The format 2 copy is safely written: the format 1 slots (the
+             * same data, or older versions) go away. */
+            if (esp_partition_erase_range(s_part, kSlotOff[0], kSlotOff[1] + V1_SLOT_SIZE - kSlotOff[0]) == ESP_OK) {
+                s_hdr_valid[0] = s_hdr_valid[1] = false;
+                ESP_LOGI(TAG, "store migrated to format 2 (up to %d accounts)", MSF_STORE_MAX_ACCOUNTS);
+            }
+        }
     }
 
 out:
@@ -375,20 +444,22 @@ out:
     return err;
 }
 
-/* Decrypts slot `slot` with `key`. Returns the record count, -1 on failure. */
+/* Decrypts slot `slot` (either format) with `key`. Returns the record count,
+ * -1 on failure. */
 static int read_blob(int slot, const uint8_t key[KEY_LEN], msf_account_t *out, int max)
 {
     const slot_header_t *h = &s_hdr[slot];
+    size_t hlen = header_len(slot);
     uint8_t *cipher = heap_caps_malloc(h->ct_len + TAG_LEN, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     uint8_t *plain = heap_caps_malloc(h->ct_len ? h->ct_len : 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     int n = -1;
     if (cipher && plain &&
-        esp_partition_read(s_part, kSlotOff[slot] + sizeof(*h), cipher, h->ct_len + TAG_LEN) == ESP_OK) {
+        esp_partition_read(s_part, kSlotOff[slot] + hlen, cipher, h->ct_len + TAG_LEN) == ESP_OK) {
         mbedtls_gcm_context gcm;
         mbedtls_gcm_init(&gcm);
         int rc = mbedtls_gcm_setkey(&gcm, MBEDTLS_CIPHER_ID_AES, key, KEY_LEN * 8);
         if (rc == 0) {
-            rc = mbedtls_gcm_auth_decrypt(&gcm, h->ct_len, h->nonce, NONCE_LEN, (const uint8_t *)h, sizeof(*h),
+            rc = mbedtls_gcm_auth_decrypt(&gcm, h->ct_len, h->nonce, NONCE_LEN, (const uint8_t *)h, hlen,
                                           cipher + h->ct_len, TAG_LEN, cipher, plain);
         }
         mbedtls_gcm_free(&gcm);
@@ -408,7 +479,7 @@ esp_err_t msf_store_init(void)
 {
     if (!s_lock) s_lock = xSemaphoreCreateMutex();
     s_part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "secrets");
-    if (!s_part || s_part->size < kSlotOff[1] + SLOT_SIZE) {
+    if (!s_part || s_part->size < STORE_END) {
         ESP_LOGE(TAG, "partition 'secrets' missing or too small");
         s_state = MSF_STORE_ERROR;
         return ESP_ERR_NOT_FOUND;
@@ -462,14 +533,24 @@ esp_err_t msf_store_unlock(const char *pin, msf_account_t *out, int max, int *co
     err = write_control(s_fail_count + 1);
     if (err != ESP_OK) goto done;
 
-    /* Newest slot first; the older one if the newest does not decrypt. */
-    int order[2] = {s_current, 1 - s_current};
+    /* Newest slot first, then the older ones (either format) if the newest
+     * does not decrypt. */
+    int order[SLOT_COUNT];
+    int slots = 0;
+    for (int i = 0; i < SLOT_COUNT; i++) {
+        if (!s_hdr_valid[i]) continue;
+        int at = slots++;
+        while (at > 0 && s_hdr[order[at - 1]].seq < s_hdr[i].seq) {
+            order[at] = order[at - 1];
+            at--;
+        }
+        order[at] = i;
+    }
     uint8_t key[KEY_LEN];
     bool have_key = false;
     const slot_header_t *keyed = NULL;
-    for (int k = 0; k < 2; k++) {
+    for (int k = 0; k < slots; k++) {
         int slot = order[k];
-        if (slot < 0 || !s_hdr_valid[slot]) continue;
         const slot_header_t *h = &s_hdr[slot];
         bool same = keyed && memcmp(keyed->salt, h->salt, SALT_LEN) == 0 && keyed->kdf_m_mib == h->kdf_m_mib &&
                     keyed->kdf_t == h->kdf_t;
@@ -571,7 +652,7 @@ esp_err_t msf_store_rescue_image(uint8_t **image_out, size_t *len_out)
     lock();
     esp_err_t err = ESP_ERR_INVALID_STATE;
     if (s_state == MSF_STORE_UNLOCKED && s_current >= 0) {
-        size_t len = sizeof(slot_header_t) + s_hdr[s_current].ct_len + TAG_LEN;
+        size_t len = header_len(s_current) + s_hdr[s_current].ct_len + TAG_LEN;
         uint8_t *img = heap_caps_malloc(len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         err = ESP_ERR_NO_MEM;
         if (img) {
@@ -614,7 +695,7 @@ esp_err_t msf_store_erase(void)
     if (!s_part) return ESP_ERR_INVALID_STATE;
     lock();
     crypto_wipe(s_key, KEY_LEN);
-    esp_err_t err = esp_partition_erase_range(s_part, 0, kSlotOff[1] + SLOT_SIZE);
+    esp_err_t err = esp_partition_erase_range(s_part, 0, STORE_END);
     if (err == ESP_OK) {
         s_fail_count = 0;
         read_headers();

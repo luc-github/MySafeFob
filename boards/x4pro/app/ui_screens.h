@@ -43,7 +43,7 @@
 
 enum class Screen { Home, Settings, SettingsControls, SettingsAbout, SettingsDisplay, TouchDiag, Time, Alerts, OwnerInfo,
                     SettingsDevice, SettingsSecurity, Names, Account, AccountEdit,
-                    FieldEdit, RecoveryView, RecoveryEdit, Pin, Backup, BackupPass, BackupFiles, BackupImport,
+                    FieldEdit, RecoveryView, Pin, Backup, BackupPass, BackupFiles, BackupImport,
                     kCount };
 
 /**
@@ -130,7 +130,10 @@ void sd_check_on_unlock(void);
 void sd_check_poll(void);
 
 lv_obj_t *build_recovery_view(lv_group_t **group_out, lv_obj_t **battery_label_out);
-lv_obj_t *build_recovery_edit(lv_group_t **group_out, lv_obj_t **battery_label_out);
+/** @brief EDIT's Recovery tab (ui_screen_recovery.cpp), built into `parent` placed at screen y `parent_y`. */
+void recovery_edit_tab_build(lv_obj_t *parent, int32_t parent_y, lv_group_t *group);
+/** @brief Refreshes the tab from EDIT's draft (when the tab is shown). */
+void recovery_edit_tab_show(void);
 
 /** @brief Opens the recovery code list of account `id`, mark-used view (ui_screen_recovery.cpp). */
 void recovery_open(uint16_t id);

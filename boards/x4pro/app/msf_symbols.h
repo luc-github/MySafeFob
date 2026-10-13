@@ -36,6 +36,7 @@
 #define MSF_SYMBOL_INFO          "\xEF\x81\x9A"   /* U+F05A info-circle: About */
 #define MSF_SYMBOL_CROSSHAIRS    "\xEF\x81\x9B"   /* U+F05B crosshairs: touch calibration */
 #define MSF_SYMBOL_KEY           "\xEF\x82\x84"   /* U+F084 key: Security, PIN change, password */
+#define MSF_SYMBOL_PAPERCLIP     "\xEF\x83\x86"   /* U+F0C6 paperclip: account Extra field */
 #define MSF_SYMBOL_SQUARE        "\xEF\x83\x88"   /* U+F0C8 square (regular, outline): unchecked box */
 #define MSF_SYMBOL_LIGHTBULB     "\xEF\x83\xAB"   /* U+F0EB lightbulb: Display, frontlight */
 #define MSF_SYMBOL_SMILE         "\xEF\x84\x98"   /* U+F118 smile: symbol keypad 2 */
@@ -54,8 +55,10 @@
 #define MSF_SYMBOL_UNLOCK        "\xEF\x8F\x81"   /* U+F3C1 lock-open */
 #define MSF_SYMBOL_MOBILE        "\xEF\x8F\x8D"   /* U+F3CD mobile-alt: Device */
 #define MSF_SYMBOL_BACK          "\xEF\x8F\xA5"   /* U+F3E5 reply: Back (not NEW_LINE, the keyboard's Enter) */
+#define MSF_SYMBOL_SHIELD        "\xEF\x8F\xAD"   /* U+F3ED shield-alt: account Security tab */
 #define MSF_SYMBOL_CHESS_PAWN    "\xEF\x91\x83"   /* U+F443 chess-pawn: symbol keypad 9 */
 #define MSF_SYMBOL_USER_EDIT     "\xEF\x93\xBF"   /* U+F4FF user-edit: owner info */
 #define MSF_SYMBOL_CROWN         "\xEF\x94\xA1"   /* U+F521 crown: symbol keypad 5 */
 #define MSF_SYMBOL_FILE_EXPORT   "\xEF\x95\xAE"   /* U+F56E file-export: SD export */
 #define MSF_SYMBOL_FILE_IMPORT   "\xEF\x95\xAF"   /* U+F56F file-import: SD import */
+#define MSF_SYMBOL_FINGERPRINT   "\xEF\x95\xB7"   /* U+F577 fingerprint: account ID field */

@@ -23,10 +23,13 @@
  *
  *        EDIT works on a copy (s_draft) of the record: nothing is written
  *        until Save (header, top right); Back with unsaved changes asks
- *        "Discard changes?" (P6 confirmation). Seven field rows (Name,
- *        Login, Password, PIN, Note, TOTP, Recovery) at fixed y placed with
- *        touch_safe_y(): 4 above the X4 Pro touch band, 3 below, status
- *        line in the gap.
+ *        "Discard changes?" (P6 confirmation). Three tabs (2026-10-13 user
+ *        request): Info (Name, ID, Note, Extra), Security (Login, Password,
+ *        PIN, TOTP) and Recovery (the code list, ui_screen_recovery.cpp,
+ *        was a separate screen). Field rows at fixed y placed with
+ *        touch_safe_y(): 3 above the X4 Pro touch band, 1 below, status
+ *        line in the gap. Each tab's content sits in its own full-width
+ *        container, shown / hidden as a whole.
  *
  *        FIELD edits one field of the draft with the right keyboard (P7):
  *        full for Name/Login/Password/Note, numeric for the PIN, Base32 for
@@ -36,14 +39,15 @@
  *        field, Back leaves the draft unchanged. Both screens show secrets:
  *        F-05 auto-clear (ui_auto_clear_attach()).
  *
- *        Recovery opens the code list editor (ui_screen_recovery.cpp),
- *        which works on the same draft through account_edit_draft(); FIELD
- *        also enters a new recovery code (account_edit_new_rcv_code()).
+ *        The Recovery tab works on the same draft through
+ *        account_edit_draft(); FIELD also enters a new recovery code
+ *        (account_edit_new_rcv_code()) and comes back to that tab.
  */
 #include "ui_screens.h"
 #include "ui_widgets.h"
 #include "msf_symbols.h"
 #include "ui_keyboard.h"
+#include "hw_config.h"
 #include "lv_port_disp.h"
 #include "lv_port_indev.h"
 
@@ -62,15 +66,20 @@ static const char *TAG = "account_edit";
 
 /* ---- Shared state ------------------------------------------------------- */
 
-enum Field { kName, kLogin, kPassword, kPin, kNote, kTotp, kRecovery, kFieldCount, kRcvCode = kFieldCount };
+/* Tab order: Info (kName..kExtra), then Security (kLogin..kTotp). */
+enum Field { kName, kIdent, kNote, kExtra, kLogin, kPassword, kPin, kTotp, kFieldCount, kRcvCode = kFieldCount };
+static constexpr int kTabInfo = 0, kTabSecurity = 1, kTabRecovery = 2, kTabCount = 3;
+static constexpr int kRowsPerTab = 4;
 
 static const char *const kFieldText[kFieldCount] = {
-    MSF_SYMBOL_ID_CARD " Name", MSF_SYMBOL_USER " Login", MSF_SYMBOL_KEY " Password", MSF_SYMBOL_HASHTAG " PIN",
-    MSF_SYMBOL_NOTE " Note", MSF_SYMBOL_CLOCK " TOTP", MSF_SYMBOL_LIFE_RING " Recovery"};
+    MSF_SYMBOL_ID_CARD " Name",     MSF_SYMBOL_FINGERPRINT " ID", MSF_SYMBOL_NOTE " Note",
+    MSF_SYMBOL_PAPERCLIP " Extra",  MSF_SYMBOL_USER " Login",     MSF_SYMBOL_KEY " Password",
+    MSF_SYMBOL_HASHTAG " PIN",      MSF_SYMBOL_CLOCK " TOTP"};
 
 static account_t s_draft;
 static uint16_t s_edit_id;        /* 0 = adding a new account */
 static bool s_dirty;
+static int s_tab = kTabInfo;      /* kept while FIELD is open, so it comes back to it */
 static Screen s_return_screen;    /* where Back / Discard goes */
 static char s_return_letter;      /* NAMES letter to return to */
 
@@ -94,6 +103,7 @@ void account_edit_open(uint16_t id)
     if (!accounts_get(id, &s_draft)) return;
     s_edit_id = id;
     s_dirty = false;
+    s_tab = kTabInfo;
     switch_screen(Screen::AccountEdit);
 }
 
@@ -103,6 +113,7 @@ void account_edit_open_new(char letter)
     if (letter >= 'A' && letter <= 'Z') s_draft.name[0] = letter;   /* prefill, '#' left empty */
     s_edit_id = 0;
     s_dirty = false;
+    s_tab = kTabInfo;
     s_return_screen = letter ? Screen::Names : Screen::Home;
     s_return_letter = letter;
     switch_screen(Screen::AccountEdit);
@@ -113,10 +124,12 @@ static char *field_buffer(Field f, size_t *max_len)
 {
     switch (f) {
     case kName: *max_len = ACCOUNTS_NAME_MAX; return s_draft.name;
+    case kIdent: *max_len = ACCOUNTS_IDENT_MAX; return s_draft.ident;
+    case kNote: *max_len = ACCOUNTS_NOTE_MAX; return s_draft.note;
+    case kExtra: *max_len = ACCOUNTS_EXTRA_MAX; return s_draft.extra;
     case kLogin: *max_len = ACCOUNTS_USER_MAX; return s_draft.username;
     case kPassword: *max_len = ACCOUNTS_PASSWORD_MAX; return s_draft.password;
     case kPin: *max_len = ACCOUNTS_PIN_MAX; return s_draft.pin;
-    case kNote: *max_len = ACCOUNTS_NOTE_MAX; return s_draft.note;
     case kTotp: *max_len = ACCOUNTS_TOTP_KEY_MAX; return s_draft.totp_key;
     case kRcvCode: *max_len = ACCOUNTS_RCV_CODE_MAX; return s_new_code;
     default: *max_len = 0; return nullptr;
@@ -125,13 +138,17 @@ static char *field_buffer(Field f, size_t *max_len)
 
 /* ---- EDIT screen -------------------------------------------------------- */
 
-static constexpr int32_t kRowTop = 178;
+static constexpr int32_t kTabsY = 160;        /* below Back / Save */
+static constexpr int32_t kContentY = 226;     /* tab containers start here */
+static constexpr int32_t kRowTop = 240;
 static constexpr int32_t kRowH = kMinTouchTarget;
 static constexpr int32_t kRowGap = 28;
 
 static lv_obj_t *s_title;
 static lv_obj_t *s_values[kFieldCount];
 static lv_obj_t *s_status;
+static lv_obj_t *s_tab_cont[kTabCount];
+static ui_tabs_t s_tabs;
 
 static void masked(char *buf, size_t size, const char *secret)
 {
@@ -145,23 +162,44 @@ static void masked(char *buf, size_t size, const char *secret)
     buf[n] = '\0';
 }
 
+static void show_text(Field f, const char *value)
+{
+    lv_label_set_text(s_values[f], value[0] ? value : "(none)");
+}
+
 static void show_rows(void)
 {
     char buf[64];
-    lv_label_set_text(s_values[kName], s_draft.name[0] ? s_draft.name : "(none)");
-    lv_label_set_text(s_values[kLogin], s_draft.username[0] ? s_draft.username : "(none)");
+    show_text(kName, s_draft.name);
+    show_text(kIdent, s_draft.ident);
+    show_text(kNote, s_draft.note);
+    show_text(kExtra, s_draft.extra);
+    show_text(kLogin, s_draft.username);
     masked(buf, sizeof(buf), s_draft.password);
     lv_label_set_text(s_values[kPassword], buf);
     masked(buf, sizeof(buf), s_draft.pin);
     lv_label_set_text(s_values[kPin], buf);
-    lv_label_set_text(s_values[kNote], s_draft.note[0] ? s_draft.note : "(none)");
     if (s_draft.totp_key[0]) snprintf(buf, sizeof(buf), "%u digits / %u s", s_draft.digits, s_draft.period);
     else snprintf(buf, sizeof(buf), "(none)");
     lv_label_set_text(s_values[kTotp], buf);
-    if (s_draft.rcv_count) snprintf(buf, sizeof(buf), "%u codes", s_draft.rcv_count);
-    else snprintf(buf, sizeof(buf), "(none)");
-    lv_label_set_text(s_values[kRecovery], buf);
     lv_label_set_text(s_title, s_edit_id ? LV_SYMBOL_EDIT " Edit" : LV_SYMBOL_PLUS " Add");
+}
+
+static void show_tab(void)
+{
+    for (int t = 0; t < kTabCount; t++) {
+        if (t == s_tab) lv_obj_remove_flag(s_tab_cont[t], LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(s_tab_cont[t], LV_OBJ_FLAG_HIDDEN);
+    }
+    ui_tabs_set_active(&s_tabs, s_tab);
+    if (s_tab == kTabRecovery) recovery_edit_tab_show();
+}
+
+static void tab_selected(int index)
+{
+    s_tab = index;
+    lv_label_set_text(s_status, "");
+    show_tab();
 }
 
 static void field_open(Field f);
@@ -184,12 +222,7 @@ void account_edit_new_rcv_code(void)
 
 static void row_deferred(void *user_data)
 {
-    Field f = static_cast<Field>(reinterpret_cast<intptr_t>(user_data));
-    if (f == kRecovery) {
-        switch_screen(Screen::RecoveryEdit);
-        return;
-    }
-    field_open(f);
+    field_open(static_cast<Field>(reinterpret_cast<intptr_t>(user_data)));
 }
 
 static void row_cb(lv_event_t *e)
@@ -241,6 +274,20 @@ static void edit_loaded_cb(lv_event_t *)
 {
     lv_label_set_text(s_status, "");
     show_rows();
+    show_tab();
+}
+
+/* A tab's content: the full width below the tabs, not clickable itself,
+ * children placed in screen coordinates minus kContentY. */
+static lv_obj_t *make_tab_container(lv_obj_t *screen)
+{
+    lv_obj_t *cont = lv_obj_create(screen);
+    lv_obj_remove_style_all(cont);
+    lv_obj_set_size(cont, SCREEN_WIDTH, SCREEN_HEIGHT - kContentY);
+    lv_obj_set_pos(cont, 0, kContentY);
+    lv_obj_remove_flag(cont, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
+    return cont;
 }
 
 lv_obj_t *build_account_edit(lv_group_t **group_out, lv_obj_t **battery_label_out)
@@ -257,14 +304,24 @@ lv_obj_t *build_account_edit(lv_group_t **group_out, lv_obj_t **battery_label_ou
     lv_obj_align(save, LV_ALIGN_TOP_RIGHT, -16, kBackTopMargin);
     lv_obj_add_event_cb(save, save_cb, LV_EVENT_CLICKED, nullptr);
 
-    int32_t y = kRowTop;
+    static const char *const kTabText[kTabCount] = {MSF_SYMBOL_INFO " Info", MSF_SYMBOL_SHIELD " Security",
+                                                    MSF_SYMBOL_LIFE_RING " Recovery"};
+    ui_tabs_build(&s_tabs, screen, group, kTabText, kTabCount, kTabsY, tab_selected);
+
+    for (int t = 0; t < kTabCount; t++) s_tab_cont[t] = make_tab_container(screen);
+
     for (int f = 0; f < kFieldCount; f++) {
-        y = touch_safe_y(y, kRowH);
-        lv_obj_t *row = make_button(screen, "");
+        lv_obj_t *cont = s_tab_cont[f < kRowsPerTab ? kTabInfo : kTabSecurity];
+        int32_t y = kRowTop;
+        for (int k = 0; k <= f % kRowsPerTab; k++) {   /* same y sequence in each tab */
+            y = touch_safe_y(y, kRowH);
+            if (k < f % kRowsPerTab) y += kRowH + kRowGap;
+        }
+        lv_obj_t *row = make_button(cont, "");
         lv_obj_set_style_min_width(row, 0, 0);
-        lv_obj_set_size(row, LV_PCT(90), kRowH);
+        lv_obj_set_size(row, 432, kRowH);   /* 90 % of the screen */
         lv_obj_set_ext_click_area(row, 0);
-        lv_obj_align(row, LV_ALIGN_TOP_MID, 0, y);
+        lv_obj_align(row, LV_ALIGN_TOP_MID, 0, y - kContentY);
         lv_obj_add_event_cb(row, row_cb, LV_EVENT_CLICKED, reinterpret_cast<void *>(static_cast<intptr_t>(f)));
         add_to_group(row, group);
         lv_obj_t *name = lv_obj_get_child(row, 0);
@@ -277,9 +334,9 @@ lv_obj_t *build_account_edit(lv_group_t **group_out, lv_obj_t **battery_label_ou
         lv_obj_t *arrow = lv_label_create(row);
         lv_label_set_text(arrow, LV_SYMBOL_RIGHT);
         lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -12, 0);
-        y += kRowH + kRowGap;
     }
-    add_to_group(save, group);   /* after the rows: Back, fields, Save */
+    recovery_edit_tab_build(s_tab_cont[kTabRecovery], kContentY, group);
+    add_to_group(save, group);   /* last: Back, tabs, the active tab's rows, Save */
 
     s_status = lv_label_create(screen);
     lv_label_set_text(s_status, "");
@@ -408,7 +465,7 @@ static void kb_enter(void *)
             return;
         }
         s_dirty = true;
-        switch_screen(Screen::RecoveryEdit);
+        switch_screen(Screen::AccountEdit);   /* back on the Recovery tab (s_tab) */
         return;
     }
     if (s_field == kTotp && s_text_len > 0 && !accounts_totp_key_valid(s_text)) {
@@ -469,7 +526,7 @@ static void option_cb(lv_event_t *e)
 static void field_back_deferred(void *)
 {
     /* Draft unchanged. */
-    switch_screen(s_field == kRcvCode ? Screen::RecoveryEdit : Screen::AccountEdit);
+    switch_screen(Screen::AccountEdit);   /* the tab it came from is kept (s_tab) */
 }
 
 static void field_back_cb(lv_event_t *)

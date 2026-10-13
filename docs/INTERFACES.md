@@ -32,6 +32,17 @@ not enabled in v1 — the barrier is application-level encryption).
 >   then ciphertext[ct_len] | tag[16]. Nonce = 8 random bytes + seq (unique
 >   per write). Salt from the hardware RNG with its entropy source enabled;
 >   a new salt (and key) on PIN change, which writes both slots.
+> - **Format 2 (2026-10-12)**, up to 250 accounts: two 512 KiB slots at
+>   **0x100000** and **0x180000**; header = the same fields with
+>   format_version=2, padded with zeros to **64 bytes** (all 64 bytes are
+>   the AAD); ciphertext | tag written at +64, rounded up to a 16-byte
+>   multiple (flash-encryption ready). Saves always go to a format 2 slot;
+>   the format 1 slots above are only read (an older store) and are erased
+>   once its first format 2 save succeeded. Unlock tries every valid slot,
+>   newest `seq` first.
+> - **Account fields added 2026-10-13** (no format change: older firmware
+>   skips unknown tags): `0x24` ID (customer / account number, e-mail…,
+>   64 B), `0x25` Extra (one free line, 64 B). PC JSON keys `id`, `extra`.
 > - **PIN failures** (§1.3): counter incremented *before* each check and
 >   reset on success; attempts 1-2 free, then 10 s, 30 s, 2 min, 10 min,
 >   then 1 h between attempts, counted from the last failure (or from boot
@@ -225,7 +236,8 @@ tag 16B
   2026-10-11): one format, one passphrase.
 
 **Factory rescue copy** (`docs/FACTORY.md` §5.3b): `/MSF/RESCUEnn.MSR` =
-the newest store slot exactly as on flash (§1.1 slot header, 46 bytes,
+the newest store slot exactly as on flash (§1.1 slot header, 46 bytes in
+format 1, 64 in format 2,
 as GCM AAD | ciphertext | tag), written by the factory after the device
 PIN; `msf_backup.py decrypt` recognizes the `MSF1` magic and asks the PIN.
 

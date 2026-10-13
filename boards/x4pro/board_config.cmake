@@ -5,6 +5,9 @@
 
 set(IDF_TARGET "esp32s3")
 
+# Account store sizing (MSF_STORE_MAX_ACCOUNTS), shared with the factory.
+include(${CMAKE_CURRENT_LIST_DIR}/store_config.cmake)
+
 set(SDKCONFIG_DEFAULTS
     "${CMAKE_CURRENT_SOURCE_DIR}/sdkconfig.defaults"
     "${CMAKE_CURRENT_SOURCE_DIR}/boards/x4pro/sdkconfig.defaults")

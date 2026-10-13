@@ -24,13 +24,15 @@
  *        struck through but kept visible (traceability); tapping an unused
  *        code marks it used, behind a confirmation (irreversible).
  *
- *        RECOVERY EDIT (from EDIT, on the same draft, nothing written until
- *        EDIT's Save): tap a code to remove it (confirmation), "+ Add" types
- *        a new code (FIELD, full keyboard), "Clear all" (confirmation).
+ *        EDIT's Recovery tab (2026-10-13, was a separate RECOVERY EDIT
+ *        screen; works on EDIT's draft, nothing written until EDIT's Save):
+ *        tap a code to remove it (confirmation), "+ Add" types a new code
+ *        (FIELD, full keyboard), "Clear all" (confirmation).
  *
- *        Both share one paginated list (no scrolling): 6 rows placed with
- *        touch_safe_y() (4 above the X4 Pro touch band, 2 below), status
- *        line in the gap, < > and the page number at the bottom.
+ *        Both use one paginated list (no scrolling): rows placed with
+ *        touch_safe_y() (X4 Pro touch band), status line in the band's gap,
+ *        < > and the page number below. RECOVERY: 6 rows from y 178; the
+ *        tab: 4 rows from y 240, inside EDIT's tab container.
  */
 #include "ui_screens.h"
 #include "ui_widgets.h"
@@ -50,7 +52,7 @@ extern "C" {
 
 static const char *TAG = "recovery";
 
-static constexpr int kRowsPerPage = 6;
+static constexpr int kRowsPerPage = 6;   /* most rows a list can have */
 static constexpr int32_t kRowTop = 178;
 static constexpr int32_t kRowH = kMinTouchTarget;
 static constexpr int32_t kRowGap = 28;
@@ -58,10 +60,11 @@ static constexpr int32_t kPagerY = 720;
 static constexpr int32_t kArrowW = 72;
 static constexpr int32_t kSideMargin = 24;
 
-/* One paginated code list (one per screen). */
+/* One paginated code list. */
 struct CodeList {
     const account_t *(*source)(void);   /* the record to show */
     void (*on_row)(int index);          /* code index tapped */
+    int rows_per_page;                  /* <= kRowsPerPage */
     int page;
     lv_obj_t *rows[kRowsPerPage];
     lv_obj_t *row_labels[kRowsPerPage];
@@ -78,11 +81,12 @@ static void list_show(CodeList *list)
 {
     const account_t *a = list->source();
     int count = a->rcv_count;
-    int pages = count == 0 ? 1 : (count + kRowsPerPage - 1) / kRowsPerPage;
+    int per_page = list->rows_per_page;
+    int pages = count == 0 ? 1 : (count + per_page - 1) / per_page;
     if (list->page >= pages) list->page = pages - 1;
     if (list->page < 0) list->page = 0;
-    for (int slot = 0; slot < kRowsPerPage; slot++) {
-        int index = list->page * kRowsPerPage + slot;
+    for (int slot = 0; slot < per_page; slot++) {
+        int index = list->page * per_page + slot;
         bool shown = index < count;
         set_hidden(list->rows[slot], !shown);
         if (!shown) continue;
@@ -110,7 +114,7 @@ struct RowRef {
 static void row_deferred(void *user_data)
 {
     const RowRef *ref = static_cast<const RowRef *>(user_data);
-    int index = ref->list->page * kRowsPerPage + ref->slot;
+    int index = ref->list->page * ref->list->rows_per_page + ref->slot;
     if (index < ref->list->source()->rcv_count) ref->list->on_row(index);
 }
 
@@ -138,9 +142,9 @@ static void page_cb(lv_event_t *e)
     ui_defer(page_deferred, lv_event_get_user_data(e));
 }
 
-static lv_obj_t *make_fixed_button(lv_obj_t *screen, lv_group_t *group, const char *text, int32_t w)
+static lv_obj_t *make_fixed_button(lv_obj_t *parent, lv_group_t *group, const char *text, int32_t w)
 {
-    lv_obj_t *btn = make_button(screen, text);
+    lv_obj_t *btn = make_button(parent, text);
     lv_obj_set_style_min_width(btn, 0, 0);
     lv_obj_set_size(btn, w, kRowH);
     lv_obj_set_ext_click_area(btn, 0);
@@ -148,19 +152,23 @@ static lv_obj_t *make_fixed_button(lv_obj_t *screen, lv_group_t *group, const ch
     return btn;
 }
 
-/* Rows, status line, pager (the right part of the pager row stays free). */
-static void list_build(CodeList *list, lv_obj_t *screen, lv_group_t *group, const char *empty_text)
+/* Rows, status line, pager (the right part of the pager row stays free).
+ * `top` and `pager_y` are screen coordinates (the touch band is placed in
+ * screen coordinates); `parent_y` is the parent's own y on the screen. */
+static void list_build(CodeList *list, lv_obj_t *parent, int32_t parent_y, lv_group_t *group, const char *empty_text,
+                       int32_t top, int rows, int32_t pager_y)
 {
     static RowRef row_refs[2][kRowsPerPage];
     static PageRef page_refs[2][2];
     static int used = 0;
     int k = used++;
 
-    int32_t y = kRowTop;
-    for (int slot = 0; slot < kRowsPerPage; slot++) {
+    list->rows_per_page = rows;
+    int32_t y = top;
+    for (int slot = 0; slot < rows; slot++) {
         y = touch_safe_y(y, kRowH);
-        lv_obj_t *row = make_fixed_button(screen, group, "", LV_PCT(90));
-        lv_obj_align(row, LV_ALIGN_TOP_MID, 0, y);
+        lv_obj_t *row = make_fixed_button(parent, group, "", 432);   /* 90 % of the screen */
+        lv_obj_align(row, LV_ALIGN_TOP_MID, 0, y - parent_y);
         row_refs[k][slot] = {list, slot};
         lv_obj_add_event_cb(row, row_cb, LV_EVENT_CLICKED, &row_refs[k][slot]);
         lv_obj_t *label = lv_obj_get_child(row, 0);
@@ -170,23 +178,23 @@ static void list_build(CodeList *list, lv_obj_t *screen, lv_group_t *group, cons
         y += kRowH + kRowGap;
     }
 
-    list->status = lv_label_create(screen);
+    list->status = lv_label_create(parent);
     lv_label_set_text(list->status, "");
-    lv_obj_align(list->status, LV_ALIGN_TOP_MID, 0, kTouchBandTop + 10);
+    lv_obj_align(list->status, LV_ALIGN_TOP_MID, 0, kTouchBandTop + 10 - parent_y);
 
-    list->empty_label = lv_label_create(screen);
+    list->empty_label = lv_label_create(parent);
     lv_label_set_text(list->empty_label, empty_text);
-    lv_obj_align(list->empty_label, LV_ALIGN_TOP_MID, 0, kRowTop + kRowH);
+    lv_obj_align(list->empty_label, LV_ALIGN_TOP_MID, 0, top + kRowH - parent_y);
 
     page_refs[k][0] = {list, -1};
     page_refs[k][1] = {list, +1};
-    list->prev = make_fixed_button(screen, group, LV_SYMBOL_LEFT, kArrowW);
-    lv_obj_align(list->prev, LV_ALIGN_TOP_LEFT, kSideMargin, kPagerY);
+    list->prev = make_fixed_button(parent, group, LV_SYMBOL_LEFT, kArrowW);
+    lv_obj_align(list->prev, LV_ALIGN_TOP_LEFT, kSideMargin, pager_y - parent_y);
     lv_obj_add_event_cb(list->prev, page_cb, LV_EVENT_CLICKED, &page_refs[k][0]);
-    list->page_label = lv_label_create(screen);
-    lv_obj_align(list->page_label, LV_ALIGN_TOP_LEFT, kSideMargin + kArrowW + 16, kPagerY + 14);
-    list->next = make_fixed_button(screen, group, LV_SYMBOL_RIGHT, kArrowW);
-    lv_obj_align(list->next, LV_ALIGN_TOP_LEFT, kSideMargin + kArrowW + 96, kPagerY);
+    list->page_label = lv_label_create(parent);
+    lv_obj_align(list->page_label, LV_ALIGN_TOP_LEFT, kSideMargin + kArrowW + 16, pager_y + 14 - parent_y);
+    list->next = make_fixed_button(parent, group, LV_SYMBOL_RIGHT, kArrowW);
+    lv_obj_align(list->next, LV_ALIGN_TOP_LEFT, kSideMargin + kArrowW + 96, pager_y - parent_y);
     lv_obj_add_event_cb(list->next, page_cb, LV_EVENT_CLICKED, &page_refs[k][1]);
 }
 
@@ -264,13 +272,18 @@ lv_obj_t *build_recovery_view(lv_group_t **group_out, lv_obj_t **battery_label_o
     add_back_header_cb(screen, MSF_SYMBOL_LIFE_RING " Recovery codes", view_back_cb, nullptr, group, battery_label_out);
     s_view_list.source = view_source;
     s_view_list.on_row = view_row;
-    list_build(&s_view_list, screen, group, "No recovery codes");
+    list_build(&s_view_list, screen, 0, group, "No recovery codes", kRowTop, kRowsPerPage, kPagerY);
     lv_obj_add_event_cb(screen, view_loaded_cb, LV_EVENT_SCREEN_LOADED, nullptr);
     ui_auto_clear_attach(screen);   /* F-05: codes are secrets */
     return screen;
 }
 
-/* ---- RECOVERY EDIT (draft: add, remove, clear all) --------------------- */
+/* ---- EDIT's Recovery tab (draft: add, remove, clear all) --------------- */
+
+static constexpr int32_t kTabRowTop = 240;   /* below EDIT's tabs */
+static constexpr int kTabRows = 4;           /* 3 above the touch band, 1 below */
+static constexpr int32_t kTabPagerY = 644;
+static constexpr int32_t kTabClearY = 728;
 
 static CodeList s_edit_list;
 
@@ -334,44 +347,23 @@ static void add_cb(lv_event_t *)
     ui_defer(add_deferred, nullptr);
 }
 
-static void edit_back_deferred(void *)
-{
-    switch_screen(Screen::AccountEdit);   /* changes stay in the draft until Save */
-}
-
-static void edit_back_cb(lv_event_t *)
-{
-    ui_defer(edit_back_deferred, nullptr);
-}
-
-static void edit_loaded_cb(lv_event_t *)
+void recovery_edit_tab_show(void)
 {
     list_show(&s_edit_list);
     lv_label_set_text(s_edit_list.status, "");
 }
 
-lv_obj_t *build_recovery_edit(lv_group_t **group_out, lv_obj_t **battery_label_out)
+void recovery_edit_tab_build(lv_obj_t *parent, int32_t parent_y, lv_group_t *group)
 {
-    lv_group_t *group = lv_port_indev_new_group();
-    *group_out = group;
-    lv_obj_t *screen = make_screen();
-    add_back_header_cb(screen, MSF_SYMBOL_LIFE_RING " Edit codes", edit_back_cb, nullptr, group, battery_label_out);
-
-    lv_obj_t *clear = make_button(screen, MSF_SYMBOL_ERASER " Clear all");
-    lv_obj_set_style_min_width(clear, 140, 0);
-    lv_obj_align(clear, LV_ALIGN_TOP_RIGHT, -16, kBackTopMargin);
-    lv_obj_add_event_cb(clear, clear_all_cb, LV_EVENT_CLICKED, nullptr);
-    add_to_group(clear, group);
-
     s_edit_list.source = edit_source;
     s_edit_list.on_row = edit_row;
-    list_build(&s_edit_list, screen, group, "No recovery codes");
+    list_build(&s_edit_list, parent, parent_y, group, "No recovery codes", kTabRowTop, kTabRows, kTabPagerY);
 
-    lv_obj_t *add = make_fixed_button(screen, group, LV_SYMBOL_PLUS " Add", 140);
-    lv_obj_align(add, LV_ALIGN_TOP_RIGHT, -kSideMargin, kPagerY);
+    lv_obj_t *add = make_fixed_button(parent, group, LV_SYMBOL_PLUS " Add", 140);
+    lv_obj_align(add, LV_ALIGN_TOP_RIGHT, -kSideMargin, kTabPagerY - parent_y);
     lv_obj_add_event_cb(add, add_cb, LV_EVENT_CLICKED, nullptr);
 
-    lv_obj_add_event_cb(screen, edit_loaded_cb, LV_EVENT_SCREEN_LOADED, nullptr);
-    ui_auto_clear_attach(screen);   /* F-05 */
-    return screen;
+    lv_obj_t *clear = make_fixed_button(parent, group, MSF_SYMBOL_ERASER " Clear all", 180);
+    lv_obj_align(clear, LV_ALIGN_TOP_RIGHT, -kSideMargin, kTabClearY - parent_y);
+    lv_obj_add_event_cb(clear, clear_all_cb, LV_EVENT_CLICKED, nullptr);
 }

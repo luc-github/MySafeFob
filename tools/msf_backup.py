@@ -23,8 +23,8 @@ JSON format (also accepted by `encrypt` for a first fill or a migration):
 
   { "format": "mysafefob", "version": 1,
     "accounts": [
-      { "name": "GitHub", "login": "octocat", "password": "...", "pin": "",
-        "note": "github.com",
+      { "name": "GitHub", "id": "customer 1234", "login": "octocat",
+        "password": "...", "pin": "", "note": "github.com", "extra": "",
         "totp": { "key": "JBSWY3DPEHPK3PXP", "digits": 6, "period": 30 },
         "recovery": ["A1B2-C3D4", {"code": "E5F6-G7H8", "used": true}] },
       { "name": "Google", "totp": "otpauth://totp/Google:luc?secret=...&period=30" }
@@ -57,8 +57,9 @@ except ImportError:
     sys.exit("Missing libraries: pip install argon2-cffi cryptography")
 
 # ---- device limits (components/secret_store/include/secret_store.h) ------
-MAX_ACCOUNTS = 64
+MAX_ACCOUNTS = 250   # = boards/x4pro/store_config.cmake MSF_STORE_MAX_ACCOUNTS
 NAME_MAX, USER_MAX, PASSWORD_MAX, PIN_MAX, NOTE_MAX = 48, 64, 128, 12, 64
+IDENT_MAX, EXTRA_MAX = 64, 64   # "id" (customer / account number...), "extra" (2026-10-13)
 TOTP_KEY_MAX, RCV_MAX, RCV_CODE_MAX = 103, 32, 16
 PASS_MIN, PASS_MAX = 8, 64
 
@@ -72,6 +73,7 @@ REC_ACCOUNT = 0x30
 F_ID, F_NAME = 0x01, 0x02
 F_TOTP_KEY, F_DIGITS, F_PERIOD = 0x10, 0x11, 0x12
 F_USER, F_PASSWORD, F_PIN, F_NOTE = 0x20, 0x21, 0x22, 0x23
+F_IDENT, F_EXTRA = 0x24, 0x25
 F_RCV_MASK, F_RCV_CODE = 0x40, 0x41
 
 
@@ -99,7 +101,8 @@ def serialize(accounts):
             body += tlv(F_TOTP_KEY, a["totp_key"].encode())
             body += tlv(F_DIGITS, bytes([a["digits"]]))
             body += tlv(F_PERIOD, bytes([a["period"]]))
-        for tag, key in ((F_USER, "login"), (F_PASSWORD, "password"), (F_PIN, "pin"), (F_NOTE, "note")):
+        for tag, key in ((F_USER, "login"), (F_PASSWORD, "password"), (F_PIN, "pin"), (F_NOTE, "note"),
+                         (F_IDENT, "id"), (F_EXTRA, "extra")):
             if a[key]:
                 body += tlv(tag, a[key].encode())
         if a["recovery"]:
@@ -121,7 +124,7 @@ def deserialize(data):
         if pos + rlen > len(data):
             raise BackupError("damaged records")
         if tag == REC_ACCOUNT:
-            a = {"name": "", "login": "", "password": "", "pin": "", "note": "", "totp_key": "",
+            a = {"name": "", "login": "", "password": "", "pin": "", "note": "", "id": "", "extra": "", "totp_key": "",
                  "digits": 6, "period": 30, "mask": 0, "codes": []}
             p, end = pos, pos + rlen
             while p + 3 <= end:
@@ -137,6 +140,8 @@ def deserialize(data):
                 elif ft == F_PASSWORD: a["password"] = text
                 elif ft == F_PIN: a["pin"] = text
                 elif ft == F_NOTE: a["note"] = text
+                elif ft == F_IDENT: a["id"] = text
+                elif ft == F_EXTRA: a["extra"] = text
                 elif ft == F_RCV_MASK and fl == 4: a["mask"] = struct.unpack("<I", v)[0]
                 elif ft == F_RCV_CODE: a["codes"].append(text)
                 p += fl
@@ -157,10 +162,12 @@ def seal(accounts, passphrase, created):
 
 
 # Factory rescue copy (RESCUEnn.MSR): one store slot as on flash, slot_header_t
-# of secret_store.c (packed, 46 bytes, GCM AAD) | ciphertext | tag; key =
-# Argon2id(device PIN, header salt and parameters).
+# of secret_store.c (GCM AAD) | ciphertext | tag; key = Argon2id(device PIN,
+# header salt and parameters). Store format 1: 46-byte header; format 2
+# (2026-10-12, 250 accounts): the same fields padded to 64 bytes.
 SLOT_HEADER = struct.Struct("<4sBBBBH16s12sII")
 SLOT_MAGIC = b"MSF1"
+SLOT_HEADER_LEN = {1: 46, 2: 64}
 
 
 def is_rescue(data):
@@ -171,15 +178,16 @@ def open_rescue(data, pin):
     if len(data) < SLOT_HEADER.size + TAG_LEN:
         raise BackupError("damaged rescue copy")
     magic, version, algo, t, p, m_mib, salt, nonce, _seq, ct_len = SLOT_HEADER.unpack_from(data)
-    if version != 1 or algo != KDF_ARGON2ID:
+    if version not in SLOT_HEADER_LEN or algo != KDF_ARGON2ID:
         raise BackupError("unknown store format")
-    if len(data) != SLOT_HEADER.size + ct_len + TAG_LEN:
+    hlen = SLOT_HEADER_LEN[version]
+    if len(data) != hlen + ct_len + TAG_LEN:
         raise BackupError("damaged rescue copy (size does not match its header)")
     if not (len(pin) == 6 and pin.isdigit()):
         raise BackupError("the device PIN is 6 digits")
     key = derive_key(pin, salt, m_mib, t, p)
     try:
-        plain = AESGCM(key).decrypt(nonce, data[SLOT_HEADER.size:], data[:SLOT_HEADER.size])
+        plain = AESGCM(key).decrypt(nonce, data[hlen:], data[:hlen])
     except Exception:
         raise BackupError("wrong PIN, or the file was altered") from None
     return deserialize(plain), 0
@@ -211,7 +219,7 @@ def to_json(accounts, created):
     out = []
     for a in accounts:
         j = {"name": a["name"]}
-        for key in ("login", "password", "pin", "note"):
+        for key in ("id", "login", "password", "pin", "note", "extra"):
             if a[key]:
                 j[key] = a[key]
         if a["totp_key"]:
@@ -277,6 +285,8 @@ def from_json(doc):
              "password": check_text(f"{where} password", j.get("password", ""), PASSWORD_MAX, errors, warnings),
              "pin": check_text(f"{where} pin", j.get("pin", ""), PIN_MAX, errors, warnings),
              "note": check_text(f"{where} note", j.get("note", ""), NOTE_MAX, errors, warnings),
+             "id": check_text(f"{where} id", j.get("id", ""), IDENT_MAX, errors, warnings),
+             "extra": check_text(f"{where} extra", j.get("extra", ""), EXTRA_MAX, errors, warnings),
              "totp_key": "", "digits": 6, "period": 30, "recovery": []}
         if not a["name"]:
             errors.append(f"account {n}: no name")

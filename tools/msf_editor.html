@@ -67,9 +67,18 @@ fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 0 0 14px; 
 legend { padding: 0 6px; font-weight: 600; }
 .row { display: grid; grid-template-columns: 110px 1fr; gap: 8px; align-items: center; margin-top: 8px; }
 .row label { color: var(--muted); }
+/* Each field adds label + control + message: the message goes under the
+   control (column 2), and takes no room while empty. */
+.row .msg { grid-column: 2; }
+.msg:empty { display: none; }
 .inline { display: flex; gap: 6px; align-items: center; }
 .inline input { flex: 1; }
 .hint { font-size: 12px; color: var(--muted); }
+/* Size counter next to each limited field: muted, amber near the limit, red over it. */
+.count-badge { font: 12px ui-monospace, Consolas, monospace; color: var(--muted); white-space: nowrap;
+  min-width: 56px; text-align: right; }
+.count-badge.near { color: var(--warn); }
+.count-badge.over { color: var(--danger); font-weight: 600; }
 .err { font-size: 12px; color: var(--danger); grid-column: 2; }
 .wrn { font-size: 12px; color: var(--warn); grid-column: 2; }
 .totp { font: 600 22px ui-monospace, Consolas, monospace; letter-spacing: 2px; }
@@ -133,7 +142,8 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
 <script>
 "use strict";
 /* ---- device limits (components/secret_store/include/secret_store.h) ---- */
-const LIM = { accounts: 64, name: 48, login: 64, password: 128, pin: 12, note: 64, totpKey: 103,
+/* accounts = boards/x4pro/store_config.cmake MSF_STORE_MAX_ACCOUNTS; field limits = secret_store.h */
+const LIM = { accounts: 250, name: 48, id: 64, extra: 64, login: 64, password: 128, pin: 12, note: 64, totpKey: 103,
               rcv: 32, rcvCode: 16 };
 
 let doc = null;          // {format, version, created?, ...} without accounts
@@ -161,9 +171,9 @@ function parseOtpauth(uri) {
 }
 
 function normalize(j) {
-  const a = { name: "", login: "", password: "", pin: "", note: "", totp: null, recovery: [] };
+  const a = { name: "", id: "", login: "", password: "", pin: "", note: "", extra: "", totp: null, recovery: [] };
   if (!j || typeof j !== "object") return a;
-  for (const k of ["name", "login", "password", "pin", "note"]) if (typeof j[k] === "string") a[k] = j[k];
+  for (const k of ["name", "id", "login", "password", "pin", "note", "extra"]) if (typeof j[k] === "string") a[k] = j[k];
   let t = j.totp;
   if (typeof t === "string") {
     const p = parseOtpauth(t);
@@ -198,7 +208,7 @@ function loadText(text, name) {
 
 function toJson(a) {
   const j = { name: a.name };
-  for (const k of ["login", "password", "pin", "note"]) if (a[k]) j[k] = a[k];
+  for (const k of ["id", "login", "password", "pin", "note", "extra"]) if (a[k]) j[k] = a[k];
   if (a.totp && a.totp.key) j.totp = { key: cleanKey(a.totp.key), digits: a.totp.digits, period: a.totp.period };
   const codes = a.recovery.filter((c) => c.code);
   if (codes.length) j.recovery = codes.map((c) => c.used ? { code: c.code, used: true } : c.code);
@@ -251,7 +261,7 @@ function validate(a, index) {
     if (/[^\x20-\x7E]/.test(a[k])) add(warns, k, "non-ASCII characters are stored but not displayed by the device");
   };
   text("name", LIM.name); text("login", LIM.login); text("password", LIM.password);
-  text("pin", LIM.pin); text("note", LIM.note);
+  text("pin", LIM.pin); text("note", LIM.note); text("id", LIM.id); text("extra", LIM.extra);
   if (!a.name.trim()) add(errors, "name", "a name is required");
   else if (accounts.some((b, i) => i !== index && b.name.toLowerCase() === a.name.toLowerCase()))
     add(errors, "name", "this name is used twice (names are case-insensitive)");
@@ -299,7 +309,7 @@ function renderList() {
   const ul = $("list");
   ul.innerHTML = "";
   const order = accounts.map((a, i) => i)
-    .filter((i) => !q || ["name", "login", "note"].some((k) => accounts[i][k].toLowerCase().includes(q)))
+    .filter((i) => !q || ["name", "id", "login", "note", "extra"].some((k) => accounts[i][k].toLowerCase().includes(q)))
     .sort((x, y) => accounts[x].name.localeCompare(accounts[y].name, undefined, { sensitivity: "base" }));
   let last = null;
   for (const i of order) {
@@ -342,17 +352,32 @@ function el(tag, props = {}, ...kids) {
   return e;
 }
 
+/* "used/limit" in bytes (the device's unit), refreshed on every keystroke. */
+function sizeCounter(getText, limit) {
+  const badge = el("span", { className: "count-badge", title: `The device keeps at most ${limit} bytes (accented letters count 2)` });
+  const update = () => {
+    const n = bytes(getText());
+    badge.textContent = `${n}/${limit}`;
+    badge.className = "count-badge" + (n > limit ? " over" : n >= limit * 0.9 ? " near" : "");
+  };
+  update();
+  return { badge, update };
+}
+
 function field(label, key, a, opts = {}) {
   const input = el("input", { value: a[key], type: opts.secret ? "password" : "text", autocomplete: "off",
     spellcheck: false, placeholder: opts.placeholder || "" });
-  input.oninput = () => { a[key] = input.value; changed(); };
-  let control = input;
+  const counter = sizeCounter(() => a[key], LIM[key]);
+  input.oninput = () => { a[key] = input.value; counter.update(); changed(); };
+  const parts = [input];
   if (opts.secret) {
     const eye = el("button", { textContent: "Show", type: "button", className: "small" });
     eye.onclick = () => { const s = input.type === "password"; input.type = s ? "text" : "password"; eye.textContent = s ? "Hide" : "Show"; };
-    control = el("div", { className: "inline" }, input, eye);
+    parts.push(eye);
   }
-  return [el("label", { textContent: label }), control, el("div", { className: "msg", dataset: { key } })];
+  parts.push(counter.badge);
+  return [el("label", { textContent: label }), el("div", { className: "inline" }, ...parts),
+          el("div", { className: "msg", dataset: { key } })];
 }
 
 function renderEditor() {
@@ -365,18 +390,27 @@ function renderEditor() {
   const a = accounts[selected];
   ed.innerHTML = "";
 
-  const general = el("fieldset", {}, el("legend", { textContent: "Account" }));
+  /* Same grouping as the device's tabs (2026-10-13): Info / Security / Recovery. */
+  const general = el("fieldset", {}, el("legend", { textContent: "Info" }));
   const g = el("div", { className: "row" });
-  g.append(...field("Name", "name", a, { placeholder: "required, unique" }), ...field("Login", "login", a),
-           ...field("Password", "password", a, { secret: true }), ...field("PIN", "pin", a, { secret: true, placeholder: "digits only (bank card…)" }),
-           ...field("Note", "note", a, { placeholder: "one line: website, e-mail…" }));
+  g.append(...field("Name", "name", a, { placeholder: "required, unique" }),
+           ...field("ID", "id", a, { placeholder: "customer / account number, e-mail…" }),
+           ...field("Note", "note", a, { placeholder: "one line: website, e-mail…" }),
+           ...field("Extra", "extra", a, { placeholder: "one more line" }));
   general.append(g);
+  const security = el("fieldset", {}, el("legend", { textContent: "Security" }));
+  const sg = el("div", { className: "row" });
+  sg.append(...field("Login", "login", a),
+            ...field("Password", "password", a, { secret: true }),
+            ...field("PIN", "pin", a, { secret: true, placeholder: "digits only (bank card…)" }));
+  security.append(sg);
 
   /* TOTP */
-  const tf = el("fieldset", {}, el("legend", { textContent: "TOTP (2FA)" }));
+  const tf = el("fieldset", {}, el("legend", { textContent: "Security — TOTP (2FA)" }));
   const t = el("div", { className: "row" });
   const keyIn = el("input", { value: a.totp ? a.totp.key : "", placeholder: "Base32 key, or paste an otpauth:// URI",
     autocomplete: "off", spellcheck: false });
+  const keyCounter = sizeCounter(() => cleanKey(keyIn.value), LIM.totpKey);
   /* The device's choices (6/8 digits, 30/60 s); another value coming from a
    * file or an otpauth URI is kept as an extra option, not silently changed. */
   const choice = (values, current, unit) => {
@@ -406,7 +440,8 @@ function renderEditor() {
     changed();
     tick();
   };
-  keyIn.oninput = sync; digits.onchange = sync; period.onchange = sync;
+  keyIn.oninput = () => { keyCounter.update(); sync(); };
+  digits.onchange = sync; period.onchange = sync;
   const tick = async () => {
     if (!a.totp || !a.totp.key) { code.textContent = "—"; left.textContent = ""; return; }
     try {
@@ -415,10 +450,10 @@ function renderEditor() {
       left.textContent = c ? `${(a.totp.period || 30) - Math.floor(Date.now() / 1000) % (a.totp.period || 30)} s left` : "";
     } catch { code.textContent = "—"; }
   };
-  t.append(el("label", { textContent: "Key" }), keyIn,
+  t.append(el("label", { textContent: "Key" }), el("div", { className: "inline" }, keyIn, keyCounter.badge),
            el("label", { textContent: "Digits / period" }), el("div", { className: "inline" }, digits, period),
            el("label", { textContent: "Current code" }), el("div", { className: "inline" }, code, left),
-           el("div"), el("div", { className: "msg", dataset: { key: "totp" } }));
+           el("div", { className: "msg", dataset: { key: "totp" } }));
   tf.append(t);
   totpTimer = setInterval(tick, 1000);
   tick();
@@ -430,12 +465,14 @@ function renderEditor() {
     table.innerHTML = "";
     a.recovery.forEach((c, i) => {
       const inp = el("input", { value: c.code, autocomplete: "off", spellcheck: false });
-      inp.oninput = () => { c.code = inp.value; changed(); };
+      const cc = sizeCounter(() => c.code, LIM.rcvCode);
+      inp.oninput = () => { c.code = inp.value; cc.update(); changed(); };
       const used = el("input", { type: "checkbox", checked: c.used });
       used.onchange = () => { c.used = used.checked; changed(); };
       const del = el("button", { textContent: "✕", type: "button", title: "Remove this code", className: "danger" });
       del.onclick = () => { a.recovery.splice(i, 1); changed(); drawCodes(); };
-      table.append(el("tr", {}, el("td", { className: "n", textContent: i + 1 }), el("td", {}, inp),
+      table.append(el("tr", {}, el("td", { className: "n", textContent: i + 1 }),
+        el("td", {}, el("div", { className: "inline" }, inp, cc.badge)),
         el("td", { className: "u" }, el("label", {}, used, " used")), el("td", {}, del)));
     });
   };
@@ -457,7 +494,7 @@ function renderEditor() {
     accounts.splice(selected, 1); selected = -1; setDirty(true); renderList(); renderEditor();
   });
 
-  ed.append(general, tf, rf, el("div", { className: "actions" }, del));
+  ed.append(general, security, tf, rf, el("div", { className: "actions" }, del));
   showMessages();
 }
 

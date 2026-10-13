@@ -16,5 +16,9 @@ set(EXTRA_COMPONENT_DIRS
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(mysafefob-factory)
 
+# Same store sizing as the app (MSF_STORE_MAX_ACCOUNTS): it reads the same store.
+include(${CMAKE_CURRENT_LIST_DIR}/../store_config.cmake)
+msf_store_config_apply()
+
 # Postbuild: feeds installer/x4pro_factory/ (flash_mgr + web installer).
 include(cmake/postbuild.cmake)

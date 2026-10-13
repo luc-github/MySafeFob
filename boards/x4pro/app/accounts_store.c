@@ -197,7 +197,7 @@ static int cmp_recs(const void *a, const void *b)
 int accounts_list(char letter, int first, int max, account_summary_t *out)
 {
     if (!accounts_is_unlocked()) return 0;
-    int order[MSF_STORE_MAX_ACCOUNTS];
+    static int order[MSF_STORE_MAX_ACCOUNTS];   /* 1 KB: kept off the UI task's stack (UI task only) */
     int n = 0;
     for (int i = 0; i < s_count; i++) {
         if (matches(&s_recs[i], letter)) order[n++] = i;
@@ -376,7 +376,8 @@ static int find_name(const char *name)
 static bool same_record(const account_t *a, const account_t *b)
 {
     if (strcmp(a->name, b->name) || strcmp(a->totp_key, b->totp_key) || strcmp(a->username, b->username) ||
-        strcmp(a->password, b->password) || strcmp(a->pin, b->pin) || strcmp(a->note, b->note)) {
+        strcmp(a->password, b->password) || strcmp(a->pin, b->pin) || strcmp(a->note, b->note) ||
+        strcmp(a->ident, b->ident) || strcmp(a->extra, b->extra)) {
         return false;
     }
     if (a->totp_key[0] && (a->digits != b->digits || a->period != b->period)) return false;

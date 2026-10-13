@@ -366,6 +366,18 @@ updated accordingly).
    of the newest store slot to `MSF/RESCUEnn.MSR`, decrypted on the PC with the PIN by
    `msf_backup.py`. PIN-only protection accepted for a rescue file deleted after use
    (`FACTORY.md` §5.3b).
+11. **Account fields ID and Extra + tabbed account pages** (2026-10-13, user request):
+    TLV tags 0x24 / 0x25 (64 B each, no store format change), view and edit in tabs
+    Info / Security / Recovery (UI-SPECS §2.13 amendment 2026-10-13); the RECOVERY EDIT
+    screen became EDIT's Recovery tab. PC tool and editor follow (`id`, `extra`).
+10. **250 accounts, store format 2** (2026-10-12, user: 43 accounts before reaching G):
+    `MSF_STORE_MAX_ACCOUNTS` 64 -> 250 (worst case ~275 KB serialized, typical ~50 KB).
+    Two new 512 KiB slots at 0x100000 / 0x180000 of `secrets`, outside the format 1 slots
+    (0x10000 / 0x30000, 128 KiB), so a format 1 store migrates by itself: unlocked from
+    its slot, the first save writes a format 2 slot, then the format 1 slots are erased.
+    Format 2 = header padded to 64 bytes + 16-byte aligned writes (ready for flash
+    encryption). The factory, `msf_backup.py` (rescue copies, 250 limit) and the editor
+    follow; backups (`.msfx`) are unchanged.
 9. **SD sanity check** (same day, user request): setting "Check SD at start" (Backup
    menu, `SdCheck`, on by default). After an unlock, at most once an hour
    (`SdCheckLastS`), a worker scans the card for plaintext leftovers: `MSF/RESCUE*.MSR` and

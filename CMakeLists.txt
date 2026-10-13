@@ -22,6 +22,11 @@ project(mysafefob)
 # add_compile_definitions() after project() does NOT propagate to IDF
 # components — idf_build_set_property is required (observed at the 5.5.5 build).
 idf_build_set_property(COMPILE_DEFINITIONS "MSF_BOARD_NAME=\"${MSF_BOARD}\"" APPEND)
+# Board's store sizing (boards/<board>/store_config.cmake), if it has one;
+# otherwise secret_store.h's default applies.
+if(COMMAND msf_store_config_apply)
+    msf_store_config_apply()
+endif()
 
 # LVGL fonts: the app's own msf_font_24 / msf_font_32 (boards/x4pro/app/fonts,
 # tools/gen_fonts.py) instead of the built-in Montserrat 24/32 (disabled in

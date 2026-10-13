@@ -50,13 +50,21 @@
 extern "C" {
 #endif
 
-#define MSF_STORE_MAX_ACCOUNTS 64
+/* Accounts the device holds: set per board (boards/<board>/store_config.cmake,
+ * passed as a compile definition to the app and the factory); this default
+ * only applies to a board that sets nothing. Bounded by the store format
+ * (checked at compile time in secret_store.c). */
+#ifndef MSF_STORE_MAX_ACCOUNTS
+#define MSF_STORE_MAX_ACCOUNTS 250
+#endif
 #define MSF_PIN_LEN 6
 #define MSF_NAME_MAX 48
 #define MSF_USER_MAX 64
 #define MSF_PASSWORD_MAX 128
 #define MSF_PIN_FIELD_MAX 12       /* an account's own PIN (bank card...), not the device PIN */
 #define MSF_NOTE_MAX 64
+#define MSF_IDENT_MAX 64          /* customer / account number, e-mail... (2026-10-13) */
+#define MSF_EXTRA_MAX 64          /* free line next to the note (2026-10-13) */
 #define MSF_TOTP_KEY_MAX 103       /* Base32 text of a 64-byte secret */
 #define MSF_RCV_MAX 32
 #define MSF_RCV_CODE_MAX 16
@@ -72,6 +80,8 @@ typedef struct {
     char password[MSF_PASSWORD_MAX + 1];
     char pin[MSF_PIN_FIELD_MAX + 1];
     char note[MSF_NOTE_MAX + 1];
+    char ident[MSF_IDENT_MAX + 1];
+    char extra[MSF_EXTRA_MAX + 1];
     uint8_t rcv_count;
     uint32_t rcv_used_mask;                 /* bit i = code i used */
     char rcv_codes[MSF_RCV_MAX][MSF_RCV_CODE_MAX + 1];

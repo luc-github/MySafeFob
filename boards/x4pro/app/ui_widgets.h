@@ -244,4 +244,21 @@ bool ui_confirm_is_open(void);
  *        (the store was locked under it: nothing may run). */
 void ui_confirm_dismiss(void);
 
+/* ---- Tabs (account view and edit, 2026-10-13) --------------------------
+ * A row of up to 3 equal buttons at fixed y across the screen; the active
+ * one is drawn inverted. on_select(index) runs deferred (ui_defer rule) when
+ * another tab is chosen; the caller shows / hides its content. */
+struct ui_tabs_t {
+    lv_obj_t *btn[3];
+    int count;
+    int active;
+    void (*on_select)(int index);
+};
+
+void ui_tabs_build(ui_tabs_t *tabs, lv_obj_t *parent, lv_group_t *group, const char *const *labels, int count,
+                   int32_t y, void (*on_select)(int index));
+
+/** @brief Marks `index` active (no callback). */
+void ui_tabs_set_active(ui_tabs_t *tabs, int index);
+
 #endif /* __cplusplus */

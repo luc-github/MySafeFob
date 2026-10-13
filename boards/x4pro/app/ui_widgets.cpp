@@ -636,3 +636,56 @@ void ui_auto_clear_attach(lv_obj_t *screen)
     lv_obj_add_event_cb(screen, auto_clear_loaded_cb, LV_EVENT_SCREEN_LOADED, timer);
     lv_obj_add_event_cb(screen, auto_clear_unloaded_cb, LV_EVENT_SCREEN_UNLOADED, timer);
 }
+
+/* ---- Tabs ------------------------------------------------------------------ */
+
+static constexpr int32_t kTabGap = 8;
+
+static ui_tabs_t *s_tab_pending;
+static int s_tab_pending_index;
+
+static void tab_deferred(void *)
+{
+    ui_tabs_t *tabs = s_tab_pending;
+    int index = s_tab_pending_index;
+    if (!tabs || index == tabs->active) return;
+    ui_tabs_set_active(tabs, index);
+    if (tabs->on_select) tabs->on_select(index);
+}
+
+static void tab_cb(lv_event_t *e)
+{
+    s_tab_pending = static_cast<ui_tabs_t *>(lv_event_get_user_data(e));
+    s_tab_pending_index = static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(lv_event_get_target_obj(e))));
+    ui_defer(tab_deferred, nullptr);
+}
+
+void ui_tabs_build(ui_tabs_t *tabs, lv_obj_t *parent, lv_group_t *group, const char *const *labels, int count,
+                   int32_t y, void (*on_select)(int index))
+{
+    tabs->count = count;
+    tabs->active = -1;
+    tabs->on_select = on_select;
+    const int32_t w = (SCREEN_WIDTH - 2 * 16 - (count - 1) * kTabGap) / count;
+    for (int i = 0; i < count; i++) {
+        lv_obj_t *btn = make_button(parent, labels[i]);
+        lv_obj_set_style_min_width(btn, 0, 0);
+        lv_obj_set_size(btn, w, kMinTouchTarget);
+        lv_obj_set_style_pad_hor(btn, 4, 0);
+        lv_obj_set_ext_click_area(btn, 0);   /* tabs side by side: hit areas must not overlap */
+        lv_obj_set_style_bg_color(btn, lv_color_black(), LV_STATE_CHECKED);
+        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_STATE_CHECKED);
+        lv_obj_set_style_text_color(btn, lv_color_white(), LV_STATE_CHECKED);
+        lv_obj_align(btn, LV_ALIGN_TOP_LEFT, 16 + i * (w + kTabGap), y);
+        lv_obj_set_user_data(btn, reinterpret_cast<void *>(static_cast<intptr_t>(i)));
+        lv_obj_add_event_cb(btn, tab_cb, LV_EVENT_CLICKED, tabs);
+        add_to_group(btn, group);
+        tabs->btn[i] = btn;
+    }
+}
+
+void ui_tabs_set_active(ui_tabs_t *tabs, int index)
+{
+    tabs->active = index;
+    for (int i = 0; i < tabs->count; i++) lv_obj_set_state(tabs->btn[i], LV_STATE_CHECKED, i == index);
+}

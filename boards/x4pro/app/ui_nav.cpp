@@ -283,7 +283,6 @@ static void build_screens(void)
     build_screen(Screen::AccountEdit, build_account_edit);
     build_screen(Screen::FieldEdit, build_field_edit);
     build_screen(Screen::RecoveryView, build_recovery_view);
-    build_screen(Screen::RecoveryEdit, build_recovery_edit);
     build_screen(Screen::Pin, build_pin);
     build_screen(Screen::Backup, build_backup);
     build_screen(Screen::BackupPass, build_backup_pass);

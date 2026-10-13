@@ -832,6 +832,21 @@ and frontlight.
 > Solid, black blobs at this size) generates 20 characters (hardware RNG, upper / lower / digits /
 > `-_.!@#$+=`, at least one of each, no I O l 0 1), Enter keeps it.
 
+> **Amendment (2026-10-13), account pages in tabs** (user request): two
+> new fields, **ID** (fingerprint icon: customer / account number,
+> e-mail…) and **Extra** (paperclip: one more free line), 64 characters
+> each like the note. ACCOUNT (view): the TOTP code stays at the top when
+> the account has one (its area stays empty otherwise: fixed layout, no
+> target moves into the touch band), then tabs **[Info] [Security]
+> [Recovery]**, Security open by default: Security = login, password and
+> PIN masked (one eye); Info = ID, note, extra (the name is the title);
+> Recovery = available / total and "Open the codes" (the mark-used list).
+> EDIT: the same tabs under Back / Save, Info first: Info = Name, ID,
+> Note, Extra; Security = Login, Password (dice), PIN, TOTP; Recovery =
+> the code list itself (4 per page, remove, + Add, Clear all; was a
+> separate screen). Rows 3 above the band and 1 below; the tab is kept
+> while a field is being typed.
+
 ### 2.14 SETTINGS_DISPLAY (F-16, should-have)
 
 ```

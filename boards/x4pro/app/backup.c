@@ -42,7 +42,7 @@
 static const char *TAG = "backup";
 
 #define BACKUP_EXT ".msfx"
-#define MAX_FILE_SIZE (256 * 1024)   /* far above 64 full records; refuses anything odd */
+#define MAX_FILE_SIZE (640 * 1024)   /* above 250 full records (~275 KB); refuses anything odd */
 
 /* "MSF-YYYYMMDD-HHMM" in local time, or "MSF-NODATE" if the clock is not set. */
 static void base_name(char *out, size_t size, int64_t utc)

@@ -106,11 +106,11 @@ Encrypted flash writes must be 16-byte aligned, in multiples of 16 bytes.
 `secret_store.c`:
 
 - control sector `control_t` = 16 bytes: OK.
-- slot header `slot_header_t` = 46 bytes, and the body is written right
-  after it (`kSlotOff + sizeof(h)`): **not aligned**. Pad the header to 64
-  bytes (new `FORMAT_VERSION`, the reader accepting both during the
-  migration, or a simple export / erase / re-import).
-- body length `ct_len + 16` (tag): round the write up to 16.
+- **Done 2026-10-12 (store format 2)**: header padded to 64 bytes, body
+  written at +64 and rounded up to a 16-byte multiple; format 1 stores
+  migrate by themselves on their first save. Only format 2 slots must
+  exist when flash encryption is enabled: check that the store has been
+  saved at least once since the update (any edit, or a PIN change).
 
 Same rule for anything the factory or the app writes raw.
 

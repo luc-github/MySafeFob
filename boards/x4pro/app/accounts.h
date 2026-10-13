@@ -45,6 +45,8 @@ extern "C" {
 #define ACCOUNTS_PASSWORD_MAX MSF_PASSWORD_MAX
 #define ACCOUNTS_PIN_MAX MSF_PIN_FIELD_MAX     /* digits only */
 #define ACCOUNTS_NOTE_MAX MSF_NOTE_MAX         /* one line: website, e-mail, short note */
+#define ACCOUNTS_IDENT_MAX MSF_IDENT_MAX       /* ID: customer / account number, e-mail... */
+#define ACCOUNTS_EXTRA_MAX MSF_EXTRA_MAX       /* Extra: one more free line */
 #define ACCOUNTS_TOTP_KEY_MAX MSF_TOTP_KEY_MAX /* Base32 of a 64-byte secret */
 #define ACCOUNTS_RCV_MAX MSF_RCV_MAX           /* recovery codes per account */
 #define ACCOUNTS_RCV_CODE_MAX MSF_RCV_CODE_MAX
