@@ -326,6 +326,17 @@ def from_json(doc):
             if code:
                 a["recovery"].append((code, used))
         accounts.append(a)
+    # Password reuse (a warning, never blocking): one leaked site may open the others.
+    by_password = {}
+    for acc in accounts:
+        if acc["password"]:
+            by_password.setdefault(acc["password"], []).append(acc)
+    for group in by_password.values():
+        if len(group) > 1:
+            names = ", ".join(acc["name"] for acc in group)
+            logins = {acc["login"].lower() for acc in group if acc["login"]}
+            kind = "login AND password" if len(logins) == 1 and all(acc["login"] for acc in group) else "password"
+            warnings.append(f"same {kind} on {len(group)} accounts: {names}")
     for w in warnings:
         print("warning:", w, file=sys.stderr)
     if errors:

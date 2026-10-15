@@ -18,18 +18,20 @@
 :root {
   --bg: #f6f6f4; --panel: #ffffff; --text: #1d1d1b; --muted: #6b6b66; --line: #dcdcd6;
   --accent: #1f5f8b; --accent-text: #ffffff; --danger: #a8322d; --warn: #8a5a00; --ok: #2e6b34;
-  --field: #ffffff; --sel: #e4eef6;
+  --field: #ffffff; --sel: #e4eef6; --reuse: #7a3fb0;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #161716; --panel: #1f201f; --text: #e8e8e4; --muted: #9a9a94; --line: #3a3b39;
     --accent: #6aa9d6; --accent-text: #0e1a24; --danger: #e07a73; --warn: #e0b45a; --ok: #7fc487;
-    --field: #262726; --sel: #23384a;
+    --field: #262726; --sel: #23384a; --reuse: #c39be8;
   }
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--text);
-  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+/* The page itself never scrolls: the list (left) and the account (right)
+   scroll on their own, header and warning bar stay in view. */
+body { margin: 0; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column;
+  overflow: hidden; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
 header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 16px;
   border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
 header h1 { font-size: 17px; margin: 0 8px 0 0; }
@@ -46,8 +48,8 @@ input, textarea, select { font: inherit; color: var(--text); background: var(--f
 input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .warnbar { background: var(--panel); border-bottom: 1px solid var(--line); padding: 6px 16px;
   font-size: 13px; color: var(--warn); }
-main { display: grid; grid-template-columns: 300px 1fr; min-height: calc(100vh - 90px); }
-@media (max-width: 760px) { main { grid-template-columns: 1fr; } aside { max-height: 40vh; } }
+main { display: grid; grid-template-columns: 300px 1fr; flex: 1; min-height: 0; }
+@media (max-width: 760px) { main { grid-template-columns: 1fr; grid-template-rows: 40vh 1fr; } }
 aside { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
 .search { padding: 10px; border-bottom: 1px solid var(--line); display: flex; gap: 6px; }
 ul#list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
@@ -55,11 +57,27 @@ ul#list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
   justify-content: space-between; gap: 8px; }
 #list li.sel { background: var(--sel); }
 #list li .tags { color: var(--muted); font-size: 12px; white-space: nowrap; }
-#list li.bad .name::after { content: " \26A0"; color: var(--danger); }
-#list .letter { background: var(--bg); color: var(--muted); font-size: 12px; font-weight: 600;
-  padding: 2px 12px; cursor: default; }
+#list li.bad .name { color: var(--danger); font-weight: 700; }
+#list li.bad .name::after { content: " \26A0"; }
+.err-link { color: var(--danger); font-weight: 700; cursor: pointer; text-decoration: underline; margin-left: 8px; }
+/* Password reuse (a warning, never blocking): violet. Name color priority:
+   error (red) > changed since the last save (orange) > reuse (violet). */
+#list li.reuse:not(.bad):not(.changed) .name { color: var(--reuse); font-weight: 600; }
+#list li.reuse .name::before { content: "\21BB  "; color: var(--reuse); }
+.reuse-link { color: var(--reuse); font-weight: 700; cursor: pointer; text-decoration: underline; margin-left: 8px; }
+/* Added / modified since the file was opened or last saved: orange. */
+#list li.changed:not(.bad) .name { color: var(--warn); font-weight: 600; }
+#list li.changed .tags::before { content: attr(data-change) "  "; color: var(--warn); font-weight: 600; }
+.changes { color: var(--warn); font-weight: 600; margin-left: 8px; }
+#list .letter { background: var(--bg); color: var(--muted); font-size: 13px; font-weight: 600;
+  padding: 4px 12px; cursor: pointer; user-select: none; justify-content: flex-start; }
+#list .letter:hover { color: var(--text); }
+#list .letter .mark-bad { color: var(--danger); }
+#list .letter .mark-reuse { color: var(--reuse); }
+#list .letter .mark-changed { color: var(--warn); }
 .count { padding: 6px 12px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); }
-section#editor { padding: 16px 20px 40px; max-width: 760px; }
+section#editor { padding: 16px 20px 40px; overflow-y: auto; min-height: 0; }
+section#editor > * { max-width: 760px; }
 .empty { color: var(--muted); padding: 40px 20px; }
 .empty code { background: var(--panel); padding: 1px 5px; border-radius: 4px; }
 fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 0 0 14px; padding: 10px 14px 14px;
@@ -114,6 +132,7 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
   <aside>
     <div class="search">
       <input id="search" placeholder="Search name, login, note…" autocomplete="off">
+      <button id="btnFold" disabled title="Fold / unfold every letter">&#9662;&#9656;</button>
       <button id="btnAdd" disabled title="Add an account">+ Add</button>
     </div>
     <ul id="list"></ul>
@@ -130,6 +149,15 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
   </section>
 </main>
 <div id="drop">Drop the JSON file here</div>
+
+<dialog id="saveDlg">
+  <p>There are unsaved changes. Save them first?</p>
+  <div class="actions" style="justify-content:flex-end">
+    <button id="saveDlgCancel">Cancel</button>
+    <button id="saveDlgDiscard" class="danger">Don't save</button>
+    <button id="saveDlgSave" class="primary">Save</button>
+  </div>
+</dialog>
 
 <dialog id="confirmDlg">
   <p id="confirmText"></p>
@@ -152,6 +180,22 @@ let selected = -1;
 let dirty = false;
 let fileName = "accounts.json";
 let totpTimer = null;
+const folded = new Set();   /* letters whose accounts are hidden in the list */
+/* Change tracking since the file was opened or last saved: the saved JSON of
+ * each account; an account not in it was added. */
+let baseline = new WeakMap();
+let removedSinceSave = 0;
+
+function snapshot() {
+  baseline = new WeakMap();
+  accounts.forEach((a) => baseline.set(a, JSON.stringify(toJson(a))));
+  removedSinceSave = 0;
+}
+
+function changeOf(a) {
+  if (!baseline.has(a)) return "added";
+  return baseline.get(a) === JSON.stringify(toJson(a)) ? "" : "modified";
+}
 
 const $ = (id) => document.getElementById(id);
 const enc = new TextEncoder();
@@ -198,6 +242,9 @@ function loadText(text, name) {
   accounts = list.map(normalize);
   fileName = name || "accounts.json";
   selected = -1;
+  snapshot();
+  folded.clear();   /* a file opens as an overview: every letter folded, with its count */
+  accounts.forEach((acc) => folded.add(letterOf(acc.name)));
   setDirty(false);
   enableUi(true);
   renderList();
@@ -215,7 +262,7 @@ function toJson(a) {
   return j;
 }
 
-function save() {
+function save(after) {
   const problems = accounts.map((a, i) => validate(a, i)).filter((v) => v.errors.length).length;
   const go = () => {
     const out = { ...doc, accounts: accounts.map(toJson) };
@@ -228,7 +275,10 @@ function save() {
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+    snapshot();
     setDirty(false);
+    renderList();
+    if (after) after();
   };
   if (problems) confirmBox(`${problems} account(s) have errors (marked ⚠): msf_backup.py encrypt will refuse the file until they are fixed. Save anyway?`, go);
   else go();
@@ -250,6 +300,22 @@ function base32Decode(s) {
     if (bits >= 8) { out.push((value >>> (bits - 8)) & 0xff); bits -= 8; }
   }
   return new Uint8Array(out);
+}
+
+/* Password reuse sanity check (2026-10-15): other accounts with the same
+ * password, and among them those with the same login too (one leaked site
+ * then opens the others). Exact password match; login case-insensitive. */
+function reuseOf(index) {
+  const a = accounts[index];
+  const same = [], sameLogin = [];
+  if (!a.password) return { same, sameLogin };
+  accounts.forEach((b, i) => {
+    if (i === index || b.password !== a.password) return;
+    const name = b.name || "(no name)";
+    if (a.login && b.login && a.login.toLowerCase() === b.login.toLowerCase()) sameLogin.push(name);
+    else same.push(name);
+  });
+  return { same, sameLogin };
 }
 
 function validate(a, index) {
@@ -281,7 +347,11 @@ function validate(a, index) {
     if (bytes(c.code) > LIM.rcvCode) add(errors, "recovery", `code ${i + 1}: at most ${LIM.rcvCode} characters`);
     if (/[^\x20-\x7E]/.test(c.code)) add(warns, "recovery", `code ${i + 1}: non-ASCII characters`);
   });
-  return { errors: Object.values(errors).flat().length ? Object.entries(errors) : [], errMap: errors, warnMap: warns };
+  const reuse = reuseOf(index);
+  if (reuse.sameLogin.length) add(warns, "password", `Same login AND password as: ${reuse.sameLogin.join(", ")}`);
+  if (reuse.same.length) add(warns, "password", `Same password as: ${reuse.same.join(", ")}`);
+  return { errors: Object.values(errors).flat().length ? Object.entries(errors) : [], errMap: errors, warnMap: warns,
+           reused: reuse.same.length + reuse.sameLogin.length > 0 };
 }
 
 /* ---- TOTP preview (WebCrypto HMAC-SHA1, RFC 6238) --------------------------- */
@@ -311,25 +381,56 @@ function renderList() {
   const order = accounts.map((a, i) => i)
     .filter((i) => !q || ["name", "id", "login", "note", "extra"].some((k) => accounts[i][k].toLowerCase().includes(q)))
     .sort((x, y) => accounts[x].name.localeCompare(accounts[y].name, undefined, { sensitivity: "base" }));
+  /* Per letter: count, and whether a folded group hides an error / a reused password. */
+  const groups = {};
+  for (const i of order) {
+    const L = letterOf(accounts[i].name);
+    const g = groups[L] || (groups[L] = { n: 0, bad: false, reuse: false, changed: false });
+    const v = validate(accounts[i], i);
+    g.n++;
+    g.bad = g.bad || v.errors.length > 0;
+    g.reuse = g.reuse || v.reused;
+    g.changed = g.changed || changeOf(accounts[i]) !== "";
+  }
+  const selLetter = selected >= 0 && accounts[selected] ? letterOf(accounts[selected].name) : null;
+  /* Searching unfolds everything (no hidden result); the selected account's letter stays open. */
+  const isOpen = (L) => q || L === selLetter || !folded.has(L);
   let last = null;
   for (const i of order) {
     const a = accounts[i];
     const L = letterOf(a.name);
     if (L !== last) {
+      const g = groups[L];
       const h = document.createElement("li");
       h.className = "letter";
-      h.textContent = L;
+      h.append(`${isOpen(L) ? "\u25BE" : "\u25B8"}  ${L}  (${g.n})`);
+      if (!isOpen(L) && g.bad) h.append(el("span", { className: "mark-bad", textContent: "  \u26A0" }));
+      if (!isOpen(L) && g.reuse) h.append(el("span", { className: "mark-reuse", textContent: "  \u21BB" }));
+      if (!isOpen(L) && g.changed) h.append(el("span", { className: "mark-changed", textContent: "  \u270E" }));
+      h.onclick = () => {
+        if (q) return;   /* everything stays open while searching */
+        if (folded.has(L)) folded.delete(L);
+        else folded.add(L);
+        if (L === selLetter && folded.has(L)) { selected = -1; renderEditor(); }   /* folding it closes the account */
+        renderList();
+      };
       ul.appendChild(h);
       last = L;
     }
+    if (!isOpen(L)) continue;
     const li = document.createElement("li");
     if (i === selected) li.className = "sel";
-    if (validate(a, i).errors.length) li.classList.add("bad");
+    const v = validate(a, i);
+    if (v.errors.length) li.classList.add("bad");
+    if (v.reused) li.classList.add("reuse");
+    const change = changeOf(a);
+    if (change) li.classList.add("changed");
     const name = document.createElement("span");
     name.className = "name";
     name.textContent = a.name || "(no name)";
     const tags = document.createElement("span");
     tags.className = "tags";
+    if (change) tags.dataset.change = change === "added" ? "\uFF0B new" : "\u270E edited";
     tags.textContent = [a.totp && a.totp.key ? "TOTP" : "", a.password ? "pwd" : "", a.pin ? "PIN" : "",
       a.recovery.length ? `${a.recovery.length} codes` : ""].filter(Boolean).join(" · ");
     li.append(name, tags);
@@ -337,8 +438,49 @@ function renderList() {
     ul.appendChild(li);
   }
   const shown = order.length, total = accounts.length;
-  $("count").textContent = `${total} / ${LIM.accounts} accounts` + (shown !== total ? ` (${shown} shown)` : "") +
+  const count = $("count");
+  count.textContent = `${total} / ${LIM.accounts} accounts` + (shown !== total ? ` (${shown} shown)` : "") +
     (total > LIM.accounts ? " — too many for the device" : "");
+  /* What changed since the last save. */
+  const added = accounts.filter((a) => changeOf(a) === "added").length;
+  const modified = accounts.filter((a) => changeOf(a) === "modified").length;
+  const parts = [added && `${added} new`, modified && `${modified} edited`, removedSinceSave && `${removedSinceSave} deleted`]
+    .filter(Boolean);
+  if (parts.length) count.append(el("span", { className: "changes", textContent: "\u270E " + parts.join(", ") }));
+  /* Accounts with errors: a red link that jumps to the next one (in list order). */
+  const byName = (x, y) => accounts[x].name.localeCompare(accounts[y].name, undefined, { sensitivity: "base" });
+  const bad = accounts.map((a, i) => i).filter((i) => validate(accounts[i], i).errors.length).sort(byName);
+  if (bad.length) {
+    const link = el("span", { className: "err-link", textContent: `\u26A0 ${bad.length} with errors`,
+      title: "Go to the next account with an error" });
+    link.onclick = () => {
+      const after = bad.indexOf(selected);
+      const next = bad[(after + 1) % bad.length];   /* after = -1 (none selected or not in error): the first */
+      $("search").value = "";
+      selected = next;
+      renderList();
+      renderEditor();
+      const sel = document.querySelector("#list li.sel");
+      if (sel) sel.scrollIntoView({ block: "center" });
+    };
+    count.append(link);
+  }
+  /* Same idea for reused passwords (amber). */
+  const reused = accounts.map((a, i) => i).filter((i) => validate(accounts[i], i).reused).sort(byName);
+  if (reused.length) {
+    const link = el("span", { className: "reuse-link", textContent: `\u21BB ${reused.length} reused passwords`,
+      title: "Accounts sharing a password: go to the next one" });
+    link.onclick = () => {
+      const next = reused[(reused.indexOf(selected) + 1) % reused.length];
+      $("search").value = "";
+      selected = next;
+      renderList();
+      renderEditor();
+      const sel = document.querySelector("#list li.sel");
+      if (sel) sel.scrollIntoView({ block: "center" });
+    };
+    count.append(document.createElement("br"), link);
+  }
 }
 
 /* ---- editor ------------------------------------------------------------------ */
@@ -491,6 +633,7 @@ function renderEditor() {
 
   const del = el("button", { textContent: "Delete this account", className: "danger", type: "button" });
   del.onclick = () => confirmBox(`Delete "${a.name || "(no name)"}"? (Only from this file: on the device, use Replace all to remove it there too.)`, () => {
+    if (baseline.has(accounts[selected])) removedSinceSave++;
     accounts.splice(selected, 1); selected = -1; setDirty(true); renderList(); renderEditor();
   });
 
@@ -515,7 +658,7 @@ function changed() { setDirty(true); showMessages(); renderList(); }
 
 function setDirty(d) { dirty = d; $("dirty").textContent = d ? "● unsaved changes" : ""; $("fileName").textContent = doc ? fileName : ""; }
 
-function enableUi(on) { for (const id of ["btnSave", "btnAdd", "btnClose"]) $(id).disabled = !on; }
+function enableUi(on) { for (const id of ["btnSave", "btnAdd", "btnClose", "btnFold"]) $(id).disabled = !on; }
 
 function confirmBox(text, onYes) {
   const d = $("confirmDlg");
@@ -525,7 +668,18 @@ function confirmBox(text, onYes) {
   d.showModal();
 }
 
-function guard(next) { if (dirty) confirmBox("Discard the unsaved changes?", next); else next(); }
+/* Before New / Open / Close: Save (then go on), Don't save (go on), Cancel. */
+function guard(next) {
+  if (!dirty) {
+    next();
+    return;
+  }
+  const d = $("saveDlg");
+  $("saveDlgSave").onclick = () => { d.close(); save(next); };
+  $("saveDlgDiscard").onclick = () => { d.close(); next(); };
+  $("saveDlgCancel").onclick = () => d.close();
+  d.showModal();
+}
 
 $("btnOpen").onclick = () => guard(() => $("fileInput").click());
 $("fileInput").onchange = async (e) => {
@@ -534,7 +688,7 @@ $("fileInput").onchange = async (e) => {
   e.target.value = "";
 };
 $("btnNew").onclick = () => guard(() => loadText('{"format":"mysafefob","version":1,"accounts":[]}', "accounts.json"));
-$("btnSave").onclick = save;
+$("btnSave").onclick = () => save();
 $("btnAdd").onclick = () => {
   if (accounts.length >= LIM.accounts) { alert(`The device holds at most ${LIM.accounts} accounts.`); return; }
   accounts.push(normalize({ name: "" }));
@@ -550,6 +704,14 @@ $("btnClose").onclick = () => guard(() => {
   $("editor").innerHTML = '<div class="empty">Closed: nothing is kept by this page. Reload it to start again.</div>';
 });
 $("search").oninput = renderList;
+$("btnFold").onclick = () => {
+  const letters = [...new Set(accounts.map((a) => letterOf(a.name)))];
+  if (letters.some((L) => !folded.has(L))) letters.forEach((L) => folded.add(L));
+  else folded.clear();
+  selected = -1;
+  renderList();
+  renderEditor();
+};
 window.addEventListener("beforeunload", (e) => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
 
 /* drag and drop */
