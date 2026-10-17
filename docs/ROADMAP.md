@@ -190,7 +190,7 @@ not in NVS.
 |---|----------|-------------|
 | 10.1 | Firmware v1.0 signed/tagged | GitHub release with binary and checksum |
 | 10.0 | Secure Boot v2 + Flash Encryption (decided 2026-10-11: not critical now, before the final v1) | Step-by-step plan, prerequisites (bootloader size vs the 0xB000 otadata backup, hook, 16-byte aligned store writes, final factory) and irreversible eFuse order: `docs/SECURE-BOOT-PLAN.md` |
-| 10.2 | User documentation | User guide, backup/recovery procedure |
+| 10.2 | User documentation | User guide, backup/recovery procedure — `docs/USER-GUIDE.md` written 2026-10-16, to be validated by following it on the device |
 | 10.3 | Developer documentation | How to flash, how to contribute, how to port |
 
 ---

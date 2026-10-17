@@ -120,6 +120,11 @@ The default board is `x4pro`. See `boards/<name>/README.md`.
 3. **~~`secret_store` = stub~~ DONE (task 8.2, 2026-10-11)**: Argon2id
    (monocypher) + AES-256-GCM, format in `docs/INTERFACES.md`.
 
+## User guide
+
+Using the device, setting the time, filling accounts from a PC, backups
+and recovery: `docs/USER-GUIDE.md`.
+
 ## Security status
 
 The account store is encrypted (AES-256-GCM, key derived from the device

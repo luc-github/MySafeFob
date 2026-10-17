@@ -612,7 +612,15 @@ function renderEditor() {
       const used = el("input", { type: "checkbox", checked: c.used });
       used.onchange = () => { c.used = used.checked; changed(); };
       const del = el("button", { textContent: "✕", type: "button", title: "Remove this code", className: "danger" });
-      del.onclick = () => { a.recovery.splice(i, 1); changed(); drawCodes(); };
+      del.onclick = () => {
+        if (!c.code) {   /* an empty line just added: no need to ask */
+          a.recovery.splice(i, 1); changed(); drawCodes();
+          return;
+        }
+        confirmBox(`Remove recovery code ${i + 1} (${c.code})${c.used ? ", marked used" : ""}?`, () => {
+          a.recovery.splice(i, 1); changed(); drawCodes();
+        });
+      };
       table.append(el("tr", {}, el("td", { className: "n", textContent: i + 1 }),
         el("td", {}, el("div", { className: "inline" }, inp, cc.badge)),
         el("td", { className: "u" }, el("label", {}, used, " used")), el("td", {}, del)));
@@ -628,7 +636,15 @@ function renderEditor() {
     for (const c of text.split(/[\s,;]+/).filter(Boolean)) a.recovery.push({ code: c, used: false });
     changed(); drawCodes();
   };
-  rf.append(table, el("div", { className: "actions" }, addCode, paste),
+  /* All at once, e.g. after the service issued a new set (new TOTP key...). */
+  const clearAll = el("button", { textContent: "Remove all codes", type: "button", className: "danger" });
+  clearAll.onclick = () => {
+    if (!a.recovery.length) return;
+    confirmBox(`Remove all ${a.recovery.length} recovery codes of "${a.name || "(no name)"}"?`, () => {
+      a.recovery = []; changed(); drawCodes();
+    });
+  };
+  rf.append(table, el("div", { className: "actions" }, addCode, paste, clearAll),
             el("div", { className: "msg", dataset: { key: "recovery" } }));
 
   const del = el("button", { textContent: "Delete this account", className: "danger", type: "button" });
