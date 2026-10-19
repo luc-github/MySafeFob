@@ -9,3 +9,7 @@
 dependencies:
   lvgl/lvgl:
     version: "^9.4.0"
+# USB disk mode (usb_disk.c, 2026-10-17): the 2.x MSC storage API
+# (tinyusb_msc_new_storage_sdmmc); 1.x had a different one.
+  espressif/esp_tinyusb:
+    version: "^2.4.0"

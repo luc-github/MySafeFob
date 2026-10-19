@@ -43,8 +43,8 @@
 
 enum class Screen { Home, Settings, SettingsControls, SettingsAbout, SettingsDisplay, TouchDiag, Time, Alerts, OwnerInfo,
                     SettingsDevice, SettingsSecurity, Names, Account, AccountEdit,
-                    FieldEdit, RecoveryView, Pin, Backup, BackupPass, BackupFiles, BackupImport,
-                    kCount };
+                    FieldEdit, RecoveryView, Pin, Backup, BackupPass, BackupFiles, BackupImport, UsbDisk,
+                    Profiles, Profile, ProfileRename, kCount };
 
 /**
  * @brief Switches to screen `s`: refreshes its battery label, forces the
@@ -107,6 +107,19 @@ void account_edit_open(uint16_t id);
  */
 void account_edit_open_new(char letter);
 
+/**
+ * @brief "+ Add" for a new profile (Settings > Profiles > New, 2026-10-17):
+ *        a blank account already in `profile` (the profile exists once it
+ *        is saved); Back asks before discarding and returns to PROFILES.
+ */
+void account_edit_open_new_in_profile(const char *profile);
+
+/**
+ * @brief Settings > Profiles: the list, or straight the only profile's page
+ *        (New / Rename / Delete) when there is one profile or no account.
+ */
+void profiles_open(void);
+
 lv_obj_t *build_pin(lv_group_t **group_out, lv_obj_t **battery_label_out);
 
 /** @brief Device PIN screen (ui_screen_pin.cpp): unlock, first PIN creation, PIN change. */
@@ -121,6 +134,12 @@ lv_obj_t *build_backup(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_backup_pass(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_backup_files(lv_group_t **group_out, lv_obj_t **battery_label_out);
 lv_obj_t *build_backup_import(lv_group_t **group_out, lv_obj_t **battery_label_out);
+/* USB DISK (X4 Pro, 2026-10-17): the SD card as a USB disk, ui_screen_usb_disk.cpp. */
+lv_obj_t *build_usb_disk(lv_group_t **group_out, lv_obj_t **battery_label_out);
+/* Settings > PROFILES / PROFILE / PROFILE_RENAME (2026-10-17), ui_screen_profiles.cpp. */
+lv_obj_t *build_profiles(lv_group_t **group_out, lv_obj_t **battery_label_out);
+lv_obj_t *build_profile(lv_group_t **group_out, lv_obj_t **battery_label_out);
+lv_obj_t *build_profile_rename(lv_group_t **group_out, lv_obj_t **battery_label_out);
 /** @brief Opens the Backup menu (after the PIN confirmation). */
 void backup_open_menu(void);
 

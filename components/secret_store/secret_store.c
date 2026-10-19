@@ -100,10 +100,10 @@ _Static_assert(sizeof(slot_header_t) == V2_HEADER_LEN, "format 2 header size");
 /* Worst-case serialized size of one account (serialize() below): record
  * header + every field at its maximum + 32 recovery codes. The board's
  * MSF_STORE_MAX_ACCOUNTS must fit one format 2 slot even when every account
- * is full (~1.1 KB each: about 490 accounts at most). */
+ * is full (~1.2 KB each: about 420 accounts at most). */
 #define TLV(len) (3 + (len))
 #define RECORD_MAX_LEN                                                                                        \
-    (TLV(0) + TLV(2) + TLV(MSF_NAME_MAX) + TLV(MSF_TOTP_KEY_MAX) + TLV(1) + TLV(1) + TLV(MSF_USER_MAX) +    \
+    (TLV(0) + TLV(2) + TLV(MSF_NAME_MAX) + TLV(MSF_PROFILE_MAX) + TLV(MSF_TOTP_KEY_MAX) + TLV(1) + TLV(1) + TLV(MSF_USER_MAX) +    \
      TLV(MSF_PASSWORD_MAX) + TLV(MSF_PIN_FIELD_MAX) + TLV(MSF_NOTE_MAX) + TLV(MSF_IDENT_MAX) +              \
      TLV(MSF_EXTRA_MAX) + TLV(4) +                                                                         \
      MSF_RCV_MAX * TLV(MSF_RCV_CODE_MAX))
@@ -247,6 +247,7 @@ static void random_bytes(uint8_t *buf, size_t len)
 enum {
     REC_ACCOUNT = 0x30,
     F_ID = 0x01, F_NAME = 0x02,
+    F_PROFILE = 0x03,                 /* 2026-10-17: older firmware skips it */
     F_TOTP_KEY = 0x10, F_DIGITS = 0x11, F_PERIOD = 0x12,
     F_USER = 0x20, F_PASSWORD = 0x21, F_PIN = 0x22, F_NOTE = 0x23,
     F_IDENT = 0x24, F_EXTRA = 0x25,   /* 2026-10-13: older firmware skips them */
@@ -295,6 +296,7 @@ static size_t serialize(const msf_account_t *recs, int count, uint8_t *buf, size
         put(&w, h, 3);   /* length patched below */
         put_tlv(&w, F_ID, &a->id, 2);
         put_str(&w, F_NAME, a->name);
+        put_str(&w, F_PROFILE, a->profile);
         if (a->totp_key[0]) {
             put_str(&w, F_TOTP_KEY, a->totp_key);
             put_tlv(&w, F_DIGITS, &a->digits, 1);
@@ -351,6 +353,7 @@ static int deserialize(const uint8_t *buf, size_t len, msf_account_t *out, int m
                 switch (ft) {
                 case F_ID: if (fl == 2) memcpy(&a->id, v, 2); break;
                 case F_NAME: get_str(a->name, sizeof(a->name), v, fl); break;
+                case F_PROFILE: get_str(a->profile, sizeof(a->profile), v, fl); break;
                 case F_TOTP_KEY: get_str(a->totp_key, sizeof(a->totp_key), v, fl); break;
                 case F_DIGITS: if (fl == 1) a->digits = v[0]; break;
                 case F_PERIOD: if (fl == 1) a->period = v[0]; break;

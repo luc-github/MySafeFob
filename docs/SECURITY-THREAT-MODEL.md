@@ -150,6 +150,17 @@ on the device itself at ~1 s per try.
   and delete plaintext leftovers (MySafeFob JSON, rescue copies).
 - The device never writes plaintext; JSON exists only on the PC
   (`msf_backup.py`, offline `msf_editor.html` with a no-network CSP).
+- **USB disk mode** (X4 Pro, 2026-10-17): reached only from the Backup menu
+  (PIN asked again), it **locks the store** before the USB stack starts, so
+  nothing decrypted is in RAM while a PC is attached. Only the SD card is
+  exposed (raw sectors of the card, never the internal flash), and the
+  session ends with a restart. What the PC writes is untrusted, exactly
+  like a card filled on a PC: an import still checks the passphrase and the
+  GCM tag before anything is used.
+- **Profiles** (2026-10-17) are a convenience, not a separation: one PIN
+  opens every profile, and a backup holds all of them. The active profile
+  is kept in NVS as a CRC32 of its name (hides the name from a casual
+  dump, but a short name can be found back from it).
 
 ### 3.5 Radios (A6)
 
@@ -179,6 +190,7 @@ on the device itself at ~1 s per try.
 | R8 | **Destructive console commands** (`store erase ERASE`) without the PIN: loss of data, not disclosure | A2 | Accepted: denial of service only; backups are the answer |
 | R9 | **Forgotten PIN** = data lost (no recovery by design) | Owner | Accepted: backups + passphrase |
 | R10 | **e-paper persistence**: the last image stays visible without power | A1 | Mitigated: lock / sleep replace the screen (PIN screen / sleep image); the sleep image never shows a secret |
+| R11 | **USB disk session interrupted** (sleep forced with Power, battery out) while the PC writes: FAT damage on the card, and the console may stay off until a power cycle | Owner | Accepted: "eject first" asked before restarting; backups are encrypted files, a damaged card is reformatted on the PC |
 
 ## 5. Security tests for Phase 9 (ROADMAP 9.2)
 

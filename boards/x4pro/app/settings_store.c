@@ -246,6 +246,16 @@ void settings_store_set_pin_symbols(bool on)
     settings_set_u32(SETTINGS_ID_PinSymbols, on ? 1 : 0);
 }
 
+uint32_t settings_store_get_profile_hash(void)
+{
+    return settings_get_u32(SETTINGS_ID_ProfileHash);
+}
+
+void settings_store_set_profile_hash(uint32_t hash)
+{
+    if (settings_get_u32(SETTINGS_ID_ProfileHash) != hash) settings_set_u32(SETTINGS_ID_ProfileHash, hash);
+}
+
 uint32_t settings_store_get_auto_lock_s(void)
 {
     return settings_get_u32(SETTINGS_ID_AutoLockS);

@@ -83,6 +83,16 @@ static lv_obj_t *make_menu_screen(const char *title, Screen back_target, lv_grou
     return screen;
 }
 
+static void profiles_deferred(void *)
+{
+    profiles_open();
+}
+
+static void profiles_cb(lv_event_t *)
+{
+    ui_defer(profiles_deferred, nullptr);
+}
+
 /* Settings is a two-level menu (2026-10-01): every level must fit on one
  * screen, since scrolling on e-paper is slow and error-prone. Keep each
  * menu at 5 rows or fewer; add a group rather than a sixth row. */
@@ -94,7 +104,19 @@ lv_obj_t *build_settings(lv_group_t **group_out, lv_obj_t **battery_label_out)
     add_menu_button(content, MSF_SYMBOL_MOBILE "  Device", Screen::SettingsDevice, *group_out);
     add_menu_button(content, MSF_SYMBOL_CLOCK "  Time", Screen::Time, *group_out);
     add_menu_button(content, MSF_SYMBOL_KEY "  Security", Screen::SettingsSecurity, *group_out);
-    add_menu_button(content, MSF_SYMBOL_INFO "  About", Screen::SettingsAbout, *group_out);
+
+    /* The three rows above end at ~408; Profiles (2026-10-17) and About sit
+     * at fixed y below the touch band (490-554), as on the Security menu. */
+    int32_t y = kTouchBandBottom + 12;
+    lv_obj_t *profiles = add_menu_button(screen, LV_SYMBOL_DIRECTORY "  Profiles", Screen::Profiles, *group_out);
+    lv_obj_remove_event_cb(profiles, open_screen_cb);   /* the list, or the only profile's page */
+    lv_obj_add_event_cb(profiles, profiles_cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *const below[] = {profiles,
+                               add_menu_button(screen, MSF_SYMBOL_INFO "  About", Screen::SettingsAbout, *group_out)};
+    for (lv_obj_t *btn : below) {
+        lv_obj_align(btn, LV_ALIGN_TOP_MID, 0, y);
+        y += kMinTouchTarget + kMenuButtonRowGap;
+    }
 
     return screen;
 }

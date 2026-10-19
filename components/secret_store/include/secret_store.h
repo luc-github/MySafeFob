@@ -59,6 +59,7 @@ extern "C" {
 #endif
 #define MSF_PIN_LEN 6
 #define MSF_NAME_MAX 48
+#define MSF_PROFILE_MAX 32         /* profile (owner) the account belongs to, empty = default (2026-10-17) */
 #define MSF_USER_MAX 64
 #define MSF_PASSWORD_MAX 128
 #define MSF_PIN_FIELD_MAX 12       /* an account's own PIN (bank card...), not the device PIN */
@@ -72,7 +73,8 @@ extern "C" {
 /** One account record (ADR-019). A part is present when its field is not empty. */
 typedef struct {
     uint16_t id;
-    char name[MSF_NAME_MAX + 1];
+    char name[MSF_NAME_MAX + 1];           /* unique within its profile (case-insensitive) */
+    char profile[MSF_PROFILE_MAX + 1];     /* empty = default profile */
     char totp_key[MSF_TOTP_KEY_MAX + 1];   /* Base32, empty = no TOTP */
     uint8_t digits;                         /* 6/8 */
     uint8_t period;                         /* 30/60 s */

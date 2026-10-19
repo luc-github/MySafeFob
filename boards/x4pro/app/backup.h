@@ -49,13 +49,17 @@ typedef struct {
 } backup_file_t;
 
 /**
- * @brief Encrypts every account with `passphrase` and writes a new file.
+ * @brief Encrypts the accounts with `passphrase` and writes a new file.
+ * @param profile NULL = every account (full backup); else only that
+ *        profile's (2026-10-17). The file name never shows the profile:
+ *        it is plaintext on the card.
  * @param name_out receives the file name (BACKUP_NAME_MAX).
+ * @param count_out (may be NULL) receives the number of accounts written.
  * @return ESP_OK; ESP_ERR_NOT_FOUND (no SD card / not FAT); ESP_ERR_INVALID_ARG
  *         (passphrase length); ESP_ERR_INVALID_STATE (store locked); ESP_FAIL
  *         (write error).
  */
-esp_err_t backup_export(const char *passphrase, char *name_out);
+esp_err_t backup_export(const char *passphrase, const char *profile, char *name_out, int *count_out);
 
 /**
  * @brief Lists the backups, newest first (headers only, no passphrase).

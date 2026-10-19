@@ -47,7 +47,7 @@ static void print_status(void)
     static const char *const kState[] = {"blank (no store)", "locked", "unlocked", "ERROR (partition)"};
     msf_store_state_t st = msf_store_state();
     printf("Store     %s\n", kState[st]);
-    if (st == MSF_STORE_UNLOCKED) printf("Accounts  %d\n", accounts_count(ACCOUNTS_ALL_LETTERS));
+    if (st == MSF_STORE_UNLOCKED) printf("Accounts  %d (%d profiles, active: %s)\n", accounts_total(), accounts_profile_count(), accounts_profile_label(accounts_profile()));
     printf("Failures  %lu", (unsigned long)msf_store_fail_count());
     uint32_t wait = msf_store_backoff_remaining_s();
     if (wait) printf(" (next attempt in %lu s)", (unsigned long)wait);

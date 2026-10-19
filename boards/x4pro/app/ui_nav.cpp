@@ -288,6 +288,10 @@ static void build_screens(void)
     build_screen(Screen::BackupPass, build_backup_pass);
     build_screen(Screen::BackupFiles, build_backup_files);
     build_screen(Screen::BackupImport, build_backup_import);
+    build_screen(Screen::UsbDisk, build_usb_disk);
+    build_screen(Screen::Profiles, build_profiles);
+    build_screen(Screen::Profile, build_profile);
+    build_screen(Screen::ProfileRename, build_profile_rename);
 }
 
 /* REMOVED 2026-09-24 (was: slip eink.c's mandatory ghost-budget full GC
@@ -306,6 +310,9 @@ static void check_idle_timeout(void)
     uint32_t timeout_s = settings_store_get_idle_timeout_s();
     if (timeout_s == 0) {
         return;   /* disabled, settings_store.h's own dev-default */
+    }
+    if (s_screen == Screen::UsbDisk) {
+        return;   /* a PC may be writing to the card: it ends with a restart, never a sleep */
     }
     int64_t now = esp_timer_get_time();
     int64_t last = s_last_activity_us.load(std::memory_order_relaxed);
@@ -431,7 +438,7 @@ void board_ui_nav_task(void *arg)
              * an open confirmation is dropped unanswered. */
             static bool s_was_unlocked = false;
             bool unlocked = accounts_is_unlocked();
-            if (s_was_unlocked && !unlocked && s_screen != Screen::Pin) {
+            if (s_was_unlocked && !unlocked && s_screen != Screen::Pin && s_screen != Screen::UsbDisk) {
                 ui_confirm_dismiss();
                 pin_open_unlock();
             }

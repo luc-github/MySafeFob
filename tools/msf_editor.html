@@ -52,6 +52,12 @@ main { display: grid; grid-template-columns: 300px 1fr; flex: 1; min-height: 0; 
 @media (max-width: 760px) { main { grid-template-columns: 1fr; grid-template-rows: 40vh 1fr; } }
 aside { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
 .search { padding: 10px; border-bottom: 1px solid var(--line); display: flex; gap: 6px; }
+/* Profile block: the selector on its own full-width line (the active
+ * profile stays readable), its New / Rename / Delete below it. */
+.search.profiles { flex-direction: column; }
+.search.profiles select { width: 100%; }
+.profile-actions { display: flex; gap: 6px; }
+.profile-actions button { flex: 1; }
 ul#list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
 #list li { padding: 7px 12px; border-bottom: 1px solid var(--line); cursor: pointer; display: flex;
   justify-content: space-between; gap: 8px; }
@@ -135,6 +141,14 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
       <button id="btnFold" disabled title="Fold / unfold every letter">&#9662;&#9656;</button>
       <button id="btnAdd" disabled title="Add an account">+ Add</button>
     </div>
+    <div class="search profiles">
+      <select id="profileFilter" disabled title="Profile shown in the list; + Add puts new accounts in it"></select>
+      <div class="profile-actions">
+      <button id="btnProfileNew" disabled title="Create a profile (with its first account)">New</button>
+      <button id="btnProfileRename" disabled title="Rename the selected profile (or merge it into another)">Rename</button>
+      <button id="btnProfileDelete" class="danger" disabled title="Delete the selected profile and all its accounts">Delete</button>
+      </div>
+    </div>
     <ul id="list"></ul>
     <div class="count" id="count"></div>
   </aside>
@@ -144,7 +158,8 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
         (or drop it on this page), or start a <b>New</b> list.</p>
       <p>Edit, then <b>Save JSON</b> and run <code>python tools/msf_backup.py encrypt file.json</code>.
         On the device: Settings › Security › Backup › Import, mode <b>Merge</b> (adds and updates) or
-        <b>Replace all</b> (also removes what is not in the file).</p>
+        <b>Replace</b> (the file's profiles become the file: also removes their accounts that are not in it;
+        other profiles are untouched).</p>
     </div>
   </section>
 </main>
@@ -156,6 +171,16 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
     <button id="saveDlgCancel">Cancel</button>
     <button id="saveDlgDiscard" class="danger">Don't save</button>
     <button id="saveDlgSave" class="primary">Save</button>
+  </div>
+</dialog>
+
+<dialog id="renameDlg">
+  <p id="renameText"></p>
+  <input id="renameInput" autocomplete="off" spellcheck="false" placeholder="empty = Default profile">
+  <div class="msg" id="renameMsg"></div>
+  <div class="actions" style="justify-content:flex-end">
+    <button id="renameNo">Cancel</button>
+    <button id="renameYes" class="primary">Rename</button>
   </div>
 </dialog>
 
@@ -171,16 +196,23 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
 "use strict";
 /* ---- device limits (components/secret_store/include/secret_store.h) ---- */
 /* accounts = boards/x4pro/store_config.cmake MSF_STORE_MAX_ACCOUNTS; field limits = secret_store.h */
-const LIM = { accounts: 250, name: 48, id: 64, extra: 64, login: 64, password: 128, pin: 12, note: 64, totpKey: 103,
+const LIM = { accounts: 250, name: 48, profile: 32, id: 64, extra: 64, login: 64, password: 128, pin: 12, note: 64, totpKey: 103,
               rcv: 32, rcvCode: 16 };
 
 let doc = null;          // {format, version, created?, ...} without accounts
-let accounts = [];       // normalized: {name, login, password, pin, note, totp:{key,digits,period}|null, recovery:[{code,used}]}
+let accounts = [];       // normalized: {name, profile, login, password, pin, note, totp:{key,digits,period}|null, recovery:[{code,used}]}
 let selected = -1;
 let dirty = false;
 let fileName = "accounts.json";
 let totpTimer = null;
 const folded = new Set();   /* letters whose accounts are hidden in the list */
+/* Profiles (2026-10-17): "" = the default profile; the list always shows
+ * exactly one profile (null = not chosen yet: renderProfiles() picks). Names
+ * are unique within a profile; profiles match case-insensitively. */
+let profileShown = null;
+/* "Default" (any case) is the empty profile, as on the device: never a second one. */
+const profileKey = (p) => (p.toLowerCase() === "default" ? "" : p.toLowerCase());
+const profileLabel = (p) => p || "Default";
 /* Change tracking since the file was opened or last saved: the saved JSON of
  * each account; an account not in it was added. */
 let baseline = new WeakMap();
@@ -215,9 +247,10 @@ function parseOtpauth(uri) {
 }
 
 function normalize(j) {
-  const a = { name: "", id: "", login: "", password: "", pin: "", note: "", extra: "", totp: null, recovery: [] };
+  const a = { name: "", profile: "", id: "", login: "", password: "", pin: "", note: "", extra: "", totp: null,
+              recovery: [] };
   if (!j || typeof j !== "object") return a;
-  for (const k of ["name", "id", "login", "password", "pin", "note", "extra"]) if (typeof j[k] === "string") a[k] = j[k];
+  for (const k of ["name", "profile", "id", "login", "password", "pin", "note", "extra"]) if (typeof j[k] === "string") a[k] = j[k];
   let t = j.totp;
   if (typeof t === "string") {
     const p = parseOtpauth(t);
@@ -242,7 +275,8 @@ function loadText(text, name) {
   accounts = list.map(normalize);
   fileName = name || "accounts.json";
   selected = -1;
-  snapshot();
+  selected = -1;
+  profileShown = null;
   folded.clear();   /* a file opens as an overview: every letter folded, with its count */
   accounts.forEach((acc) => folded.add(letterOf(acc.name)));
   setDirty(false);
@@ -255,6 +289,7 @@ function loadText(text, name) {
 
 function toJson(a) {
   const j = { name: a.name };
+  if (profileKey(a.profile)) j.profile = a.profile;
   for (const k of ["id", "login", "password", "pin", "note", "extra"]) if (a[k]) j[k] = a[k];
   if (a.totp && a.totp.key) j.totp = { key: cleanKey(a.totp.key), digits: a.totp.digits, period: a.totp.period };
   const codes = a.recovery.filter((c) => c.code);
@@ -326,11 +361,12 @@ function validate(a, index) {
     if (n > limit) add(errors, k, `${n} bytes, the device keeps at most ${limit}`);
     if (/[^\x20-\x7E]/.test(a[k])) add(warns, k, "non-ASCII characters are stored but not displayed by the device");
   };
-  text("name", LIM.name); text("login", LIM.login); text("password", LIM.password);
+  text("name", LIM.name); text("profile", LIM.profile); text("login", LIM.login); text("password", LIM.password);
   text("pin", LIM.pin); text("note", LIM.note); text("id", LIM.id); text("extra", LIM.extra);
   if (!a.name.trim()) add(errors, "name", "a name is required");
-  else if (accounts.some((b, i) => i !== index && b.name.toLowerCase() === a.name.toLowerCase()))
-    add(errors, "name", "this name is used twice (names are case-insensitive)");
+  else if (accounts.some((b, i) => i !== index && b.name.toLowerCase() === a.name.toLowerCase() &&
+                                  profileKey(b.profile) === profileKey(a.profile)))
+    add(errors, "name", "this name is used twice in this profile (names are case-insensitive)");
   if (a.pin && !/^\d+$/.test(a.pin)) add(errors, "pin", "digits only");
   if (a.totp && a.totp.key) {
     const k = cleanKey(a.totp.key);
@@ -374,11 +410,117 @@ async function totpCode(key, digits, period) {
 
 function letterOf(name) { const c = (name[0] || "").toUpperCase(); return c >= "A" && c <= "Z" ? c : "#"; }
 
+/* Profile filter: one option per profile in the file (first spelling seen). */
+function renderProfiles() {
+  const sel = $("profileFilter");
+  const seen = new Map();
+  /* Default only when the file is empty (somewhere to add the first
+   * account); otherwise, like any profile, only while accounts use it. */
+  if (!accounts.length) seen.set("", "");
+  for (const a of accounts) if (!seen.has(profileKey(a.profile))) seen.set(profileKey(a.profile), a.profile);
+  const list = [...seen.values()].sort((x, y) => x.localeCompare(y, undefined, { sensitivity: "base" }));
+  /* Always one profile shown: the open account's (its Profile field was
+   * just edited), else the current one while it has accounts, else the
+   * first. */
+  const open = selected >= 0 ? accounts[selected] : null;
+  if (open && profileKey(open.profile) !== profileKey(profileShown ?? "\u0000")) profileShown = open.profile;
+  else if (profileShown === null || !seen.has(profileKey(profileShown))) profileShown = list[0];
+  sel.innerHTML = "";
+  for (const p of list) {
+    const n = accounts.filter((a) => profileKey(a.profile) === profileKey(p)).length;
+    sel.append(el("option", { value: "p:" + p, textContent: `${profileLabel(p)} (${n})` }));
+  }
+  sel.value = "p:" + seen.get(profileKey(profileShown));
+  /* Rename / Delete act on the profile chosen in the filter. */
+  const one = !!doc && accounts.some((a) => profileKey(a.profile) === profileKey(profileShown));
+  $("btnProfileNew").disabled = !doc;
+  $("btnProfileRename").disabled = !one;
+  $("btnProfileDelete").disabled = !one;
+}
+
+const inProfile = (p) => accounts.filter((a) => profileKey(a.profile) === profileKey(p));
+
+/* Moves every account of `from` to `to` (merges into an existing profile);
+ * refused when a name would then appear twice. Same rule as the device. */
+function renameProfile(from, to) {
+  if (bytes(to) > LIM.profile) return `at most ${LIM.profile} bytes`;
+  if (profileKey(from) !== profileKey(to)) {
+    const there = new Set(inProfile(to).map((a) => a.name.toLowerCase()));
+    const clash = inProfile(from).find((a) => there.has(a.name.toLowerCase()));
+    if (clash) return `"${clash.name}" is already in ${profileLabel(to)}`;
+  }
+  inProfile(from).forEach((a) => { a.profile = to; });
+  profileShown = to;
+  setDirty(true); renderList(); renderEditor();
+  return "";
+}
+
+/* A profile exists through its accounts: "New" creates it with a first,
+ * empty account to fill in (an account without a name is an error, so it
+ * cannot be forgotten). */
+function openNewProfile() {
+  const d = $("renameDlg"), input = $("renameInput");
+  $("renameText").textContent = "Name of the new profile (a profile exists through its accounts: its first one opens next):";
+  input.value = "";
+  input.placeholder = "e.g. Pat";
+  $("renameMsg").textContent = "";
+  $("renameYes").textContent = "Create";
+  $("renameYes").onclick = () => {
+    const name = input.value.trim();
+    let err = "";
+    if (!profileKey(name)) err = "type a name (Default already exists)";
+    else if (bytes(name) > LIM.profile) err = `at most ${LIM.profile} bytes`;
+    else if (accounts.some((a) => profileKey(a.profile) === profileKey(name))) err = "this profile already exists";
+    else if (accounts.length >= LIM.accounts) err = `the device holds at most ${LIM.accounts} accounts`;
+    if (err) { $("renameMsg").textContent = err; return; }
+    d.close();
+    profileShown = name;
+    accounts.push(normalize({ name: "", profile: name }));
+    selected = accounts.length - 1;
+    $("search").value = "";
+    setDirty(true); renderList(); renderEditor();
+    document.querySelector("#editor input").focus();
+  };
+  $("renameNo").onclick = () => d.close();
+  d.showModal();
+}
+
+function openRename() {
+  const from = profileShown, d = $("renameDlg"), input = $("renameInput");
+  $("renameText").textContent = `New name for profile "${profileLabel(from)}" (an existing profile name merges the two):`;
+  input.value = from;
+  input.placeholder = "empty = Default profile";
+  $("renameMsg").textContent = "";
+  $("renameYes").textContent = "Rename";
+  $("renameYes").onclick = () => {
+    if (input.value === from) { d.close(); return; }
+    const err = renameProfile(from, input.value);
+    if (err) $("renameMsg").textContent = err;
+    else d.close();
+  };
+  $("renameNo").onclick = () => d.close();
+  d.showModal();
+  input.select();
+}
+
+function deleteProfile() {
+  const p = profileShown, list = inProfile(p);
+  confirmBox(`Delete profile "${profileLabel(p)}" and its ${list.length} account(s)? (Only from this file: a profile missing from the file is left alone by Replace, so delete it on the device too: Settings › Profiles.)`, () => {
+    removedSinceSave += list.filter((a) => baseline.has(a)).length;
+    accounts = accounts.filter((a) => !list.includes(a));
+    selected = -1;
+    profileShown = null;
+    setDirty(true); renderList(); renderEditor();
+  });
+}
+
 function renderList() {
+  renderProfiles();
   const q = $("search").value.trim().toLowerCase();
   const ul = $("list");
   ul.innerHTML = "";
   const order = accounts.map((a, i) => i)
+    .filter((i) => profileKey(accounts[i].profile) === profileKey(profileShown))
     .filter((i) => !q || ["name", "id", "login", "note", "extra"].some((k) => accounts[i][k].toLowerCase().includes(q)))
     .sort((x, y) => accounts[x].name.localeCompare(accounts[y].name, undefined, { sensitivity: "base" }));
   /* Per letter: count, and whether a folded group hides an error / a reused password. */
@@ -535,7 +677,8 @@ function renderEditor() {
   /* Same grouping as the device's tabs (2026-10-13): Info / Security / Recovery. */
   const general = el("fieldset", {}, el("legend", { textContent: "Info" }));
   const g = el("div", { className: "row" });
-  g.append(...field("Name", "name", a, { placeholder: "required, unique" }),
+  g.append(...field("Name", "name", a, { placeholder: "required, unique in its profile" }),
+           ...field("Profile", "profile", a, { placeholder: "Default" }),
            ...field("ID", "id", a, { placeholder: "customer / account number, e-mail…" }),
            ...field("Note", "note", a, { placeholder: "one line: website, e-mail…" }),
            ...field("Extra", "extra", a, { placeholder: "one more line" }));
@@ -648,7 +791,7 @@ function renderEditor() {
             el("div", { className: "msg", dataset: { key: "recovery" } }));
 
   const del = el("button", { textContent: "Delete this account", className: "danger", type: "button" });
-  del.onclick = () => confirmBox(`Delete "${a.name || "(no name)"}"? (Only from this file: on the device, use Replace all to remove it there too.)`, () => {
+  del.onclick = () => confirmBox(`Delete "${a.name || "(no name)"}"? (Only from this file: on the device, Replace removes it too, unless it was the last account of its profile: then delete it there.)`, () => {
     if (baseline.has(accounts[selected])) removedSinceSave++;
     accounts.splice(selected, 1); selected = -1; setDirty(true); renderList(); renderEditor();
   });
@@ -674,7 +817,7 @@ function changed() { setDirty(true); showMessages(); renderList(); }
 
 function setDirty(d) { dirty = d; $("dirty").textContent = d ? "● unsaved changes" : ""; $("fileName").textContent = doc ? fileName : ""; }
 
-function enableUi(on) { for (const id of ["btnSave", "btnAdd", "btnClose", "btnFold"]) $(id).disabled = !on; }
+function enableUi(on) { for (const id of ["btnSave", "btnAdd", "btnClose", "btnFold", "profileFilter"]) $(id).disabled = !on; }
 
 function confirmBox(text, onYes) {
   const d = $("confirmDlg");
@@ -707,7 +850,7 @@ $("btnNew").onclick = () => guard(() => loadText('{"format":"mysafefob","version
 $("btnSave").onclick = () => save();
 $("btnAdd").onclick = () => {
   if (accounts.length >= LIM.accounts) { alert(`The device holds at most ${LIM.accounts} accounts.`); return; }
-  accounts.push(normalize({ name: "" }));
+  accounts.push(normalize({ name: "", profile: profileShown ?? "" }));
   selected = accounts.length - 1;
   $("search").value = "";
   setDirty(true); renderList(); renderEditor();
@@ -720,6 +863,18 @@ $("btnClose").onclick = () => guard(() => {
   $("editor").innerHTML = '<div class="empty">Closed: nothing is kept by this page. Reload it to start again.</div>';
 });
 $("search").oninput = renderList;
+$("btnProfileNew").onclick = openNewProfile;
+$("btnProfileRename").onclick = openRename;
+$("btnProfileDelete").onclick = deleteProfile;
+$("renameInput").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); $("renameYes").click(); } };
+$("profileFilter").onchange = (e) => {
+  profileShown = e.target.value.slice(2);
+  if (selected >= 0 && profileKey(accounts[selected].profile) !== profileKey(profileShown)) {
+    selected = -1;
+    renderEditor();
+  }
+  renderList();
+};
 $("btnFold").onclick = () => {
   const letters = [...new Set(accounts.map((a) => letterOf(a.name)))];
   if (letters.some((L) => !folded.has(L))) letters.forEach((L) => folded.add(L));

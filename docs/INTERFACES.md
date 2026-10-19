@@ -43,6 +43,14 @@ not enabled in v1 — the barrier is application-level encryption).
 > - **Account fields added 2026-10-13** (no format change: older firmware
 >   skips unknown tags): `0x24` ID (customer / account number, e-mail…,
 >   64 B), `0x25` Extra (one free line, 64 B). PC JSON keys `id`, `extra`.
+> - **Profile field added 2026-10-17** (no format change either): `0x03`
+>   Profile (32 B, omitted when empty = default profile; "Default" in any
+>   case is read as empty), PC JSON key
+>   `profile`. A name is unique within its profile (case-insensitive);
+>   import Merge / Replace match records on (profile, name), and Replace
+>   only touches the profiles the backup holds. Firmware
+>   older than this skips the tag: on it, every account is in one list
+>   again (and two same-name accounts of different profiles show twice).
 > - **PIN failures** (§1.3): counter incremented *before* each check and
 >   reset on success; attempts 1-2 free, then 10 s, 30 s, 2 min, 10 min,
 >   then 1 h between attempts, counted from the last failure (or from boot
@@ -223,10 +231,11 @@ tag 16B
   and parsed **before** the store is touched; header values are bounded
   before any allocation or KDF. Then a summary: new / changed /
   unchanged accounts (names match case-insensitively, "changed" = any
-  field differs), unusable records, and for Replace all the accounts it
+  field differs), unusable records, and for Replace the accounts it
   would remove. Then a mode: **Merge** (new names added, differing
-  accounts overwritten, the rest untouched, nothing removed) or **Replace
-  all** (the store becomes the backup: full sync, removals included). The
+  accounts overwritten, the rest untouched, nothing removed) or **Replace**
+  (the backup's profiles become the backup: full sync of those profiles,
+  removals included; other profiles untouched, 2026-10-17). The
   backup / PC JSON is the reference (user decision 2026-10-11, was Add /
   Update / Replace). ONE store write, none if nothing changes: if it
   fails, nothing changed. New accounts get new ids, updated ones keep

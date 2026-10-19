@@ -123,7 +123,7 @@ worker: copy records -> `msf_backup_seal()` (Argon2id t=3, AES-GCM) ->
 **Backup import**: file list (headers only) -> passphrase -> worker:
 `backup_load()` = read + `msf_backup_open()` (authenticated before
 parsing) -> preview (new / changed / unchanged / removed) -> Merge or
-Replace all -> `accounts_import()` = one store write.
+Replace (the backup's profiles only, 2026-10-17) -> `accounts_import()` = one store write.
 
 **PC round trip**: `msf_backup.py decrypt` (.msfx or RESCUE .MSR) -> JSON ->
 `msf_editor.html` -> `msf_backup.py encrypt` -> card -> Import.

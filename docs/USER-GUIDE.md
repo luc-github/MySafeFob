@@ -108,6 +108,10 @@ Make sure the PC clock itself is synced first.
 - A **grid of letters** (A-Z and # for names not starting with a letter);
   a letter without accounts has no frame and does nothing. "N entries" at
   the top.
+- **Profiles**: when the accounts belong to two people or more (e.g. *Luc*,
+  *Pat*, *Min*), the top line becomes a button **"Luc (12)"**: tap it to
+  switch to the next profile. Letters, counts and names then only show
+  that profile's accounts. The device remembers the last profile used.
 - **⚙** Settings (top left), **⏻** sleep (top right), **⚠** alerts (when
   there is one), **+ Add** (new account).
 
@@ -142,7 +146,7 @@ asks "Discard changes?".
 
 | Tab | Fields (tap a row to type) |
 |---|---|
-| **Info** | Name (required, unique), ID, Note, Extra |
+| **Info** | Name (required, unique in its profile), Profile, ID, Note, Extra |
 | **Security** | Login, Password, PIN (digits only), TOTP |
 | **Recovery** | The codes: tap one to remove it, **+ Add**, **Clear all** |
 
@@ -150,10 +154,29 @@ asks "Discard changes?".
   layer), digits only (PIN), Base32 A-Z / 2-7 (TOTP key).
 - **🎲** next to the password generates a strong 20-character password;
   Enter keeps it.
+- **Profile**: the person the account belongs to; empty (or "Default") = *Default*. A new
+  account starts in the profile shown on the home screen. Type a new name
+  to create a profile, or **⟳** to step through the existing ones. A
+  profile disappears with its last account. After Save, the home screen
+  shows the account's profile.
+- **Settings › Profiles** opens straight the profile's page when there is
+  only one (or no account yet): **+ New profile**, **Rename**, **Delete
+  with its accounts**. Deleting the only profile deletes every account; the
+  device starts again with an empty *Default* profile.
+- With two profiles or more, it lists them with their number of accounts
+  (✓ = the one shown on the home screen). **+ New** creates one: type its
+  name, then its first account opens (a profile exists through its
+  accounts, so it is created when that account is saved). Tap a profile:
+  - **Rename**: type the new name (empty = *Default*). Giving it the name
+    of another profile merges the two, unless an account name would then
+    appear twice (the screen says which one).
+  - **Delete with its accounts**: deletes the profile **and all its
+    accounts**, after a confirmation screen. It cannot be undone: export a
+    backup first if in doubt.
 - **TOTP**: type the secret key given by the service ("can't scan the QR
   code? enter this key"), choose 6 / 8 digits and 30 / 60 s (6 and 30 s
   almost everywhere).
-- **Limits**: name 48 characters; ID, login, note, extra 64; password 128;
+- **Limits**: name 48 characters; profile 32; ID, login, note, extra 64; password 128;
   PIN 12 digits; TOTP key 103; 32 recovery codes of 16 characters; 250
   accounts. Accented letters and symbols outside basic ASCII are not shown
   on this screen: avoid them in anything you need to read.
@@ -230,7 +253,11 @@ secrets in clear.
 ### 6.2 Export (device → card)
 1. Insert a microSD card (FAT32).
 2. **Settings › Security › Backup** — your **PIN is asked** first.
-3. **Export to the SD card**, type the passphrase twice.
+3. **Export to the SD card**, type the passphrase twice. With two profiles
+   or more, the **Export:** button below the field chooses what goes in the
+   file: *all profiles* (default, the full backup) or *Luc only* (the
+   profile shown on the home screen), e.g. to give Pat a backup without
+   Luc's secrets. The file name never shows the profile.
 4. "Encrypting and writing…" (a few seconds), then ✓ and the file name, e.g.
    `MSF/MSF-20261016-1430.msfx`. Files are never overwritten.
 
@@ -241,17 +268,36 @@ else than the card.
 1. **Settings › Security › Backup** (PIN), **Import from the SD card**.
 2. Pick the file (newest first, with its date and number of accounts).
 3. Type its passphrase. "Decrypting…"
-4. Read the **summary**: new, changed, unchanged accounts, and how many
-   *Replace all* would remove.
+4. Read the **summary**: the profiles in the file, new, changed, unchanged
+   accounts, and how many *Replace* would remove.
 5. Choose:
    - **Merge** — adds the new accounts and updates the ones that differ;
      accounts that are not in the file stay untouched. Use it after editing
      on the PC.
-   - **Replace all** — the device becomes exactly the file: accounts not in
-     it are **deleted** (asks first). Use it to restore, or on a new device.
+   - **Replace** — **the profiles in the file** become exactly the file:
+     their accounts not in it are **deleted** (asks first). Profiles that
+     are not in the file are never touched: restoring Pat's backup leaves
+     Luc's accounts alone. A full backup restores everything.
+   - **Into: Default / Luc** — only for a file made without profiles (older
+     firmware, a PC JSON without "profile") while another profile is shown
+     on the home screen: tap it to import the file into that profile
+     instead of *Default*, then Merge or Replace.
 
    If the summary shows more "changed" accounts than you expected, the file
    may be **older** than the device: cancel and export first.
+
+### 6.3b SD card as a USB disk (no need to remove the card)
+1. Connect the device to the PC with the USB cable.
+2. **Settings › Security › Backup** (PIN), **SD card as a USB disk**, **Start**.
+3. The store is **locked** first; the screen shows "Waiting for the PC",
+   then "Connected to the PC": the card appears as a disk on the PC.
+4. Copy `.msfx` files to or from its `MSF` folder.
+5. **Eject the disk on the PC**, then press **Done: restart**. The device
+   restarts and asks for the PIN; the import (6.3) then sees the new files.
+
+While the disk is on the PC the device does not sleep, and the USB serial
+console is off (it comes back after the restart). Only the SD card is
+shared, never the device's own memory, and it only holds encrypted files.
 
 ### 6.4 Editing your existing accounts on the PC
 1. Export on the device (§6.2), copy the `.msfx` to the PC.
@@ -263,7 +309,7 @@ else than the card.
 
 ### 6.5 Restoring on a new device (or after a reset)
 1. Create the new PIN at first start.
-2. Insert the card with your latest `.msfx`, **Import › Replace all**.
+2. Insert the card with your latest `.msfx`, **Import › Replace**.
 
 ### 6.6 Rescue export (when the app no longer starts)
 If the device starts but the normal screens fail, the recovery mode can
@@ -306,6 +352,8 @@ never touched. For certainty, format the card on a PC.
 | | Auto-lock | 5 min | Locks after Off / 1 / 2 / 5 / 10 / 30 min without input |
 | | Symbol keypad | Off | PIN keys show pictures (star, eye, smile…) instead of digits — cosmetic, the PIN stays the same digits |
 | **Backup** | Check SD at start | On | §6.7 |
+| | SD card as a USB disk | | §6.3b |
+| **Profiles** | Rename / Delete | | §4 (Delete removes the profile's accounts too, asks first) |
 | **About** | | | Firmware version and build, free memory, UTC time, last time sync (with the measured drift) and when the next one is due, **Owner info** |
 | **About › Owner info** | Show on sleep screen | Off | A phone number or e-mail shown on the sleep screen, so whoever finds the device can return it |
 
@@ -346,7 +394,7 @@ someone could take it for a while**, and keep backups. Details:
 | Problem | What to do |
 |---|---|
 | **TOTP codes rejected** | The clock is probably off: sync the time (§3). Check 6/8 digits and 30/60 s match the service |
-| **Forgot the PIN** | The data cannot be recovered. Erase and start again (console `store erase ERASE`), then **Import › Replace all** from your backup |
+| **Forgot the PIN** | The data cannot be recovered. Erase and start again (console `store erase ERASE`), then **Import › Replace** from your backup |
 | **"Too many attempts: wait…"** | Wait the time shown; the delay grows with each wrong PIN |
 | **Taps land in the wrong place** | Settings › Device › Touch Calibration |
 | **Battery shows 0 % after being fully drained** | Charge it; the gauge reloads its profile by itself and shows a real value again |
@@ -379,6 +427,6 @@ for example: `backup list`, `backup export <PIN> "<passphrase>"`,
 | Add an account | Home › + Add |
 | Sync the time | Settings › Time › Wi-Fi / Bluetooth / Manual |
 | Back up | Settings › Security › Backup › Export |
-| Restore | Settings › Security › Backup › Import › Replace all |
+| Restore | Settings › Security › Backup › Import › Replace |
 | Edit everything on a PC | Export → `decrypt` → editor → `encrypt` → Import › Merge |
 | Recovery mode | Hold Power 10 s |

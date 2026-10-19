@@ -23,14 +23,16 @@ JSON format (also accepted by `encrypt` for a first fill or a migration):
 
   { "format": "mysafefob", "version": 1,
     "accounts": [
-      { "name": "GitHub", "id": "customer 1234", "login": "octocat",
+      { "name": "GitHub", "profile": "Luc", "id": "customer 1234", "login": "octocat",
         "password": "...", "pin": "", "note": "github.com", "extra": "",
         "totp": { "key": "JBSWY3DPEHPK3PXP", "digits": 6, "period": 30 },
         "recovery": ["A1B2-C3D4", {"code": "E5F6-G7H8", "used": true}] },
       { "name": "Google", "totp": "otpauth://totp/Google:luc?secret=...&period=30" }
     ] }
 
-Only "name" is required. "totp" is an object or an otpauth:// URI (the
+Only "name" is required. "profile" (2026-10-17) is the person the account
+belongs to, missing, "" or "Default" = the default profile; a name is unique within its
+profile (case-insensitive). "totp" is an object or an otpauth:// URI (the
 export format of most TOTP apps; SHA1 only, like the device). A recovery
 code is a string (available) or {"code", "used"}. Limits are the device's
 (secret_store.h): a field that does not fit is an error, never truncated.
@@ -60,6 +62,7 @@ except ImportError:
 MAX_ACCOUNTS = 250   # = boards/x4pro/store_config.cmake MSF_STORE_MAX_ACCOUNTS
 NAME_MAX, USER_MAX, PASSWORD_MAX, PIN_MAX, NOTE_MAX = 48, 64, 128, 12, 64
 IDENT_MAX, EXTRA_MAX = 64, 64   # "id" (customer / account number...), "extra" (2026-10-13)
+PROFILE_MAX = 32                # "profile" (2026-10-17)
 TOTP_KEY_MAX, RCV_MAX, RCV_CODE_MAX = 103, 32, 16
 PASS_MIN, PASS_MAX = 8, 64
 
@@ -70,7 +73,7 @@ KDF_M_MIB, KDF_T, KDF_P = 2, 3, 1               # same as the device (secret_sto
 TAG_LEN = 16
 
 REC_ACCOUNT = 0x30
-F_ID, F_NAME = 0x01, 0x02
+F_ID, F_NAME, F_PROFILE = 0x01, 0x02, 0x03
 F_TOTP_KEY, F_DIGITS, F_PERIOD = 0x10, 0x11, 0x12
 F_USER, F_PASSWORD, F_PIN, F_NOTE = 0x20, 0x21, 0x22, 0x23
 F_IDENT, F_EXTRA = 0x24, 0x25
@@ -97,6 +100,8 @@ def serialize(accounts):
     for i, a in enumerate(accounts, 1):
         body = bytearray(tlv(F_ID, struct.pack("<H", i)))
         body += tlv(F_NAME, a["name"].encode())
+        if a["profile"]:
+            body += tlv(F_PROFILE, a["profile"].encode())
         if a["totp_key"]:
             body += tlv(F_TOTP_KEY, a["totp_key"].encode())
             body += tlv(F_DIGITS, bytes([a["digits"]]))
@@ -124,7 +129,7 @@ def deserialize(data):
         if pos + rlen > len(data):
             raise BackupError("damaged records")
         if tag == REC_ACCOUNT:
-            a = {"name": "", "login": "", "password": "", "pin": "", "note": "", "id": "", "extra": "", "totp_key": "",
+            a = {"name": "", "profile": "", "login": "", "password": "", "pin": "", "note": "", "id": "", "extra": "", "totp_key": "",
                  "digits": 6, "period": 30, "mask": 0, "codes": []}
             p, end = pos, pos + rlen
             while p + 3 <= end:
@@ -133,6 +138,7 @@ def deserialize(data):
                 v = data[p:p + fl]
                 text = v.decode("utf-8", errors="replace")
                 if ft == F_NAME: a["name"] = text
+                elif ft == F_PROFILE: a["profile"] = text
                 elif ft == F_TOTP_KEY: a["totp_key"] = text
                 elif ft == F_DIGITS and fl == 1: a["digits"] = v[0]
                 elif ft == F_PERIOD and fl == 1: a["period"] = v[0]
@@ -219,7 +225,7 @@ def to_json(accounts, created):
     out = []
     for a in accounts:
         j = {"name": a["name"]}
-        for key in ("id", "login", "password", "pin", "note", "extra"):
+        for key in ("profile", "id", "login", "password", "pin", "note", "extra"):
             if a[key]:
                 j[key] = a[key]
         if a["totp_key"]:
@@ -281,6 +287,7 @@ def from_json(doc):
         name = j.get("name") or (totp or {}).get("issuer", "")
         where = f'account {n} "{name}"'
         a = {"name": check_text(f"{where} name", name, NAME_MAX, errors, warnings),
+             "profile": check_text(f"{where} profile", j.get("profile", ""), PROFILE_MAX, errors, warnings),
              "login": check_text(f"{where} login", j.get("login", ""), USER_MAX, errors, warnings),
              "password": check_text(f"{where} password", j.get("password", ""), PASSWORD_MAX, errors, warnings),
              "pin": check_text(f"{where} pin", j.get("pin", ""), PIN_MAX, errors, warnings),
@@ -288,11 +295,13 @@ def from_json(doc):
              "id": check_text(f"{where} id", j.get("id", ""), IDENT_MAX, errors, warnings),
              "extra": check_text(f"{where} extra", j.get("extra", ""), EXTRA_MAX, errors, warnings),
              "totp_key": "", "digits": 6, "period": 30, "recovery": []}
+        if a["profile"].lower() == "default":   # the device shows the empty profile as "Default": the same one
+            a["profile"] = ""
         if not a["name"]:
             errors.append(f"account {n}: no name")
-        elif a["name"].lower() in names:
-            errors.append(f"{where}: the name appears twice (names are case-insensitive)")
-        names.add(a["name"].lower())
+        elif (a["profile"].lower(), a["name"].lower()) in names:
+            errors.append(f"{where}: the name appears twice in its profile (names are case-insensitive)")
+        names.add((a["profile"].lower(), a["name"].lower()))
         if a["pin"] and not a["pin"].isdigit():
             errors.append(f"{where} pin: digits only")
         if totp:

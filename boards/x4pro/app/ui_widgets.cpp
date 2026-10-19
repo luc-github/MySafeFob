@@ -500,6 +500,7 @@ static lv_group_t *s_confirm_group = nullptr;
 static ui_confirm_t s_confirm_cfg;
 static char s_confirm_title[48];
 static char s_confirm_message[160];
+static constexpr int32_t kConfirmTextTop = 60;   /* the modal hides the header: the text may start high */
 static char s_confirm_action[24];
 
 bool ui_confirm_is_open(void)
@@ -558,15 +559,25 @@ bool ui_confirm_show(const ui_confirm_t *cfg)
     lv_obj_set_style_bg_opa(s_confirm, LV_OPA_COVER, 0);
     lv_obj_add_flag(s_confirm, LV_OBJ_FLAG_CLICKABLE);   /* absorbs taps outside the buttons */
     lv_obj_remove_flag(s_confirm, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_flex_flow(s_confirm, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(s_confirm, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(s_confirm, 32, 0);
 
-    lv_obj_t *title = lv_label_create(s_confirm);
+    /* Title and message above the X4 Pro touch band, the buttons at a fixed
+     * y just below it (2026-10-17: centered as one column, a 3-4 line
+     * message put the buttons right in the band, 490-554). */
+    lv_obj_t *text = lv_obj_create(s_confirm);
+    lv_obj_remove_style_all(text);
+    lv_obj_set_size(text, LV_PCT(100), kTouchBandTop - kConfirmTextTop);
+    lv_obj_align(text, LV_ALIGN_TOP_MID, 0, kConfirmTextTop);
+    lv_obj_remove_flag(text, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(text, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(text, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(text, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(text, 32, 0);
+
+    lv_obj_t *title = lv_label_create(text);
     lv_label_set_text(title, s_confirm_title);
     lv_obj_set_style_text_font(title, &msf_font_32, 0);
 
-    lv_obj_t *message = lv_label_create(s_confirm);
+    lv_obj_t *message = lv_label_create(text);
     lv_label_set_text(message, s_confirm_message);
     lv_label_set_long_mode(message, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(message, LV_PCT(85));
@@ -578,6 +589,7 @@ bool ui_confirm_show(const ui_confirm_t *cfg)
     lv_obj_set_flex_flow(buttons, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_all(buttons, kFocusOutlineSlack, 0);
     lv_obj_set_style_pad_column(buttons, 2 * kExtClickMargin + 16, 0);   /* hit areas never overlap */
+    lv_obj_align(buttons, LV_ALIGN_TOP_MID, 0, kTouchBandBottom + 12 - kFocusOutlineSlack);
 
     lv_obj_t *cancel = make_button(buttons, LV_SYMBOL_CLOSE " Cancel");
     lv_obj_add_event_cb(cancel, confirm_button_cb, LV_EVENT_CLICKED, reinterpret_cast<void *>(static_cast<intptr_t>(0)));

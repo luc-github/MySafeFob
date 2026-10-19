@@ -23,6 +23,9 @@
  *        right, mirror of Settings), alert button left of Power while an
  *        alert is active. Body: letter buttons A-Z and '#' (letters without
  *        any account disabled) and "+ Add". A letter opens NAMES.
+ *        Profiles (2026-10-17): with two profiles or more, the header's
+ *        "N entries" line becomes a button "<profile> (N)"; a tap makes
+ *        the next profile active (letters and count follow it).
  */
 #include "ui_screens.h"
 #include "ui_widgets.h"
@@ -70,8 +73,11 @@ static constexpr int32_t kGridLeft = (480 - (kCols * kCellW + (kCols - 1) * kCel
 
 static lv_obj_t *s_letter_btns[kLetterCount];
 /* Header line between Settings and the right-hand buttons: "N entries"
- * (accounts, information only). */
+ * (accounts, information only) with one profile; the profile button
+ * instead with several (only one of the two is shown). */
 static lv_obj_t *s_info;
+static lv_obj_t *s_profile_btn;
+static lv_obj_t *s_profile_label;
 
 static char letter_at(int i)
 {
@@ -102,9 +108,18 @@ static void add_cb(lv_event_t *)
 static void show_entry_count(void)
 {
     int n = accounts_count(ACCOUNTS_ALL_LETTERS);
-    char buf[32];
-    snprintf(buf, sizeof(buf), "%d %s", n, n == 1 ? "entry" : "entries");
-    lv_label_set_text(s_info, buf);
+    char buf[ACCOUNTS_PROFILE_MAX + 16];
+    if (accounts_profile_count() < 2) {
+        snprintf(buf, sizeof(buf), "%d %s", n, n == 1 ? "entry" : "entries");
+        lv_label_set_text(s_info, buf);
+        lv_obj_remove_flag(s_info, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_profile_btn, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    snprintf(buf, sizeof(buf), "%s (%d)", accounts_profile_label(accounts_profile()), n);
+    lv_label_set_text(s_profile_label, buf);
+    lv_obj_add_flag(s_info, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(s_profile_btn, LV_OBJ_FLAG_HIDDEN);
 }
 
 /* Letters without any account: disabled (no frame, not focusable, taps
@@ -115,6 +130,18 @@ static void update_letters(void)
         if (accounts_count(letter_at(i)) > 0) lv_obj_remove_state(s_letter_btns[i], LV_STATE_DISABLED);
         else lv_obj_add_state(s_letter_btns[i], LV_STATE_DISABLED);
     }
+}
+
+static void profile_deferred(void *)
+{
+    accounts_profile_next();
+    update_letters();
+    show_entry_count();
+}
+
+static void profile_cb(lv_event_t *)
+{
+    ui_defer(profile_deferred, nullptr);
 }
 
 static void open_alerts_deferred(void *user_data)
@@ -203,8 +230,26 @@ lv_obj_t *build_home(lv_group_t **group_out, lv_obj_t **battery_label_out)
     lv_obj_align(power_btn, LV_ALIGN_TOP_RIGHT, -16, kBackTopMargin);
     lv_obj_add_event_cb(power_btn, sleep_now_cb, LV_EVENT_CLICKED, nullptr);
 
+    /* Profile button, between Settings and the alert slot (both
+     * kept clear even while the alert button is hidden), only with two
+     * profiles or more. Long names end in "...". */
+    static constexpr int32_t kProfileW = 480 - 2 * (16 + kMinTouchTarget + 16) - kMinTouchTarget - 16;
+    s_profile_btn = make_button(screen, "");
+    lv_obj_set_style_min_width(s_profile_btn, 0, 0);
+    lv_obj_set_size(s_profile_btn, kProfileW, kMinTouchTarget);
+    lv_obj_set_ext_click_area(s_profile_btn, 0);   /* neighbours closer than 2 x kExtClickMargin */
+    lv_obj_align(s_profile_btn, LV_ALIGN_TOP_LEFT, 16 + kMinTouchTarget + 16, kBackTopMargin);
+    s_profile_label = lv_obj_get_child(s_profile_btn, 0);
+    lv_label_set_long_mode(s_profile_label, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(s_profile_label, kProfileW - 24);
+    lv_obj_set_style_text_align(s_profile_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(s_profile_label);
+    lv_obj_add_event_cb(s_profile_btn, profile_cb, LV_EVENT_CLICKED, nullptr);
+    add_to_group(s_profile_btn, group);
+    lv_obj_add_flag(s_profile_btn, LV_OBJ_FLAG_HIDDEN);
+
     /* ADR-018 alert button, just left of Power, only while an alert is
-     * active. Focus order: Settings, alert, Power, letters, + Add. */
+     * active. Focus order: Settings, profile, alert, Power, letters, + Add. */
     s_alert_btn = make_button(screen, LV_SYMBOL_WARNING);
     lv_obj_set_style_min_width(s_alert_btn, kMinTouchTarget, 0);
     lv_obj_align(s_alert_btn, LV_ALIGN_TOP_RIGHT, -16 - kMinTouchTarget - 16, kBackTopMargin);

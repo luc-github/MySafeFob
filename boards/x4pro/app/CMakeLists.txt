@@ -8,6 +8,8 @@
 # component's first NVS-backed persistence (UI preferences only).
 # lv_port_disp/lv_port_indev glue LVGL onto eink.c/touch.c without
 # touching either driver.
+# usb_disk.c (2026-10-17): the SD card as a USB disk, over espressif/esp_tinyusb
+# (idf_component.yml).
 idf_component_register(
     SRCS "splash.cpp" "eink.c" "touch.c" "buttons.c" "i2c_bus.c"
          "ui_nav.cpp" "ui_widgets.cpp"
@@ -22,6 +24,7 @@ idf_component_register(
          "images/msf_logo.c"
          "time_service.c" "wifi_time.c" "ble_time.c"
          "settings_store.c" "alerts.c" "sdcard.c" "backup.c" "ui_screen_alerts.cpp" "battery.c" "frontlight.c"
+         "usb_disk.c" "ui_screen_usb_disk.cpp" "ui_screen_profiles.cpp"
          "lv_port_disp.c" "lv_port_indev.c"
     INCLUDE_DIRS "."
     REQUIRES driver esp_timer lvgl power_mgr nvs_flash esp_app_format totp_engine secret_store

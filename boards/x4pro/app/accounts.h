@@ -23,6 +23,14 @@
  *        note / recovery codes, sorted by name, indexed by first letter).
  *        A part is present when its field is not empty.
  *
+ *        Profiles (2026-10-17): every account belongs to one profile (a
+ *        person sharing the device: "Luc", "Pat"...), empty = the default
+ *        profile. A profile exists while at least one account uses it;
+ *        names match case-insensitively. One profile is active at a time:
+ *        accounts_count() and accounts_list() only see its accounts, and
+ *        a name is unique within its profile. The active profile is kept
+ *        across unlocks (settings_store, as a hash).
+ *
  *        Backed by secret_store (accounts_store.c): the records are
  *        decrypted into RAM when the store is unlocked, every change is
  *        saved (encrypted) at once, and the RAM copy is wiped on lock.
@@ -41,6 +49,8 @@ extern "C" {
 #endif
 
 #define ACCOUNTS_NAME_MAX MSF_NAME_MAX
+#define ACCOUNTS_PROFILE_MAX MSF_PROFILE_MAX
+#define ACCOUNTS_PROFILE_DEFAULT_LABEL "Default"   /* how the empty profile is shown */
 #define ACCOUNTS_USER_MAX MSF_USER_MAX
 #define ACCOUNTS_PASSWORD_MAX MSF_PASSWORD_MAX
 #define ACCOUNTS_PIN_MAX MSF_PIN_FIELD_MAX     /* digits only */
@@ -64,7 +74,7 @@ typedef enum {
     ACCOUNTS_OK = 0,
     ACCOUNTS_ERR_NOT_FOUND,
     ACCOUNTS_ERR_NAME_EMPTY,
-    ACCOUNTS_ERR_NAME_EXISTS,    /* same name, case-insensitive */
+    ACCOUNTS_ERR_NAME_EXISTS,    /* same name in the same profile, case-insensitive */
     ACCOUNTS_ERR_TOTP_KEY,       /* not valid Base32, or too long */
     ACCOUNTS_ERR_FULL,
     ACCOUNTS_ERR_LOCKED,         /* store not unlocked */
@@ -118,12 +128,69 @@ bool accounts_totp_key_valid(const char *b32);
 /** @brief Short English text for a result, for the status line. */
 const char *accounts_result_text(accounts_result_t r);
 
-/** @brief Number of accounts under `letter` ('A'-'Z', '#', or ACCOUNTS_ALL_LETTERS). */
+/* ---- Profiles ------------------------------------------------------------ */
+
+/** @brief Active profile's name ("" = default profile); "" while locked. */
+const char *accounts_profile(void);
+
+/** @brief Name to show for `profile`: ACCOUNTS_PROFILE_DEFAULT_LABEL for "". */
+const char *accounts_profile_label(const char *profile);
+
+/** @brief Number of distinct profiles in the store (0 while locked or empty). */
+int accounts_profile_count(void);
+
+/**
+ * @brief Existing profile following `current` in name order (wraps
+ *        around), into `out` (ACCOUNTS_PROFILE_MAX + 1 bytes).
+ * @return false if the store holds no account.
+ */
+bool accounts_profile_after(const char *current, char *out);
+
+/** @brief Makes the next profile active (HOME's profile button) and remembers it. */
+void accounts_profile_next(void);
+
+/**
+ * @brief Up to `max` profiles in name order, from the `first`-th one, into
+ *        `out` (Settings > Profiles).
+ * @return number of entries written.
+ */
+int accounts_profile_list(int first, int max, char (*out)[ACCOUNTS_PROFILE_MAX + 1]);
+
+/** @brief Number of accounts in `profile` (case-insensitive). */
+int accounts_profile_size(const char *profile);
+
+/**
+ * @brief Moves every account of `from` to `to`, in one store write (none
+ *        if it fails: nothing changes). `to` may be an existing profile
+ *        (the two merge) or "" (the default one). The active profile
+ *        follows when it was `from`.
+ * @return ACCOUNTS_OK, ACCOUNTS_ERR_NOT_FOUND (no such profile),
+ *         ACCOUNTS_ERR_NAME_EXISTS (a name of `from` is already in `to`:
+ *         its name goes to `clash`, ACCOUNTS_NAME_MAX + 1 bytes, may be
+ *         NULL), ACCOUNTS_ERR_LOCKED, ACCOUNTS_ERR_STORE.
+ */
+accounts_result_t accounts_profile_rename(const char *from, const char *to, char *clash);
+
+/**
+ * @brief Deletes `profile` WITH all its accounts, in one store write
+ *        (irreversible; the caller confirms first). Records are wiped.
+ * @return accounts removed, or -1 (locked, not found, write failed:
+ *         nothing changed).
+ */
+int accounts_profile_delete(const char *profile);
+
+/* ---- Queries (active profile only) --------------------------------------- */
+
+/** @brief Number of accounts of every profile. */
+int accounts_total(void);
+
+/** @brief Number of active-profile accounts under `letter` ('A'-'Z', '#', or ACCOUNTS_ALL_LETTERS). */
 int accounts_count(char letter);
 
 /**
- * @brief Fills `out` with up to `max` accounts under `letter`, sorted by
- *        name (case-insensitive), starting at the `first`-th one.
+ * @brief Fills `out` with up to `max` active-profile accounts under
+ *        `letter`, sorted by name (case-insensitive), starting at the
+ *        `first`-th one.
  * @return number of entries written.
  */
 int accounts_list(char letter, int first, int max, account_summary_t *out);
@@ -137,7 +204,10 @@ bool accounts_get(uint16_t id, account_t *out);
  */
 bool accounts_totp(uint16_t id, time_t utc, char *code, int *seconds_left);
 
-/** @brief Adds `in` as a new account; its id goes to *id_out. */
+/**
+ * @brief Adds `in` as a new account; its id goes to *id_out. Its profile
+ *        becomes the active one (as for accounts_update()).
+ */
 accounts_result_t accounts_add(const account_t *in, uint16_t *id_out);
 
 /** @brief Replaces account `id` with `in` (in->id is ignored). */
@@ -161,26 +231,45 @@ bool accounts_remove(uint16_t id);
 /* ---- Backup import / export (ADR-005 amendment 2026-10-11) -------------- */
 
 /* Two modes (user decision 2026-10-11): the backup / PC JSON is the
- * reference. Merge never removes; Replace all is the full sync. */
+ * reference. Merge never removes; Replace is the full sync -- of the
+ * profiles the backup holds only (2026-10-17): a backup of Pat alone
+ * replaces Pat and leaves the other profiles untouched. */
 typedef enum {
     ACCOUNTS_IMPORT_MERGE,     /* new names added, differing records overwritten, the rest untouched */
-    ACCOUNTS_IMPORT_REPLACE,   /* the store becomes the backup's content (removals included) */
+    ACCOUNTS_IMPORT_REPLACE,   /* the backup's profiles become its content (removals included) */
 } accounts_import_mode_t;
 
-/* What an import does (preview) or did (import). Names match
- * case-insensitively; a record is "changed" when any field differs. */
+/* What an import does (preview) or did (import). Records match on
+ * (profile, name), case-insensitively; a record is "changed" when any
+ * field differs. */
 typedef struct {
     int total;       /* records in the backup */
     int invalid;     /* unusable (empty name, bad TOTP key...), never imported */
     int added;       /* names not on the device */
     int changed;     /* names on the device with a different content */
     int unchanged;   /* names on the device with the same content */
-    int removed;     /* Replace all: device accounts not in the backup */
+    int removed;     /* Replace: device accounts of the backup's profiles not in the backup */
     int full;        /* new ones left out: no room */
 } accounts_import_summary_t;
 
 /** @brief Copies every record (unlocked only); returns the count. */
 int accounts_export_all(account_t *out, int max);
+
+/** @brief Copies the records of `profile` only (unlocked only); returns the count. */
+int accounts_export_profile(const char *profile, account_t *out, int max);
+
+/**
+ * @brief Distinct profiles of `n` backup records, in name order, into `out`
+ *        (up to `max`). Returns how many there are in total (may be > max).
+ */
+int accounts_records_profiles(const account_t *in, int n, char (*out)[ACCOUNTS_PROFILE_MAX + 1], int max);
+
+/**
+ * @brief Puts every one of `n` backup records in `profile`: a backup made
+ *        without profiles (older firmware, a PC JSON) imported into the
+ *        right person's profile. Before the preview and the import.
+ */
+void accounts_records_set_profile(account_t *in, int n, const char *profile);
 
 /** @brief What accounts_import() would do, without changing anything. */
 void accounts_import_preview(const account_t *in, int n, accounts_import_mode_t mode,

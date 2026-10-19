@@ -80,16 +80,18 @@ static esp_err_t write_file(const char *path, const uint8_t *data, size_t len)
     return ok ? ESP_OK : ESP_FAIL;
 }
 
-esp_err_t backup_export(const char *passphrase, char *name_out)
+esp_err_t backup_export(const char *passphrase, const char *profile, char *name_out, int *count_out)
 {
     name_out[0] = '\0';
+    if (count_out) *count_out = 0;
     if (!accounts_is_unlocked()) return ESP_ERR_INVALID_STATE;
     size_t pass_len = passphrase ? strlen(passphrase) : 0;
     if (pass_len < MSF_BACKUP_PASS_MIN || pass_len > MSF_BACKUP_PASS_MAX) return ESP_ERR_INVALID_ARG;
 
     account_t *recs = heap_caps_calloc(MSF_STORE_MAX_ACCOUNTS, sizeof(account_t), MALLOC_CAP_SPIRAM);
     if (!recs) return ESP_ERR_NO_MEM;
-    int n = accounts_export_all(recs, MSF_STORE_MAX_ACCOUNTS);
+    int n = profile ? accounts_export_profile(profile, recs, MSF_STORE_MAX_ACCOUNTS)
+                    : accounts_export_all(recs, MSF_STORE_MAX_ACCOUNTS);
     int64_t now = time_service_is_valid() ? (int64_t)time_service_get_utc() : 0;
 
     uint8_t *file = NULL;
@@ -121,8 +123,12 @@ esp_err_t backup_export(const char *passphrase, char *name_out)
     }
     sdcard_unmount();
     msf_backup_free(file);   /* ciphertext only, nothing to wipe */
-    if (err == ESP_OK) ESP_LOGI(TAG, "exported %d account(s) to %s", n, name_out);
-    else name_out[0] = '\0';
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "exported %d account(s)%s to %s", n, profile ? " (one profile)" : "", name_out);
+        if (count_out) *count_out = n;
+    } else {
+        name_out[0] = '\0';
+    }
     return err;
 }
 

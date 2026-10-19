@@ -23,10 +23,13 @@
  *        2026-09-13), and the same pattern as PiBot's app-side SD driver:
  *        mounted only for one operation (backup export/import), unmounted
  *        right after, so a card can be removed at any other time.
+ *        USB disk mode (2026-10-17, usb_disk.c): the card is opened for
+ *        raw sector access instead, never mounted by the device.
  */
 #pragma once
 
 #include "esp_err.h"
+#include "sdmmc_cmd.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -38,6 +41,13 @@ extern "C" {
 esp_err_t sdcard_mount(void);
 
 esp_err_t sdcard_unmount(void);
+
+/**
+ * @brief Powers the slot and initializes the card for raw sector access,
+ *        no FAT mount (the PC owns the file system in USB disk mode). Not
+ *        while mounted. The card stays open until the device restarts.
+ */
+esp_err_t sdcard_open_raw(sdmmc_card_t **card_out);
 
 #ifdef __cplusplus
 }

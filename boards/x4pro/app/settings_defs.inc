@@ -127,6 +127,11 @@ SETTINGS_DEF(AutoLockS, "auto_lock_s", U32, 300, GENERAL)
  * check. */
 SETTINGS_DEF(SdCheck, "sd_check", BOOL, 1, GENERAL)
 SETTINGS_DEF(SdCheckLastS, "sd_check_last", U32, 0, GENERAL)
+/* Profiles (2026-10-17): the profile HOME shows, kept across unlocks.
+ * Stored as a CRC32 of its lower-case name, not the name itself (profile
+ * names live only in the encrypted store); 0 = the default (empty) profile.
+ * Not a secret: a short name can be found back from its CRC. */
+SETTINGS_DEF(ProfileHash, "profile_hash", U32, 0, GENERAL)
 SETTINGS_DEF(DispZone, "disp_zone", BOOL, 1, GENERAL)
 SETTINGS_DEF(DispTiming, "disp_timing", BOOL, 0, GENERAL)
 SETTINGS_STR_DEF(OwnerInfo, "owner_info", SETTINGS_OWNER_INFO_MAX, "", GENERAL)

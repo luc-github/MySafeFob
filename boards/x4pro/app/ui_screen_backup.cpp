@@ -26,12 +26,17 @@
  *        BACKUP         Export / Import, and the last result.
  *        BACKUP_PASS    passphrase on the full keyboard, masked (eye to
  *                       show): twice for an export (8-64 characters), once
- *                       for an import.
+ *                       for an import. Export with two profiles or more:
+ *                       a Scope button, all profiles (default) or the
+ *                       active one only (2026-10-17).
  *        BACKUP_FILES   the .msfx files of the card, newest first, pages of
  *                       6 rows (no scrolling on e-paper).
- *        BACKUP_IMPORT  what each mode would do (new / changed / unchanged,
- *                       removed for Replace all), then Merge or Replace all
- *                       (the latter behind the shared confirmation).
+ *        BACKUP_IMPORT  the backup's profiles and what each mode would do
+ *                       (new / changed / unchanged, removed for Replace),
+ *                       then Merge or Replace (the latter behind the shared
+ *                       confirmation). Replace only touches the backup's
+ *                       profiles. A backup without profiles can go "Into"
+ *                       the active profile instead of Default.
  *
  *        Card access and Argon2id (seconds) run in a worker task; a poll
  *        timer picks up the result, so the screen keeps drawing. Decrypted
@@ -93,6 +98,12 @@ static accounts_import_mode_t s_apply_mode;
 
 static char s_menu_status[160];                        /* last result, shown on BACKUP */
 
+/* Profiles (2026-10-17) */
+static bool s_export_one;                              /* export the active profile only */
+static char s_export_profile[ACCOUNTS_PROFILE_MAX + 1];
+static bool s_profileless;                             /* loaded backup: every record in Default */
+static bool s_into_active;                             /* ...imported into the active profile instead */
+
 /* Worker */
 static Job s_job;
 static std::atomic<bool> s_busy{false};
@@ -100,6 +111,7 @@ static std::atomic<bool> s_done{false};
 static esp_err_t s_job_err;
 static accounts_result_t s_job_result;
 static char s_job_name[BACKUP_NAME_MAX];
+static int s_job_count;
 static lv_timer_t *s_poll;
 
 static void wipe(void *buf, size_t len)
@@ -162,7 +174,7 @@ static void worker_task(void *)
         s_job_err = s_file_count < 0 ? ESP_ERR_NOT_FOUND : ESP_OK;
         break;
     case kJobExport:
-        s_job_err = backup_export(s_pass, s_job_name);
+        s_job_err = backup_export(s_pass, s_export_one ? s_export_profile : nullptr, s_job_name, &s_job_count);
         break;
     case kJobLoad:
         s_job_err = backup_load(s_file, s_pass, s_recs, MSF_STORE_MAX_ACCOUNTS, &s_rec_count);
@@ -231,6 +243,8 @@ static void export_deferred(void *)
     if (s_busy) return;
     s_flow = kFlowExport;
     s_pass_step = 0;
+    s_export_one = false;   /* a full backup unless asked otherwise */
+    strlcpy(s_export_profile, accounts_profile(), sizeof(s_export_profile));
     switch_screen(Screen::BackupPass);
 }
 
@@ -294,6 +308,27 @@ static void add_menu_action(lv_obj_t *parent, const char *text, lv_event_cb_t cb
     add_to_group(btn, group);
 }
 
+/* USB disk mode (2026-10-17, ui_screen_usb_disk.cpp). */
+static void usb_disk_confirmed(void *)
+{
+    switch_screen(Screen::UsbDisk);
+}
+
+static void usb_disk_deferred(void *)
+{
+    if (s_busy) return;
+    const ui_confirm_t cfg = {"SD card on the PC?",
+                              "The SD card becomes a USB disk\non the connected PC. The store is\nlocked, and "
+                              "the device restarts\nwhen you are done.",
+                              "Start", usb_disk_confirmed, nullptr, nullptr, false};
+    ui_confirm_show(&cfg);
+}
+
+static void usb_disk_cb(lv_event_t *)
+{
+    ui_defer(usb_disk_deferred, nullptr);
+}
+
 lv_obj_t *build_backup(lv_group_t **group_out, lv_obj_t **battery_label_out)
 {
     lv_group_t *group = lv_port_indev_new_group();
@@ -304,6 +339,12 @@ lv_obj_t *build_backup(lv_group_t **group_out, lv_obj_t **battery_label_out)
     lv_obj_set_style_pad_row(content, 2 * kExtClickMargin, 0);   /* as the Settings menus */
     add_menu_action(content, MSF_SYMBOL_FILE_EXPORT "  Export to the SD card", export_cb, group);
     add_menu_action(content, MSF_SYMBOL_FILE_IMPORT "  Import from the SD card", import_cb, group);
+    add_menu_action(content, LV_SYMBOL_USB "  SD card as a USB disk", usb_disk_cb, group);
+    /* Keeps the toggle below the X4 Pro touch band (ui_widgets.h): the
+     * three actions above end at y = 408, the band runs 490-554. */
+    lv_obj_t *spacer = lv_obj_create(content);
+    lv_obj_remove_style_all(spacer);
+    lv_obj_set_size(spacer, 1, kTouchBandBottom + 6 - 408 - 2 * (2 * kExtClickMargin));
     /* SD sanity check after unlock (ui_sd_check.cpp): against the right
      * edge, no stepper on this screen to line up with. */
     lv_obj_t *check_row = make_round_toggle_row(content, group, MSF_SYMBOL_SEARCH " Check SD at start",
@@ -323,7 +364,31 @@ lv_obj_t *build_backup(lv_group_t **group_out, lv_obj_t **battery_label_out)
 /* ======================================================================== */
 
 static constexpr int32_t kFieldY = 176;
+static constexpr int32_t kScopeY = 330;   /* below the field, even with 64 characters shown in clear */
 static lv_obj_t *s_pass_title, *s_pass_field, *s_pass_status, *s_eye_label;
+static lv_obj_t *s_scope_btn, *s_scope_label;
+
+static void scope_show(void)
+{
+    bool show = s_flow == kFlowExport && accounts_profile_count() >= 2;
+    set_hidden(s_scope_btn, !show);
+    if (!show) return;
+    char buf[ACCOUNTS_PROFILE_MAX + 24];
+    if (s_export_one) snprintf(buf, sizeof(buf), "Export: %s only", accounts_profile_label(s_export_profile));
+    else snprintf(buf, sizeof(buf), "Export: all profiles");
+    set_text(s_scope_label, buf);
+}
+
+static void scope_deferred(void *)
+{
+    s_export_one = !s_export_one;
+    scope_show();
+}
+
+static void scope_cb(lv_event_t *)
+{
+    ui_defer(scope_deferred, nullptr);
+}
 
 static void pass_show(void)
 {
@@ -433,6 +498,7 @@ static void pass_loaded_cb(lv_event_t *)
     set_text(s_pass_title, title);
     set_text(s_pass_status, s_flow == kFlowImport ? "" : "8 to 64 characters, not the PIN");
     pass_show();
+    scope_show();
 }
 
 static void pass_unloaded_cb(lv_event_t *)
@@ -470,6 +536,18 @@ lv_obj_t *build_backup_pass(lv_group_t **group_out, lv_obj_t **battery_label_out
     lv_obj_set_width(s_pass_field, LV_PCT(100));
     lv_label_set_long_mode(s_pass_field, LV_LABEL_LONG_WRAP);
     lv_label_set_text(s_pass_field, "");
+
+    s_scope_btn = make_button(screen, "");
+    lv_obj_set_width(s_scope_btn, LV_PCT(90));
+    lv_obj_align(s_scope_btn, LV_ALIGN_TOP_MID, 0, kScopeY);
+    lv_obj_add_event_cb(s_scope_btn, scope_cb, LV_EVENT_CLICKED, nullptr);
+    add_to_group(s_scope_btn, group);
+    s_scope_label = lv_obj_get_child(s_scope_btn, 0);
+    lv_label_set_long_mode(s_scope_label, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(s_scope_label, LV_PCT(90));
+    lv_obj_set_style_text_align(s_scope_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(s_scope_label);
+    set_hidden(s_scope_btn, true);
 
     s_pass_status = lv_label_create(screen);
     lv_label_set_text(s_pass_status, "");
@@ -652,26 +730,77 @@ static constexpr int32_t kInfoY = 168;
 static constexpr int32_t kModeBtnY = kTouchBandBottom + 12;
 static constexpr int32_t kModeBtnGap = 20;
 
-static lv_obj_t *s_info, *s_merge_btn, *s_replace_btn;
+static lv_obj_t *s_info, *s_merge_btn, *s_replace_btn, *s_into_btn, *s_into_label;
+
+/* "Into" only for a backup without profiles, while another profile than
+ * Default is active. */
+static bool into_offered(void)
+{
+    return s_profileless && accounts_profile()[0] != '\0';
+}
 
 static void import_show_buttons(bool show)
 {
     set_hidden(s_merge_btn, !show);
     set_hidden(s_replace_btn, !show);
+    set_hidden(s_into_btn, !show || !into_offered());
     if (show) lv_group_focus_obj(s_merge_btn);
+}
+
+/* "Luc, Pat, Min (+2)": the profiles the backup holds. */
+static void profiles_text(char *out, size_t size)
+{
+    char names[3][ACCOUNTS_PROFILE_MAX + 1];
+    int n = accounts_records_profiles(s_recs, s_rec_count, names, 3);
+    int pos = 0;
+    out[0] = '\0';
+    for (int i = 0; i < n && i < 3; i++) {
+        pos += snprintf(out + pos, size - pos, "%s%s", i ? ", " : "", accounts_profile_label(names[i]));
+        if (pos >= static_cast<int>(size)) return;
+    }
+    if (n > 3) snprintf(out + pos, size - pos, " (+%d)", n - 3);
+}
+
+static void import_preview(void)
+{
+    accounts_import_preview(s_recs, s_rec_count, ACCOUNTS_IMPORT_MERGE, &s_merge);
+    accounts_import_preview(s_recs, s_rec_count, ACCOUNTS_IMPORT_REPLACE, &s_replace);
 }
 
 static void import_show_preview(void)
 {
-    char buf[320];
-    int pos = snprintf(buf, sizeof(buf), "%s\n%d account(s) in the backup", s_file, s_rec_count);
-    if (s_merge.invalid) pos += snprintf(buf + pos, sizeof(buf) - pos, ", %d unusable (skipped)", s_merge.invalid);
+    char profiles[3 * (ACCOUNTS_PROFILE_MAX + 2) + 16];
+    profiles_text(profiles, sizeof(profiles));
+    char buf[448];
+    int pos = snprintf(buf, sizeof(buf), "%s\n%d account(s), profile(s): %s", s_file, s_rec_count, profiles);
+    if (s_merge.invalid) pos += snprintf(buf + pos, sizeof(buf) - pos, "\n%d unusable (skipped)", s_merge.invalid);
     pos += snprintf(buf + pos, sizeof(buf) - pos, "\n\nMerge: %d new, %d changed,\n%d unchanged", s_merge.added,
                     s_merge.changed, s_merge.unchanged);
     if (s_merge.full) pos += snprintf(buf + pos, sizeof(buf) - pos, ", %d left out (full)", s_merge.full);
-    snprintf(buf + pos, sizeof(buf) - pos, "\nReplace all: the same, and\n%d removed from the device", s_replace.removed);
+    snprintf(buf + pos, sizeof(buf) - pos, "\nReplace: the same, and %d removed\nfrom these profiles (others untouched)",
+             s_replace.removed);
     set_text(s_info, buf);
+    char into[ACCOUNTS_PROFILE_MAX + 16];
+    snprintf(into, sizeof(into), "Into: %s", s_into_active ? accounts_profile_label(accounts_profile())
+                                                           : ACCOUNTS_PROFILE_DEFAULT_LABEL);
+    set_text(s_into_label, into);
     import_show_buttons(true);
+}
+
+/* Default <-> active profile, for a backup without profiles. */
+static void into_deferred(void *)
+{
+    if (s_busy || !s_loaded || !into_offered()) return;
+    s_into_active = !s_into_active;
+    accounts_records_set_profile(s_recs, s_rec_count, s_into_active ? accounts_profile() : "");
+    import_preview();
+    import_show_preview();
+    lv_group_focus_obj(s_into_btn);
+}
+
+static void into_cb(lv_event_t *)
+{
+    ui_defer(into_deferred, nullptr);
 }
 
 static void apply(accounts_import_mode_t mode)
@@ -704,15 +833,15 @@ static void replace_confirmed(void *)
     apply(ACCOUNTS_IMPORT_REPLACE);
 }
 
-static char s_confirm_msg[160];
+static char s_confirm_msg[200];
 
 static void replace_deferred(void *)
 {
     if (s_busy || !s_loaded) return;
     snprintf(s_confirm_msg, sizeof(s_confirm_msg),
-             "The device will hold exactly the backup:\n%d removed, %d new, %d changed.", s_replace.removed,
-             s_replace.added, s_replace.changed);
-    const ui_confirm_t cfg = {"Replace all accounts?", s_confirm_msg, "Replace", replace_confirmed, nullptr, nullptr,
+             "The backup's profiles will hold exactly\nthe backup: %d removed, %d new, %d changed.\n"
+             "Other profiles are untouched.", s_replace.removed, s_replace.added, s_replace.changed);
+    const ui_confirm_t cfg = {"Replace these profiles?", s_confirm_msg, "Replace", replace_confirmed, nullptr, nullptr,
                               true};
     ui_confirm_show(&cfg);
 }
@@ -782,8 +911,14 @@ lv_obj_t *build_backup_import(lv_group_t **group_out, lv_obj_t **battery_label_o
     lv_label_set_text(s_info, "");
 
     s_merge_btn = make_mode_button(screen, group, LV_SYMBOL_DOWNLOAD " Merge", merge_cb, kModeBtnY);
-    s_replace_btn = make_mode_button(screen, group, LV_SYMBOL_REFRESH " Replace all", replace_cb,
+    s_replace_btn = make_mode_button(screen, group, LV_SYMBOL_REFRESH " Replace", replace_cb,
                                      kModeBtnY + kMinTouchTarget + kModeBtnGap);
+    s_into_btn = make_mode_button(screen, group, "", into_cb, kModeBtnY + 2 * (kMinTouchTarget + kModeBtnGap));
+    s_into_label = lv_obj_get_child(s_into_btn, 0);
+    lv_label_set_long_mode(s_into_label, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(s_into_label, LV_PCT(90));
+    lv_obj_set_style_text_align(s_into_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(s_into_label);
     import_show_buttons(false);
 
     lv_obj_add_event_cb(screen, import_loaded_cb, LV_EVENT_SCREEN_LOADED, nullptr);
@@ -803,8 +938,8 @@ static void job_finished(Job job)
         break;
     case kJobExport:
         if (s_job_err == ESP_OK) {
-            snprintf(s_menu_status, sizeof(s_menu_status), LV_SYMBOL_OK " Saved on the SD card:\nMSF/%s\n(%d account(s))",
-                     s_job_name, accounts_count(ACCOUNTS_ALL_LETTERS));
+            snprintf(s_menu_status, sizeof(s_menu_status), LV_SYMBOL_OK " Saved on the SD card:\nMSF/%s\n(%d account(s)%s)",
+                     s_job_name, s_job_count, s_export_one ? ", one profile" : "");
         } else {
             snprintf(s_menu_status, sizeof(s_menu_status), LV_SYMBOL_CLOSE " Export failed:\n%s", err_text(s_job_err));
         }
@@ -819,8 +954,12 @@ static void job_finished(Job job)
             break;
         }
         s_loaded = true;
-        accounts_import_preview(s_recs, s_rec_count, ACCOUNTS_IMPORT_MERGE, &s_merge);
-        accounts_import_preview(s_recs, s_rec_count, ACCOUNTS_IMPORT_REPLACE, &s_replace);
+        {
+            char first[1][ACCOUNTS_PROFILE_MAX + 1];
+            s_profileless = accounts_records_profiles(s_recs, s_rec_count, first, 1) == 1 && first[0][0] == '\0';
+            s_into_active = false;   /* as in the file until asked */
+        }
+        import_preview();
         import_show_preview();
         break;
     case kJobApply: {

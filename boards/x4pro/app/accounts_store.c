@@ -25,6 +25,14 @@
  *        the RAM copy back. Lock wipes them. The former sample data is
  *        now `accounts_load_demo()` (console `store demo`), never loaded
  *        by default.
+ *
+ *        Profiles (2026-10-17): s_profile is the active one; queries and
+ *        the name-uniqueness check are limited to it. It is restored at
+ *        unlock from settings_store's hash, and falls back to the first
+ *        profile (name order) when no account uses it any more.
+ *        "Default" (any case) IS the empty profile (2026-10-17): compared
+ *        as "" everywhere and stored as "" (canon()), so typing it never
+ *        makes a second "Default" next to the real one.
  */
 #include "accounts.h"
 
@@ -35,6 +43,8 @@
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_rom_crc.h"
+#include "settings_store.h"
 #include "totp_engine.h"
 
 #include "app_log_workaround.h"
@@ -43,6 +53,7 @@ static const char *TAG = "accounts";
 
 static account_t *s_recs;   /* MSF_STORE_MAX_ACCOUNTS records, PSRAM */
 static int s_count;
+static char s_profile[ACCOUNTS_PROFILE_MAX + 1];   /* active profile, "" = default */
 
 /* ---- Store state -------------------------------------------------------- */
 
@@ -56,7 +67,10 @@ static void wipe_records(void)
 {
     if (s_recs) memset(s_recs, 0, MSF_STORE_MAX_ACCOUNTS * sizeof(account_t));
     s_count = 0;
+    memset(s_profile, 0, sizeof(s_profile));
 }
+
+static void restore_profile(void);
 
 void accounts_init(void)
 {
@@ -81,8 +95,12 @@ int accounts_unlock(const char *pin)
     wipe_records();
     int n = 0;
     esp_err_t err = msf_store_unlock(pin, s_recs, MSF_STORE_MAX_ACCOUNTS, &n);
-    if (err == ESP_OK) s_count = n;
-    else wipe_records();
+    if (err == ESP_OK) {
+        s_count = n;
+        restore_profile();
+    } else {
+        wipe_records();
+    }
     return err;
 }
 
@@ -174,9 +192,227 @@ const char *accounts_result_text(accounts_result_t r)
     return "Error";
 }
 
+/* ---- Profiles ----------------------------------------------------------- */
+
+/* The empty profile under the name it is shown with: "" for "Default". */
+static const char *canon(const char *profile)
+{
+    return strcasecmp(profile, ACCOUNTS_PROFILE_DEFAULT_LABEL) == 0 ? "" : profile;
+}
+
+static void canon_in_place(char *profile)
+{
+    if (!canon(profile)[0]) profile[0] = '\0';
+}
+
+static bool profile_eq(const char *a, const char *b)
+{
+    return strcasecmp(canon(a), canon(b)) == 0;
+}
+
+/* What settings_store keeps: CRC32 of the lower-case name, 0 for "". */
+static uint32_t profile_hash(const char *profile)
+{
+    profile = canon(profile);
+    char low[ACCOUNTS_PROFILE_MAX + 1];
+    size_t n = strnlen(profile, ACCOUNTS_PROFILE_MAX);
+    if (n == 0) return 0;
+    for (size_t i = 0; i < n; i++) low[i] = (char)tolower((unsigned char)profile[i]);
+    return esp_rom_crc32_le(0, (const uint8_t *)low, n);
+}
+
+static bool profile_used(const char *profile)
+{
+    for (int i = 0; i < s_count; i++) {
+        if (profile_eq(s_recs[i].profile, profile)) return true;
+    }
+    return false;
+}
+
+static void select_profile(const char *profile)
+{
+    profile = canon(profile);
+    if (strcmp(s_profile, profile) == 0) return;
+    strlcpy(s_profile, profile, sizeof(s_profile));
+    settings_store_set_profile_hash(profile_hash(profile));
+    ESP_LOGI(TAG, "active profile: %s", accounts_profile_label(profile));
+}
+
+/* Keeps the active profile one that some account uses (after a change). */
+static void check_profile(void)
+{
+    char first[ACCOUNTS_PROFILE_MAX + 1];
+    if (s_count == 0) {   /* nothing left: back to the default profile */
+        select_profile("");
+        return;
+    }
+    if (profile_used(s_profile)) return;
+    if (accounts_profile_after(NULL, first)) select_profile(first);
+}
+
+/* At unlock: the profile whose hash settings_store kept, else the first. */
+static void restore_profile(void)
+{
+    uint32_t want = settings_store_get_profile_hash();
+    for (int i = 0; i < s_count; i++) {
+        if (profile_hash(s_recs[i].profile) == want) {
+            strlcpy(s_profile, s_recs[i].profile, sizeof(s_profile));
+            return;
+        }
+    }
+    s_profile[0] = '\0';
+    check_profile();
+}
+
+const char *accounts_profile(void)
+{
+    return s_profile;
+}
+
+const char *accounts_profile_label(const char *profile)
+{
+    return profile[0] ? profile : ACCOUNTS_PROFILE_DEFAULT_LABEL;
+}
+
+int accounts_profile_count(void)
+{
+    if (!accounts_is_unlocked()) return 0;
+    int n = 0;
+    for (int i = 0; i < s_count; i++) {
+        int j = 0;
+        while (j < i && !profile_eq(s_recs[j].profile, s_recs[i].profile)) j++;
+        if (j == i) n++;   /* first record of its profile */
+    }
+    return n;
+}
+
+/* `current` NULL: the first profile. */
+bool accounts_profile_after(const char *current, char *out)
+{
+    const char *next = NULL, *first = NULL;
+    if (!accounts_is_unlocked()) return false;
+    for (int i = 0; i < s_count; i++) {
+        const char *p = canon(s_recs[i].profile);
+        if (!first || strcasecmp(p, first) < 0) first = p;
+        if (current && strcasecmp(p, canon(current)) > 0 && (!next || strcasecmp(p, next) < 0)) next = p;
+    }
+    if (!first) return false;
+    strlcpy(out, next ? next : first, ACCOUNTS_PROFILE_MAX + 1);
+    return true;
+}
+
+void accounts_profile_next(void)
+{
+    char next[ACCOUNTS_PROFILE_MAX + 1];
+    if (accounts_profile_after(s_profile, next)) select_profile(next);
+}
+
+int accounts_profile_list(int first, int max, char (*out)[ACCOUNTS_PROFILE_MAX + 1])
+{
+    char cur[ACCOUNTS_PROFILE_MAX + 1];
+    if (!accounts_profile_after(NULL, cur)) return 0;
+    int k = 0, written = 0;
+    for (;;) {   /* walks the profiles in name order until it wraps */
+        if (k >= first && written < max) strlcpy(out[written++], cur, ACCOUNTS_PROFILE_MAX + 1);
+        k++;
+        char next[ACCOUNTS_PROFILE_MAX + 1];
+        accounts_profile_after(cur, next);
+        if (written >= max || strcasecmp(next, cur) <= 0) break;
+        strlcpy(cur, next, sizeof(cur));
+    }
+    return written;
+}
+
+int accounts_profile_size(const char *profile)
+{
+    if (!accounts_is_unlocked()) return 0;
+    int n = 0;
+    for (int i = 0; i < s_count; i++) {
+        if (profile_eq(s_recs[i].profile, profile)) n++;
+    }
+    return n;
+}
+
+static bool same_key(const account_t *a, const char *profile, const char *name);
+
+accounts_result_t accounts_profile_rename(const char *from, const char *to, char *clash)
+{
+    if (!accounts_is_unlocked()) return ACCOUNTS_ERR_LOCKED;
+    if (!profile_used(from)) return ACCOUNTS_ERR_NOT_FOUND;
+    to = canon(to);
+    bool same = profile_eq(from, to);   /* spelling change only: no clash possible */
+    for (int i = 0; i < s_count && !same; i++) {
+        if (!profile_eq(s_recs[i].profile, from)) continue;
+        for (int j = 0; j < s_count; j++) {
+            if (same_key(&s_recs[j], to, s_recs[i].name)) {
+                if (clash) strlcpy(clash, s_recs[i].name, ACCOUNTS_NAME_MAX + 1);
+                return ACCOUNTS_ERR_NAME_EXISTS;
+            }
+        }
+    }
+    /* Old profile strings, to put back if the write fails. */
+    char (*old)[ACCOUNTS_PROFILE_MAX + 1] = heap_caps_malloc((size_t)s_count * sizeof(*old), MALLOC_CAP_SPIRAM);
+    if (!old) return ACCOUNTS_ERR_STORE;
+    bool was_active = profile_eq(s_profile, from);
+    int moved = 0;
+    for (int i = 0; i < s_count; i++) {
+        memcpy(old[i], s_recs[i].profile, sizeof(old[i]));
+        if (profile_eq(s_recs[i].profile, from)) {
+            strlcpy(s_recs[i].profile, to, sizeof(s_recs[i].profile));
+            moved++;
+        }
+    }
+    accounts_result_t r = ACCOUNTS_OK;
+    if (!persist()) {
+        for (int i = 0; i < s_count; i++) memcpy(s_recs[i].profile, old[i], sizeof(old[i]));
+        r = ACCOUNTS_ERR_STORE;
+    } else if (was_active) {
+        select_profile(to);
+    }
+    heap_caps_free(old);
+    ESP_LOGI(TAG, "profile rename: %d accounts %s", moved, r == ACCOUNTS_OK ? "moved" : "-- WRITE FAILED, unchanged");
+    return r;
+}
+
+int accounts_profile_delete(const char *profile)
+{
+    if (!accounts_is_unlocked() || !profile_used(profile)) return -1;
+    account_t *before = heap_caps_malloc((size_t)s_count * sizeof(account_t), MALLOC_CAP_SPIRAM);
+    if (!before) return -1;
+    int before_count = s_count;
+    memcpy(before, s_recs, (size_t)s_count * sizeof(account_t));
+    int kept = 0;
+    for (int i = 0; i < s_count; i++) {
+        if (!profile_eq(s_recs[i].profile, profile)) s_recs[kept++] = s_recs[i];
+    }
+    int removed = s_count - kept;
+    memset(&s_recs[kept], 0, (size_t)removed * sizeof(account_t));   /* wipe the secrets, not just the count */
+    s_count = kept;
+    if (!persist()) {
+        memcpy(s_recs, before, (size_t)before_count * sizeof(account_t));
+        s_count = before_count;
+        removed = -1;
+    } else {
+        check_profile();
+    }
+    memset(before, 0, (size_t)before_count * sizeof(account_t));
+    heap_caps_free(before);
+    ESP_LOGI(TAG, "profile delete: %d accounts%s", removed < 0 ? 0 : removed,
+             removed < 0 ? " -- WRITE FAILED, unchanged" : " removed");
+    return removed;
+}
+
+/* ---- Queries ------------------------------------------------------------ */
+
 static bool matches(const account_t *a, char letter)
 {
+    if (!profile_eq(a->profile, s_profile)) return false;
     return letter == ACCOUNTS_ALL_LETTERS || accounts_index_letter(a->name) == letter;
+}
+
+int accounts_total(void)
+{
+    return accounts_is_unlocked() ? s_count : 0;
 }
 
 int accounts_count(char letter)
@@ -235,13 +471,18 @@ bool accounts_totp(uint16_t id, time_t utc, char *code, int *seconds_left)
     return true;
 }
 
+static bool same_key(const account_t *a, const char *profile, const char *name)
+{
+    return profile_eq(a->profile, profile) && strcasecmp(a->name, name) == 0;
+}
+
 /* Checks shared by add and update; `self` = id allowed to own the name. */
 static accounts_result_t validate(const account_t *in, uint16_t self)
 {
     if (!in->name[0]) return ACCOUNTS_ERR_NAME_EMPTY;
     if (in->totp_key[0] && !accounts_totp_key_valid(in->totp_key)) return ACCOUNTS_ERR_TOTP_KEY;
     for (int i = 0; i < s_count; i++) {
-        if (s_recs[i].id != self && strcasecmp(s_recs[i].name, in->name) == 0) return ACCOUNTS_ERR_NAME_EXISTS;
+        if (s_recs[i].id != self && same_key(&s_recs[i], in->profile, in->name)) return ACCOUNTS_ERR_NAME_EXISTS;
     }
     return ACCOUNTS_OK;
 }
@@ -263,6 +504,7 @@ accounts_result_t accounts_add(const account_t *in, uint16_t *id_out)
     if (s_count >= MSF_STORE_MAX_ACCOUNTS) return ACCOUNTS_ERR_FULL;
     s_recs[s_count] = *in;
     s_recs[s_count].id = next_id();
+    canon_in_place(s_recs[s_count].profile);
     s_count++;
     if (!persist()) {
         s_count--;
@@ -270,6 +512,7 @@ accounts_result_t accounts_add(const account_t *in, uint16_t *id_out)
         return ACCOUNTS_ERR_STORE;
     }
     if (id_out) *id_out = s_recs[s_count - 1].id;
+    select_profile(in->profile);   /* show what was just saved */
     return ACCOUNTS_OK;
 }
 
@@ -282,9 +525,12 @@ accounts_result_t accounts_update(uint16_t id, const account_t *in)
     account_t old = *a;
     *a = *in;
     a->id = id;
+    canon_in_place(a->profile);
     if (!persist()) {
         *a = old;
         r = ACCOUNTS_ERR_STORE;
+    } else {
+        select_profile(in->profile);   /* show what was just saved */
     }
     memset(&old, 0, sizeof(old));
     return r;
@@ -341,6 +587,7 @@ bool accounts_remove(uint16_t id)
         s_count++;
     }
     memset(&removed, 0, sizeof(removed));
+    if (ok) check_profile();
     return ok;
 }
 
@@ -354,6 +601,40 @@ int accounts_export_all(account_t *out, int max)
     return n;
 }
 
+int accounts_export_profile(const char *profile, account_t *out, int max)
+{
+    if (!accounts_is_unlocked()) return 0;
+    int n = 0;
+    for (int i = 0; i < s_count && n < max; i++) {
+        if (profile_eq(s_recs[i].profile, profile)) out[n++] = s_recs[i];
+    }
+    return n;
+}
+
+int accounts_records_profiles(const account_t *in, int n, char (*out)[ACCOUNTS_PROFILE_MAX + 1], int max)
+{
+    /* Same walk as accounts_profile_after(), over the backup's records. */
+    const char *cur = NULL;
+    int total = 0;
+    for (;;) {
+        const char *next = NULL;
+        for (int i = 0; i < n; i++) {
+            const char *p = canon(in[i].profile);
+            if ((!cur || strcasecmp(p, cur) > 0) && (!next || strcasecmp(p, next) < 0)) next = p;
+        }
+        if (!next) break;
+        if (total < max) strlcpy(out[total], next, ACCOUNTS_PROFILE_MAX + 1);
+        total++;
+        cur = next;
+    }
+    return total;
+}
+
+void accounts_records_set_profile(account_t *in, int n, const char *profile)
+{
+    for (int i = 0; i < n; i++) strlcpy(in[i].profile, canon(profile), sizeof(in[i].profile));
+}
+
 /* A backup record the store can take: same checks as add/update, plus sane
  * TOTP parameters (a PC-made file may carry anything). */
 static bool import_valid(const account_t *a)
@@ -364,10 +645,10 @@ static bool import_valid(const account_t *a)
     return a->rcv_count <= ACCOUNTS_RCV_MAX;
 }
 
-static int find_name(const char *name)
+static int find_key(const account_t *a)
 {
     for (int i = 0; i < s_count; i++) {
-        if (strcasecmp(s_recs[i].name, name) == 0) return i;
+        if (same_key(&s_recs[i], a->profile, a->name)) return i;
     }
     return -1;
 }
@@ -375,7 +656,7 @@ static int find_name(const char *name)
 /* Field by field: bytes after a string's terminator may differ. */
 static bool same_record(const account_t *a, const account_t *b)
 {
-    if (strcmp(a->name, b->name) || strcmp(a->totp_key, b->totp_key) || strcmp(a->username, b->username) ||
+    if (strcmp(a->name, b->name) || strcmp(canon(a->profile), canon(b->profile)) || strcmp(a->totp_key, b->totp_key) || strcmp(a->username, b->username) ||
         strcmp(a->password, b->password) || strcmp(a->pin, b->pin) || strcmp(a->note, b->note) ||
         strcmp(a->ident, b->ident) || strcmp(a->extra, b->extra)) {
         return false;
@@ -390,12 +671,29 @@ static bool same_record(const account_t *a, const account_t *b)
     return true;
 }
 
-static bool in_backup(const account_t *in, int n, const char *name)
+/* Replace only touches the profiles the backup holds (2026-10-17). */
+static bool profile_in_backup(const account_t *in, int n, const char *profile)
 {
     for (int i = 0; i < n; i++) {
-        if (strcasecmp(in[i].name, name) == 0 && import_valid(&in[i])) return true;
+        if (profile_eq(in[i].profile, profile) && import_valid(&in[i])) return true;
     }
     return false;
+}
+
+/* A device record Replace removes: its profile is in the backup, it is not. */
+static bool replace_removes(const account_t *in, int n, const account_t *rec);
+
+static bool in_backup(const account_t *in, int n, const account_t *rec)
+{
+    for (int i = 0; i < n; i++) {
+        if (same_key(&in[i], rec->profile, rec->name) && import_valid(&in[i])) return true;
+    }
+    return false;
+}
+
+static bool replace_removes(const account_t *in, int n, const account_t *rec)
+{
+    return profile_in_backup(in, n, rec->profile) && !in_backup(in, n, rec);
 }
 
 void accounts_import_preview(const account_t *in, int n, accounts_import_mode_t mode,
@@ -409,14 +707,14 @@ void accounts_import_preview(const account_t *in, int n, accounts_import_mode_t 
             sum->invalid++;
             continue;
         }
-        int at = find_name(in[i].name);
+        int at = find_key(&in[i]);
         if (at >= 0 && same_record(&s_recs[at], &in[i])) sum->unchanged++;
         else if (at >= 0) sum->changed++;
         else sum->added++;
     }
     if (mode == ACCOUNTS_IMPORT_REPLACE) {
         for (int i = 0; i < s_count; i++) {
-            if (!in_backup(in, n, s_recs[i].name)) sum->removed++;
+            if (replace_removes(in, n, &s_recs[i])) sum->removed++;
         }
         room += sum->removed;
     }
@@ -445,7 +743,7 @@ accounts_result_t accounts_import(const account_t *in, int n, accounts_import_mo
     if (mode == ACCOUNTS_IMPORT_REPLACE) {   /* drop what the backup does not have, keep ids of the rest */
         int kept = 0;
         for (int i = 0; i < s_count; i++) {
-            if (in_backup(in, n, s_recs[i].name)) s_recs[kept++] = s_recs[i];
+            if (!replace_removes(in, n, &s_recs[i])) s_recs[kept++] = s_recs[i];
         }
         memset(&s_recs[kept], 0, (size_t)(s_count - kept) * sizeof(account_t));
         s_count = kept;
@@ -453,14 +751,16 @@ accounts_result_t accounts_import(const account_t *in, int n, accounts_import_mo
     for (int i = 0; i < n; i++) {
         const account_t *a = &in[i];
         if (!import_valid(a)) continue;
-        int at = find_name(a->name);
+        int at = find_key(a);
         if (at >= 0) {
             uint16_t id = s_recs[at].id;
             s_recs[at] = *a;
             s_recs[at].id = id;
+            canon_in_place(s_recs[at].profile);
         } else if (s_count < MSF_STORE_MAX_ACCOUNTS) {
             s_recs[s_count] = *a;
             s_recs[s_count].id = next_id();
+            canon_in_place(s_recs[s_count].profile);
             s_count++;
         }
     }
@@ -471,6 +771,7 @@ accounts_result_t accounts_import(const account_t *in, int n, accounts_import_mo
         s_count = before_count;
         r = ACCOUNTS_ERR_STORE;
     }
+    check_profile();
     memset(before, 0, MSF_STORE_MAX_ACCOUNTS * sizeof(account_t));
     heap_caps_free(before);
     ESP_LOGI(TAG, "import (%s): %d added, %d changed, %d unchanged, %d removed, %d invalid, %d no room%s",

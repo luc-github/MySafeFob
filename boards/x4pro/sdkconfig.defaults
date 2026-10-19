@@ -66,3 +66,13 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 # SD backups (P11): long file names, MSF-20261011-1530.msfx is not 8.3.
 CONFIG_FATFS_LFN_HEAP=y
 CONFIG_FATFS_MAX_LFN=255
+
+# USB disk mode (usb_disk.c, 2026-10-17): the SD card as a USB mass-storage
+# disk via espressif/esp_tinyusb, MSC only (no CDC: the console stays on
+# USB-Serial/JTAG outside a USB disk session). Strings shown by the PC.
+CONFIG_TINYUSB_MSC_ENABLED=y
+# CONFIG_TINYUSB_CDC_ENABLED is not set
+CONFIG_TINYUSB_DESC_MANUFACTURER_STRING="MySafeFob"
+CONFIG_TINYUSB_DESC_PRODUCT_STRING="MySafeFob SD card"
+CONFIG_TINYUSB_DESC_SERIAL_STRING=""
+CONFIG_TINYUSB_DESC_MSC_STRING="MySafeFob SD card"

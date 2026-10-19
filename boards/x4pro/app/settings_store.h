@@ -94,6 +94,13 @@ bool settings_store_get_pin_symbols(void);
 void settings_store_set_pin_symbols(bool on);
 
 /**
+ * @brief Profile HOME shows (2026-10-17), as accounts_store.c's hash of its
+ *        name (0 = default profile): restored after each unlock.
+ */
+uint32_t settings_store_get_profile_hash(void);
+void settings_store_set_profile_hash(uint32_t hash);
+
+/**
  * @brief Auto-lock (F-03, UI-SPECS §2.13): seconds without input before the
  *        store locks while awake; 0 = off. Separate from the deep-sleep
  *        timeout, and kept even with "Stay awake on USB". Default 300.

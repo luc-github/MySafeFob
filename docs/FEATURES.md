@@ -125,6 +125,36 @@ updates only via SD.
   data in the clear.
 - The SD card is also used for firmware updates (F-06); it is never mounted
   permanently.
+- **Profiles in backups** (2026-10-17): export of all profiles (default) or
+  of the active one only; import Replace limited to the profiles the file
+  holds (other profiles untouched); a file without profiles can be imported
+  "Into" the active profile. Console: `backup export ... --profile <name>`,
+  `backup show|import ... --into <name>`.
+- **USB disk mode** (X4 Pro, 2026-10-17, user request): Settings › Security ›
+  Backup › "SD card as a USB disk" exposes the card to the PC as a
+  read-write USB mass-storage disk (TinyUSB MSC on the S3's USB-OTG), to move
+  `.msfx` files without removing the card. The store is locked first, the
+  device never mounts the card meanwhile, and the session ends with a
+  restart. Supersedes the read-only idea of F-17 for this need.
+
+### F-06c — Profiles (2026-10-17, user request)
+- Every account has a **profile** (32 B, empty = default): several people
+  sharing one device. A name is unique within its profile.
+- HOME's header shows the active profile ("Luc (12)") as soon as there are
+  two profiles; a tap switches to the next one. Letters, counts and lists
+  only show the active profile. The last one is restored after unlock
+  (NVS keeps a CRC32 of its name, not the name).
+- Profiles are derived from the accounts (no separate list): typed in the
+  account editor (with a picker over the existing ones), gone with their
+  last account. Backup files and the PC editor carry the field.
+- **Settings › Profiles**: list (paged), then per profile **Rename** (moves
+  all its accounts in one store write; merges into an existing profile
+  unless a name would clash) and **Delete** = the profile and all its
+  accounts, behind a critical confirmation. The PC editor has the same
+  Rename / Delete next to its profile filter, plus **New** (a profile with
+  its first account). "Default" (any case) is the empty profile everywhere:
+  typing it never creates a second one.
+- Not an access control: one device PIN opens every profile.
 
 ### F-07 — Secure, sober boot
 - Boots directly into the unlock screen; zero active network task at startup.

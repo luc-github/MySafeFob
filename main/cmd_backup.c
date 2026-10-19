@@ -22,12 +22,17 @@
  *        (ROADMAP 8.0 P11) before the on-device screens exist (step A).
  *
  *   backup list                              files in /MSF, newest first
- *   backup export <pin> <passphrase>         every account -> new .msfx
- *   backup show <file> <passphrase>          decrypt and summarize, no change
- *   backup import <file> <pin> <passphrase> merge|replace
+ *   backup export <pin> <passphrase> [--profile <name>]
+ *                                            every account (or one profile) -> new .msfx
+ *   backup show <file> <passphrase> [--into <name>]
+ *                                            decrypt and summarize, no change
+ *   backup import <file> <pin> <passphrase> merge|replace [--into <name>]
  *
  * merge: new names added, differing accounts overwritten, the rest untouched.
- * replace: the store becomes the backup (accounts not in it are removed).
+ * replace: the backup's profiles become the backup (their accounts not in it
+ * are removed); other profiles are untouched (2026-10-17).
+ * --into: every record of the backup goes to that profile first (a backup
+ * made without profiles); "Default" = the default profile.
  *
  * export and import ask the device PIN again (2026-10-11): an unlocked
  * device on a serial cable must not be enough to copy every secret out, or
@@ -41,6 +46,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 
 #include "backup.h"
@@ -105,7 +111,7 @@ static bool pin_ok(const char *pin)
 }
 
 /* show / import: decrypt into a PSRAM buffer, then summarize or merge. */
-static int do_load(const char *name, const char *pass, const char *mode_text)
+static int do_load(const char *name, const char *pass, const char *mode_text, const char *into)
 {
     accounts_import_mode_t mode = ACCOUNTS_IMPORT_MERGE;
     if (mode_text) {
@@ -132,6 +138,13 @@ static int do_load(const char *name, const char *pass, const char *mode_text)
     if (err != ESP_OK) {
         printf("%s\n", err_text(err));
     } else {
+        if (into) accounts_records_set_profile(recs, n, into);
+        char profiles[4][ACCOUNTS_PROFILE_MAX + 1];
+        int np = accounts_records_profiles(recs, n, profiles, 4);
+        printf("Profile(s) in the backup:");
+        for (int i = 0; i < np && i < 4; i++) printf(" %s", accounts_profile_label(profiles[i]));
+        if (np > 4) printf(" (+%d)", np - 4);
+        printf("\n");
         accounts_import_summary_t sum;
         if (!mode_text) {
             accounts_import_preview(recs, n, ACCOUNTS_IMPORT_MERGE, &sum);
@@ -139,7 +152,7 @@ static int do_load(const char *name, const char *pass, const char *mode_text)
             printf("merge:   %d new, %d changed, %d unchanged", sum.added, sum.changed, sum.unchanged);
             if (sum.full) printf(", %d left out (no room)", sum.full);
             accounts_import_preview(recs, n, ACCOUNTS_IMPORT_REPLACE, &sum);
-            printf("\nreplace: same, and %d account(s) removed from the device\n", sum.removed);
+            printf("\nreplace: same, and %d account(s) of these profiles removed from the device\n", sum.removed);
             rc = 0;
         } else {
             accounts_result_t r = accounts_import(recs, n, mode, &sum);
@@ -157,30 +170,49 @@ static int do_load(const char *name, const char *pass, const char *mode_text)
     return rc;
 }
 
+/* Takes a trailing "<flag> <value>" off argv; returns the value or NULL. */
+static const char *take_option(int *argc, char **argv, const char *flag)
+{
+    if (*argc >= 4 && !strcmp(argv[*argc - 2], flag)) {
+        *argc -= 2;
+        return argv[*argc + 1];
+    }
+    return NULL;
+}
+
 static int cmd_backup(int argc, char **argv)
 {
     board_activity_notify();
+    const char *profile = take_option(&argc, argv, "--profile");
+    const char *into = take_option(&argc, argv, "--into");
     const char *sub = argc > 1 ? argv[1] : "";
     if (!strcmp(sub, "list") && argc == 2) return do_list();
     if (!strcmp(sub, "export") && argc == 4) {
         if (!pin_ok(argv[2])) return 1;
         char name[BACKUP_NAME_MAX];
+        int n = 0;
+        if (profile && !strcasecmp(profile, ACCOUNTS_PROFILE_DEFAULT_LABEL)) profile = "";
+        if (profile && accounts_profile_size(profile) == 0) {
+            printf("No account in profile \"%s\".\n", profile);
+            return 1;
+        }
         printf("Encrypting (a few seconds)...\n");
-        esp_err_t err = backup_export(argv[3], name);
+        esp_err_t err = backup_export(argv[3], profile, name, &n);
         if (err != ESP_OK) {
             printf("%s\n", err_text(err));
             return 1;
         }
-        printf("Written: " BACKUP_DIR "/%s\n", name);
+        printf("Written: " BACKUP_DIR "/%s (%d account(s))\n", name, n);
         return 0;
     }
-    if (!strcmp(sub, "show") && argc == 4) return do_load(argv[2], argv[3], NULL);
+    if (!strcmp(sub, "show") && argc == 4) return do_load(argv[2], argv[3], NULL, into);
     if (!strcmp(sub, "import") && argc == 6) {
         if (!pin_ok(argv[3])) return 1;
-        return do_load(argv[2], argv[4], argv[5]);
+        return do_load(argv[2], argv[4], argv[5], into);
     }
-    printf("Usage: backup list | export <pin> <passphrase> | show <file> <passphrase> |\n"
-           "       import <file> <pin> <passphrase> merge|replace\n");
+    printf("Usage: backup list | export <pin> <passphrase> [--profile <name>] |\n"
+           "       show <file> <passphrase> [--into <name>] |\n"
+           "       import <file> <pin> <passphrase> merge|replace [--into <name>]\n");
     return 1;
 }
 
@@ -188,8 +220,9 @@ esp_err_t cmd_backup_register(void)
 {
     const esp_console_cmd_t cmd = {
         .command = "backup",
-        .help = "Encrypted SD backups: list | export <pin> <pass> | show <file> <pass> | "
-                "import <file> <pin> <pass> merge|replace. Quote a passphrase with spaces.",
+        .help = "Encrypted SD backups: list | export <pin> <pass> [--profile <name>] | "
+                "show <file> <pass> [--into <name>] | import <file> <pin> <pass> merge|replace "
+                "[--into <name>]. Quote a passphrase with spaces.",
         .func = &cmd_backup,
     };
     return esp_console_cmd_register(&cmd);

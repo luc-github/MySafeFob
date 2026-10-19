@@ -24,16 +24,18 @@
  *        EDIT works on a copy (s_draft) of the record: nothing is written
  *        until Save (header, top right); Back with unsaved changes asks
  *        "Discard changes?" (P6 confirmation). Three tabs (2026-10-13 user
- *        request): Info (Name, ID, Note, Extra), Security (Login, Password,
- *        PIN, TOTP) and Recovery (the code list, ui_screen_recovery.cpp,
- *        was a separate screen). Field rows at fixed y placed with
- *        touch_safe_y(): 3 above the X4 Pro touch band, 1 below, status
- *        line in the gap. Each tab's content sits in its own full-width
+ *        request): Info (Name, Profile, ID, Note, Extra), Security (Login,
+ *        Password, PIN, TOTP) and Recovery (the code list,
+ *        ui_screen_recovery.cpp, was a separate screen). Field rows at
+ *        fixed y placed with touch_safe_y(): 3 above the X4 Pro touch band,
+ *        the rest below, status line in the gap. Each tab's content sits in its own full-width
  *        container, shown / hidden as a whole.
  *
  *        FIELD edits one field of the draft with the right keyboard (P7):
  *        full for Name/Login/Password/Note, numeric for the PIN, Base32 for
- *        the TOTP key (plus 6/8 digits and 30/60 s, default 6/30). The
+ *        the TOTP key (plus 6/8 digits and 30/60 s, default 6/30). Profile
+ *        (2026-10-17): full keyboard plus a button that steps through the
+ *        existing profiles; a new account starts in the active one. The
  *        current value is prefilled in clear (to fix a typo without
  *        retyping); Enter validates back into the draft, Clear empties the
  *        field, Back leaves the draft unchanged. Both screens show secrets:
@@ -67,14 +69,27 @@ static const char *TAG = "account_edit";
 /* ---- Shared state ------------------------------------------------------- */
 
 /* Tab order: Info (kName..kExtra), then Security (kLogin..kTotp). */
-enum Field { kName, kIdent, kNote, kExtra, kLogin, kPassword, kPin, kTotp, kFieldCount, kRcvCode = kFieldCount };
+enum Field {
+    kName, kProfile, kIdent, kNote, kExtra, kLogin, kPassword, kPin, kTotp, kFieldCount,
+    kRcvCode = kFieldCount
+};
 static constexpr int kTabInfo = 0, kTabSecurity = 1, kTabRecovery = 2, kTabCount = 3;
-static constexpr int kRowsPerTab = 4;
 
 static const char *const kFieldText[kFieldCount] = {
-    MSF_SYMBOL_ID_CARD " Name",     MSF_SYMBOL_FINGERPRINT " ID", MSF_SYMBOL_NOTE " Note",
-    MSF_SYMBOL_PAPERCLIP " Extra",  MSF_SYMBOL_USER " Login",     MSF_SYMBOL_KEY " Password",
-    MSF_SYMBOL_HASHTAG " PIN",      MSF_SYMBOL_CLOCK " TOTP"};
+    MSF_SYMBOL_ID_CARD " Name",     LV_SYMBOL_DIRECTORY " Profile", MSF_SYMBOL_FINGERPRINT " ID",
+    MSF_SYMBOL_NOTE " Note",        MSF_SYMBOL_PAPERCLIP " Extra",  MSF_SYMBOL_USER " Login",
+    MSF_SYMBOL_KEY " Password",     MSF_SYMBOL_HASHTAG " PIN",      MSF_SYMBOL_CLOCK " TOTP"};
+
+static int field_tab(int f)
+{
+    return f < kLogin ? kTabInfo : kTabSecurity;
+}
+
+/* Row of `f` within its tab. */
+static int field_row(int f)
+{
+    return f - (f < kLogin ? kName : kLogin);
+}
 
 static account_t s_draft;
 static uint16_t s_edit_id;        /* 0 = adding a new account */
@@ -95,6 +110,7 @@ static void go_back(void)
 {
     if (s_edit_id) account_open(s_edit_id);
     else if (s_return_screen == Screen::Names) names_open(s_return_letter);
+    else if (s_return_screen == Screen::Profiles) profiles_open();   /* a new profile left unsaved */
     else switch_screen(Screen::Home);
 }
 
@@ -107,15 +123,30 @@ void account_edit_open(uint16_t id)
     switch_screen(Screen::AccountEdit);
 }
 
-void account_edit_open_new(char letter)
+/* A blank draft in `profile`; EDIT is shown by the caller. */
+static void prepare_new(char letter, const char *profile)
 {
     accounts_init_record(&s_draft);
     if (letter >= 'A' && letter <= 'Z') s_draft.name[0] = letter;   /* prefill, '#' left empty */
+    strlcpy(s_draft.profile, profile, sizeof(s_draft.profile));
     s_edit_id = 0;
     s_dirty = false;
     s_tab = kTabInfo;
-    s_return_screen = letter ? Screen::Names : Screen::Home;
     s_return_letter = letter;
+}
+
+void account_edit_open_new(char letter)
+{
+    prepare_new(letter, accounts_profile());
+    s_return_screen = letter ? Screen::Names : Screen::Home;
+    switch_screen(Screen::AccountEdit);
+}
+
+void account_edit_open_new_in_profile(const char *profile)
+{
+    prepare_new(0, profile);
+    s_dirty = true;   /* Back asks first: the new profile exists only once this account is saved */
+    s_return_screen = Screen::Profiles;
     switch_screen(Screen::AccountEdit);
 }
 
@@ -124,6 +155,7 @@ static char *field_buffer(Field f, size_t *max_len)
 {
     switch (f) {
     case kName: *max_len = ACCOUNTS_NAME_MAX; return s_draft.name;
+    case kProfile: *max_len = ACCOUNTS_PROFILE_MAX; return s_draft.profile;
     case kIdent: *max_len = ACCOUNTS_IDENT_MAX; return s_draft.ident;
     case kNote: *max_len = ACCOUNTS_NOTE_MAX; return s_draft.note;
     case kExtra: *max_len = ACCOUNTS_EXTRA_MAX; return s_draft.extra;
@@ -171,6 +203,7 @@ static void show_rows(void)
 {
     char buf[64];
     show_text(kName, s_draft.name);
+    lv_label_set_text(s_values[kProfile], accounts_profile_label(s_draft.profile));
     show_text(kIdent, s_draft.ident);
     show_text(kNote, s_draft.note);
     show_text(kExtra, s_draft.extra);
@@ -311,11 +344,11 @@ lv_obj_t *build_account_edit(lv_group_t **group_out, lv_obj_t **battery_label_ou
     for (int t = 0; t < kTabCount; t++) s_tab_cont[t] = make_tab_container(screen);
 
     for (int f = 0; f < kFieldCount; f++) {
-        lv_obj_t *cont = s_tab_cont[f < kRowsPerTab ? kTabInfo : kTabSecurity];
+        lv_obj_t *cont = s_tab_cont[field_tab(f)];
         int32_t y = kRowTop;
-        for (int k = 0; k <= f % kRowsPerTab; k++) {   /* same y sequence in each tab */
+        for (int k = 0; k <= field_row(f); k++) {   /* same y sequence in each tab */
             y = touch_safe_y(y, kRowH);
-            if (k < f % kRowsPerTab) y += kRowH + kRowGap;
+            if (k < field_row(f)) y += kRowH + kRowGap;
         }
         lv_obj_t *row = make_button(cont, "");
         lv_obj_set_style_min_width(row, 0, 0);
@@ -362,6 +395,7 @@ static lv_obj_t *s_digits_label;
 static lv_obj_t *s_period_label;
 static lv_obj_t *s_keyboards[kModeCount];
 static lv_obj_t *s_dice;   /* password field only */
+static lv_obj_t *s_pick;   /* profile field only: next existing profile */
 
 /* Password generator (ROADMAP 8.3, 2026-10-11): kGenLen characters from the
  * hardware RNG, letters + digits + a few symbols that the on-device keyboard
@@ -511,6 +545,23 @@ static void dice_cb(lv_event_t *)
     ui_defer(dice_deferred, nullptr);
 }
 
+/* Steps through the existing profiles, from the one typed so far. */
+static void pick_deferred(void *)
+{
+    if (s_field != kProfile) return;
+    char next[ACCOUNTS_PROFILE_MAX + 1];
+    if (!accounts_profile_after(s_text, next)) return;
+    strlcpy(s_text, next, sizeof(s_text));
+    s_text_len = static_cast<int>(strlen(s_text));
+    show_field();
+    lv_label_set_text(s_field_status, s_text[0] ? "Enter to keep it" : "Default profile: Enter to keep it");
+}
+
+static void pick_cb(lv_event_t *)
+{
+    ui_defer(pick_deferred, nullptr);
+}
+
 static void option_deferred(void *user_data)
 {
     if (reinterpret_cast<intptr_t>(user_data) == 0) s_digits = (s_digits == 6) ? 8 : 6;
@@ -546,11 +597,15 @@ static void field_loaded_cb(lv_event_t *)
     bool totp = (s_field == kTotp);
     if (totp) lv_obj_remove_flag(s_options, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(s_options, LV_OBJ_FLAG_HIDDEN);
-    /* Password: the field leaves room for the dice at its end. */
+    /* Password / Profile: the field leaves room for the dice / the
+     * profile picker at its end. */
     bool password = (s_field == kPassword);
+    bool profile = (s_field == kProfile);
     if (password) lv_obj_remove_flag(s_dice, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(s_dice, LV_OBJ_FLAG_HIDDEN);
-    if (password) {
+    if (profile) lv_obj_remove_flag(s_pick, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(s_pick, LV_OBJ_FLAG_HIDDEN);
+    if (password || profile) {
         lv_obj_set_width(s_field_box, kFieldW - kMinTouchTarget - 12);
         lv_obj_align(s_field_box, LV_ALIGN_TOP_LEFT, (480 - kFieldW) / 2, kOptionsY);
     } else {
@@ -642,6 +697,14 @@ lv_obj_t *build_field_edit(lv_group_t **group_out, lv_obj_t **battery_label_out)
     lv_obj_add_event_cb(s_dice, dice_cb, LV_EVENT_CLICKED, nullptr);
     add_to_group(s_dice, group);
     lv_obj_add_flag(s_dice, LV_OBJ_FLAG_HIDDEN);
+
+    s_pick = make_button(screen, LV_SYMBOL_LOOP);
+    lv_obj_set_style_min_width(s_pick, 0, 0);
+    lv_obj_set_size(s_pick, kMinTouchTarget, kMinTouchTarget);
+    lv_obj_align(s_pick, LV_ALIGN_TOP_RIGHT, -(480 - kFieldW) / 2, kOptionsY);
+    lv_obj_add_event_cb(s_pick, pick_cb, LV_EVENT_CLICKED, nullptr);
+    add_to_group(s_pick, group);
+    lv_obj_add_flag(s_pick, LV_OBJ_FLAG_HIDDEN);
 
     /* Validation message, just above the keyboard (not a target). */
     s_field_status = lv_label_create(screen);
