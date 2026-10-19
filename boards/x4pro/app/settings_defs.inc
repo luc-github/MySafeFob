@@ -58,7 +58,7 @@
  */
 
 SETTINGS_DEF(PowerShortConfirm, "pwr_shortcfm", BOOL, 1, GENERAL)
-SETTINGS_DEF(IdleTimeoutS,      "idle_to_s",    U32,  0, GENERAL)
+SETTINGS_DEF(IdleTimeoutS,      "idle_to_s",    U32,  60, GENERAL)   /* 1 min (2026-10-19): no battery drain by default */
 /* No auto-sleep while USB is connected (2026-10-09): long sessions on a
  * cable. Only the inactivity sleep; never the PIN lock (separate timer). */
 SETTINGS_DEF(StayAwakeOnUsb,    "usb_awake",    BOOL, 0, GENERAL)

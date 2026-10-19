@@ -64,13 +64,12 @@ void settings_store_set_power_short_confirm(bool on);
  * @brief ADR-012 idle-activity timeout (seconds) before the device
  *        auto-sleeps on its own (no button/touch/serial input) —
  *        UI-SPECS.md §2.13's "Auto-sleep after inactivity" field
- *        (SETTINGS_SECURITY, not yet wired to a screen — this is the
- *        underlying persisted value, ready for when it is).
+ *        (Settings > Device > Controls).
  *        **0 = disabled** (never auto-sleeps from inactivity alone).
- *        Default: **0**, deliberately, for development — ADR-012's
- *        originally-validated 45s default is what a shipped device
- *        should use, but constantly falling asleep mid-test is not what
- *        this codebase is being exercised for right now.
+ *        Default: **60 s** (2026-10-19, user decision; was 0 during
+ *        development): a device left on must not drain its battery
+ *        because nobody set this up. "Stay awake on USB" still keeps a
+ *        device on a cable awake.
  */
 uint32_t settings_store_get_idle_timeout_s(void);
 void settings_store_set_idle_timeout_s(uint32_t seconds);

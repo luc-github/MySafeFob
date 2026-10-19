@@ -339,7 +339,7 @@ never touched. For certainty, format the card on a PC.
 | Menu | Item | Default | What it does |
 |---|---|---|---|
 | **Device › Controls** | Short press | On | Power short press = confirm |
-| | Auto-sleep | Off | Sleep after Off / 30 s / 1 / 2 min without input |
+| | Auto-sleep | 1 min | Sleep after Off / 30 s / 1 / 2 min without input |
 | | Stay awake (USB) | Off | Never sleeps while on USB power (does **not** stop the auto-lock) |
 | **Device › Display** | Frontlight | Off | Front light on / off |
 | | Color | Warm | Warm / Neutral / Cool |
